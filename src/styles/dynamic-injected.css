@@ -1,0 +1,608 @@
+/* ============================================================
+ * 原本通过 document.createElement('style') 动态注入的样式
+ * 已迁移至此静态 CSS 文件，由 Vite 打包到 styles.css
+ * ============================================================ */
+
+/* --- notifications.ts --- */
+.weave-notification {
+  pointer-events: auto;
+  user-select: none;
+  backdrop-filter: blur(8px);
+}
+
+body .weave-notification:hover {
+  transform: translateX(0) scale(1.02);
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+}
+
+.theme-dark .weave-notification {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.theme-light .weave-notification {
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* --- progress-modal.ts --- */
+.weave-progress-modal .modal-close-button { display: none; }
+.weave-progress-modal .progress-bar-track {
+  width: 100%;
+  height: 14px;
+  background: var(--background-modifier-border);
+  border-radius: 7px;
+  overflow: hidden;
+  margin: 20px 0 12px 0;
+  position: relative;
+}
+.weave-progress-modal .progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 7px;
+  background: linear-gradient(90deg, var(--interactive-accent), var(--interactive-accent-hover, var(--interactive-accent)));
+  transition: width 0.25s ease;
+  position: relative;
+  overflow: hidden;
+}
+.weave-progress-modal .progress-bar-fill.animating::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 6px,
+    rgba(255,255,255,0.1) 6px,
+    rgba(255,255,255,0.1) 12px
+  );
+  animation: weave-stripe-move 0.6s linear infinite;
+}
+@keyframes weave-stripe-move {
+  0% { background-position-x: 0; }
+  100% { background-position-x: 17px; }
+}
+.weave-progress-modal .progress-bar-fill.complete {
+  background: var(--text-success, #4caf50);
+}
+.weave-progress-modal .progress-bar-fill.error {
+  background: var(--text-error, #e53935);
+}
+.weave-progress-modal .progress-stats {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.weave-progress-modal .progress-percentage {
+  font-size: 22px;
+  font-weight: 600;
+  text-align: center;
+  color: var(--text-normal);
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.weave-progress-modal .progress-eta {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-faint);
+  margin-bottom: 16px;
+  min-height: 18px;
+}
+.weave-progress-modal .progress-desc {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+.weave-progress-modal .progress-buttons {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* --- BatchParsingManager.ts --- */
+.batch-progress-modal {
+  padding: 2rem;
+  min-width: 500px;
+}
+.batch-progress-modal h2 {
+  margin: 0 0 1.5rem 0;
+}
+.batch-progress-modal .progress-container {
+  height: 8px;
+  background: var(--background-modifier-border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 1rem;
+}
+.batch-progress-modal .progress-bar {
+  height: 100%;
+  background: var(--interactive-accent);
+  transition: width 0.3s ease;
+}
+.batch-progress-modal .status-text {
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+.batch-progress-modal .details-text {
+  margin-bottom: 1.5rem;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+.batch-progress-modal button {
+  padding: 0.5rem 1.5rem;
+  background: var(--interactive-normal);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.batch-progress-modal button:hover {
+  background: var(--interactive-hover);
+}
+
+/* --- MigrationConfirmModal.ts --- */
+.weave-migration-modal {
+  padding: 20px;
+}
+.weave-migration-modal h2 {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+.weave-migration-modal .migration-description {
+  margin-bottom: 16px;
+  color: var(--text-muted);
+}
+.weave-migration-modal .migration-stats {
+  background: var(--background-secondary);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 16px;
+}
+.weave-migration-modal .migration-stats .setting-item {
+  border: none;
+  padding: 4px 8px;
+}
+.weave-migration-modal .migration-tip {
+  margin-bottom: 20px;
+}
+.weave-migration-modal .migration-tip .mod-warning {
+  color: var(--text-warning);
+  font-size: 0.9em;
+}
+.weave-migration-modal .migration-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+/* --- IRImportModal.ts --- */
+.ir-import-modal {
+  padding: 0;
+}
+.ir-import-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 20px;
+  font-size: 16px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ir-import-title-icon {
+  color: var(--text-accent);
+}
+.ir-import-hint {
+  padding: 12px 20px;
+  font-size: 12px;
+  color: var(--text-muted);
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(236, 72, 153, 0.08));
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ir-import-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ir-search-icon {
+  color: var(--text-muted);
+}
+.ir-import-search input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 14px;
+  outline: none;
+}
+.ir-import-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.ir-select-all-btn {
+  padding: 4px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ir-select-all-btn:hover {
+  background: var(--background-modifier-hover);
+}
+.ir-selected-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ir-import-list {
+  max-height: 400px;
+  overflow-y: auto;
+}
+.ir-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  transition: background 0.1s;
+}
+.ir-file-item:hover {
+  background: var(--background-modifier-hover);
+}
+.ir-file-item.selected {
+  background: rgba(139, 92, 246, 0.1);
+}
+.ir-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-radius: 4px;
+}
+.ir-expand-btn:hover {
+  background: var(--background-modifier-hover);
+}
+.ir-expand-spacer {
+  width: 18px;
+}
+.ir-file-icon {
+  color: var(--text-muted);
+}
+.ir-file-icon.folder-icon {
+  color: var(--text-accent);
+}
+.ir-file-name {
+  flex: 1;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ir-file-count {
+  font-size: 12px;
+  color: var(--text-accent);
+  padding: 2px 8px;
+  background: rgba(139, 92, 246, 0.1);
+  border-radius: 10px;
+}
+.ir-import-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+.ir-btn-cancel {
+  padding: 8px 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+.ir-btn-cancel:hover {
+  background: var(--background-modifier-hover);
+}
+.ir-btn-import {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #8b5cf6, #ec4899);
+  color: white;
+  font-weight: 500;
+  cursor: pointer;
+}
+.ir-btn-import:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.ir-btn-import:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- CleanupProgressModal.ts --- */
+.weave-cleanup-modal {
+  padding: 0;
+  width: 500px;
+  max-width: 90vw;
+}
+.cleanup-modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cleanup-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1em;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cleanup-title-icon {
+  color: var(--text-accent);
+}
+.cleanup-progress-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cleanup-progress-bar-container {
+  position: relative;
+  height: 24px;
+  background: var(--background-modifier-border);
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.cleanup-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, var(--interactive-accent), var(--interactive-accent-hover));
+  border-radius: 12px;
+  transition: width 0.3s ease;
+}
+.cleanup-progress-bar.completed {
+  background: linear-gradient(90deg, var(--color-green), #34d058);
+}
+.cleanup-progress-percent {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--text-on-accent);
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+.cleanup-current-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+.cleanup-file-icon {
+  flex-shrink: 0;
+}
+.cleanup-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+.cleanup-timer-inline {
+  margin-left: auto;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.cleanup-stats-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cleanup-section-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85em;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+.cleanup-stats-cards {
+  display: flex;
+  gap: 12px;
+}
+.cleanup-stat-card {
+  flex: 1;
+  padding: 12px;
+  background: var(--background-secondary);
+  border-radius: 8px;
+  text-align: center;
+}
+.cleanup-stat-icon {
+  margin-bottom: 4px;
+  color: var(--text-muted);
+}
+.cleanup-stat-value {
+  font-size: 1.4em;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+.cleanup-stat-label {
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+.cleanup-stat-cleaned .cleanup-stat-value {
+  color: var(--color-green);
+}
+.cleanup-details-section {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.cleanup-details-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.cleanup-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 0.8em;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.cleanup-toggle-btn:hover {
+  background: var(--background-modifier-hover);
+}
+.cleanup-details-list {
+  max-height: 150px;
+  overflow-y: auto;
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 8px;
+}
+.cleanup-details-list.collapsed {
+  display: none;
+}
+.cleanup-details-empty {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  padding: 12px;
+}
+.cleanup-detail-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 0.85em;
+  border-radius: 4px;
+}
+.cleanup-detail-item:hover {
+  background: var(--background-modifier-hover);
+}
+.cleanup-detail-status {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+.cleanup-detail-item.status-success .cleanup-detail-status {
+  color: var(--color-green);
+}
+.cleanup-detail-item.status-protected .cleanup-detail-status {
+  color: var(--color-yellow);
+}
+.cleanup-detail-item.status-error .cleanup-detail-status {
+  color: var(--color-red);
+}
+.cleanup-detail-item.status-skipped .cleanup-detail-status {
+  color: var(--text-muted);
+}
+.cleanup-detail-file {
+  font-weight: 500;
+  color: var(--text-normal);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+}
+.cleanup-detail-message {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cleanup-modal-footer {
+  padding: 16px 20px;
+}
+.cleanup-action-buttons {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.cleanup-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 0.9em;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+}
+.cleanup-btn-cancel {
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+}
+.cleanup-btn-cancel:hover {
+  background: var(--background-modifier-hover);
+}
+.cleanup-btn.hidden {
+  display: none;
+}
+.cleanup-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- mobile-modal-bounds.ts --- */
+body.is-mobile .weave-modal-backdrop,
+body.is-mobile .weave-modal-container,
+body.is-mobile .modal-overlay,
+body.is-mobile .test-result-backdrop,
+body.is-mobile .resizable-modal-overlay,
+body.is-mobile .receipt-modal {
+  position: fixed;
+  top: var(--weave-modal-top, 50px);
+  bottom: var(--weave-modal-bottom, 56px);
+  left: 0;
+  right: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  overflow-y: auto;
+}
+
+body.is-mobile .resizable-modal-overlay {
+  overflow: hidden;
+}
+
+body.is-mobile .weave-modal,
+body.is-mobile .test-result-card,
+body.is-mobile .receipt-modal .modal-content {
+  max-height: var(--weave-modal-max-height, calc(100vh - 130px));
+  overflow-y: auto;
+  margin: 0 auto;
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+body.is-phone .weave-modal,
+body.is-phone .test-result-card,
+body.is-phone .receipt-modal .modal-content {
+  border-radius: 12px;
+  max-width: calc(100% - 16px);
+}
+
+body.is-mobile .receipt-modal .modal-background {
+  display: none;
+}
+
+body.is-mobile .receipt-modal .printer-container {
+  max-height: var(--weave-modal-max-height, calc(100vh - 130px));
+  overflow-y: auto;
+}

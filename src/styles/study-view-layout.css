@@ -1,0 +1,31 @@
+/**
+ * 学习视图布局 - 三个学习界面共享
+ * 适用于：记忆学习(weave-study-view)、增量阅读(weave-ir-focus-view)、刷题学习(weave-question-bank-view)
+ *
+ * 统一处理：
+ * 1. 隐藏 Obsidian 原生 view-header
+ * 2. 覆盖 Obsidian 默认 view-content padding
+ * 3. 通过 --weave-study-view-spacing CSS 变量控制间距
+ *    compact: 12px | default: 20px | comfortable: 32px
+ */
+
+:root {
+  --weave-study-view-spacing: 12px;
+}
+
+/* ==================== 隐藏 Obsidian view-header ==================== */
+.workspace-leaf-content[data-type="weave-study-view"] .view-header,
+.workspace-leaf-content[data-type="weave-ir-focus-view"] .view-header,
+.workspace-leaf-content[data-type="weave-question-bank-view"] .view-header {
+  display: none;
+}
+
+/* ==================== 覆盖 Obsidian 默认 view-content padding ==================== */
+.workspace-leaf-content[data-type="weave-study-view"] > .view-content,
+.workspace-leaf-content[data-type="weave-ir-focus-view"] > .view-content,
+.workspace-leaf-content[data-type="weave-question-bank-view"] > .view-content {
+  position: relative;
+  overflow: hidden;
+  height: 100%;
+  padding: 0;
+}
