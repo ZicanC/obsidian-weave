@@ -1,7 +1,7 @@
 {
   "name": "anki-obsidian-plugin",
   "private": true,
-  "version": "0.7.7.1",
+  "version": "0.7.8",
   "description": "Enhance knowledge learning and memory consolidation in Obsidian with incremental reading, memory decks, and practice quiz decks",
   "main": "main.js",
   "type": "module",

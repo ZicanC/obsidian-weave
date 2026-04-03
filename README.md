@@ -3,7 +3,7 @@
 <div align="center">
 
 ![Weave](https://img.shields.io/badge/Weave-Weave-blue?style=for-the-badge)
-![Version](https://img.shields.io/badge/version-0.7.7-green?style=for-the-badge)
+![Version](https://img.shields.io/badge/version-0.7.8-green?style=for-the-badge)
 ![License](https://img.shields.io/badge/license-GPL--3.0-orange?style=for-the-badge)
 ![Obsidian](https://img.shields.io/badge/Obsidian-Plugin-purple?style=for-the-badge)
 
