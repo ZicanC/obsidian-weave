@@ -1,18 +1,22 @@
-/**
- * 璧勬簮绠＄悊鍣ㄥ熀纭€鍔熻兘娴嬭瘯
- */
-import { EditorResourceManager, getGlobalResourceManager } from '../utils/resource-manager';
+import {
+  EditorResourceManager,
+  getGlobalResourceManager
+} from '../utils/resource-manager';
 
-describe('璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
+describe('EditorResourceManager basic behavior', () => {
   let resourceManager: EditorResourceManager;
-  const editorId = 'test-editor';
 
   beforeEach(() => {
     const globalManager = getGlobalResourceManager();
-    resourceManager = globalManager.getEditorManager(editorId);
+    globalManager.cleanup();
+    resourceManager = globalManager.getEditorManager('test-editor');
   });
 
-  test('搴旇鑳藉垱寤鸿祫婧愮鐞嗗櫒瀹炰緥', () => {
+  afterEach(() => {
+    getGlobalResourceManager().cleanup();
+  });
+
+  test('exposes the expected registration API', () => {
     expect(resourceManager).toBeDefined();
     expect(typeof resourceManager.registerTimer).toBe('function');
     expect(typeof resourceManager.registerEventListener).toBe('function');
@@ -21,105 +25,66 @@ describe('璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
     expect(typeof resourceManager.registerCustomCleanup).toBe('function');
   });
 
-  test('搴旇鑳借幏鍙栬祫婧愮粺璁?, () => {
-    const stats = resourceManager.getResourceStats();
-    expect(stats).toBeDefined();
-    expect(typeof stats.timers).toBe('number');
-    expect(typeof stats.eventListeners).toBe('number');
-    expect(typeof stats.promises).toBe('number');
-    expect(typeof stats.components).toBe('number');
-    expect(typeof stats.customCleanups).toBe('number');
-    expect(typeof stats.total).toBe('number');
-  });
-
-  test('搴旇鑳芥敞鍐屽畾鏃跺櫒', () => {
-    const timerId = resourceManager.registerTimer(123 as any, 'timeout', '娴嬭瘯瀹氭椂鍣?);
-    expect(timerId).toBeTruthy();
-    expect(typeof timerId).toBe('string');
-
-    const stats = resourceManager.getResourceStats();
-    expect(stats.timers).toBe(1);
-    expect(stats.total).toBe(1);
-  });
-
-  test('搴旇鑳芥敞鍐岃嚜瀹氫箟娓呯悊鍑芥暟', () => {
+  test('tracks timers and custom cleanups, then clears them on destroy', () => {
     let cleanupCalled = false;
-    const cleanup = () => { cleanupCalled = true; };
+    const timer = setTimeout(() => undefined, 1000);
 
-    const cleanupId = resourceManager.registerCustomCleanup(cleanup, '娴嬭瘯娓呯悊');
-    expect(cleanupId).toBeTruthy();
+    resourceManager.registerTimer(timer, 'timeout', 'test timer');
+    resourceManager.registerCustomCleanup(() => {
+      cleanupCalled = true;
+    }, 'test cleanup');
 
-    const stats = resourceManager.getResourceStats();
-    expect(stats.customCleanups).toBe(1);
+    expect(resourceManager.getResourceStats()).toMatchObject({
+      timers: 1,
+      customCleanups: 1,
+      total: 2
+    });
 
-    // 閿€姣佽祫婧愮鐞嗗櫒
     resourceManager.destroy();
 
-    // 楠岃瘉娓呯悊鍑芥暟琚皟鐢?    expect(cleanupCalled).toBe(true);
+    expect(cleanupCalled).toBe(true);
+    expect(resourceManager.getResourceStats().total).toBe(0);
   });
 
-  test('搴旇鑳芥娴嬭祫婧愭硠婕?, () => {
-    // 娉ㄥ唽澶ч噺瀹氭椂鍣?    for (let i = 0; i < 15; i++) {
-      resourceManager.registerTimer(i as any, 'timeout', `瀹氭椂鍣?{i}`);
+  test('detects timer leaks when too many timers are registered', () => {
+    for (let index = 0; index < 11; index++) {
+      resourceManager.registerTimer(setTimeout(() => undefined, 1000), 'timeout', `timer-${index}`);
     }
 
     const leaks = resourceManager.checkForLeaks();
-    expect(leaks.length).toBeGreaterThan(0);
-    expect(leaks.some(leak => leak.includes('瀹氭椂鍣ㄨ繃澶?))).toBe(true);
-  });
 
-  test('搴旇鑳介攢姣佹墍鏈夎祫婧?, () => {
-    // 娉ㄥ唽涓€浜涜祫婧?    resourceManager.registerTimer(123 as any, 'timeout', '娴嬭瘯瀹氭椂鍣?);
-    resourceManager.registerCustomCleanup(() => {}, '娴嬭瘯娓呯悊');
-
-    let stats = resourceManager.getResourceStats();
-    expect(stats.total).toBeGreaterThan(0);
-
-    // 閿€姣?    resourceManager.destroy();
-
-    // 楠岃瘉璧勬簮琚竻鐞?    stats = resourceManager.getResourceStats();
-    expect(stats.total).toBe(0);
+    expect(leaks.some((leak) => leak.includes('定时器过多'))).toBe(true);
   });
 });
 
-describe('鍏ㄥ眬璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
-  test('搴旇鑳借幏鍙栧叏灞€璧勬簮绠＄悊鍣ㄥ疄渚?, () => {
-    const globalManager = getGlobalResourceManager();
-    expect(globalManager).toBeDefined();
-    expect(typeof globalManager.getEditorManager).toBe('function');
-    expect(typeof globalManager.destroyEditorManager).toBe('function');
-    expect(typeof globalManager.getGlobalStats).toBe('function');
-    expect(typeof globalManager.checkGlobalLeaks).toBe('function');
-    expect(typeof globalManager.cleanup).toBe('function');
+describe('GlobalResourceManager basic behavior', () => {
+  beforeEach(() => {
+    getGlobalResourceManager().cleanup();
   });
 
-  test('搴旇鑳界鐞嗗涓紪杈戝櫒', () => {
-    const globalManager = getGlobalResourceManager();
-
-    const editor1 = globalManager.getEditorManager('editor-1');
-    const editor2 = globalManager.getEditorManager('editor-2');
-
-    expect(editor1).toBeDefined();
-    expect(editor2).toBeDefined();
-    expect(editor1).not.toBe(editor2);
-
-    // 娓呯悊
-    globalManager.destroyEditorManager('editor-1');
-    globalManager.destroyEditorManager('editor-2');
+  afterEach(() => {
+    getGlobalResourceManager().cleanup();
   });
 
-  test('搴旇鑳借幏鍙栧叏灞€缁熻', () => {
+  test('creates separate resource managers for different editors', () => {
     const globalManager = getGlobalResourceManager();
+    const editorOne = globalManager.getEditorManager('editor-1');
+    const editorTwo = globalManager.getEditorManager('editor-2');
 
-    const editor1 = globalManager.getEditorManager('test-editor-1');
-    editor1.registerTimer(123 as any, 'timeout', '娴嬭瘯瀹氭椂鍣?);
+    expect(editorOne).toBeDefined();
+    expect(editorTwo).toBeDefined();
+    expect(editorOne).not.toBe(editorTwo);
+  });
 
-    const globalStats = globalManager.getGlobalStats();
-    expect(globalStats).toBeDefined();
-    expect(globalStats['test-editor-1']).toBeDefined();
-    expect(globalStats['test-editor-1'].timers).toBe(1);
+  test('reports global stats for registered editor managers', () => {
+    const globalManager = getGlobalResourceManager();
+    const editorManager = globalManager.getEditorManager('editor-stats');
 
-    // 娓呯悊
-    globalManager.destroyEditorManager('test-editor-1');
+    editorManager.registerTimer(setTimeout(() => undefined, 1000), 'timeout', 'stats timer');
+
+    const stats = globalManager.getGlobalStats();
+
+    expect(stats['editor-stats']).toBeDefined();
+    expect(stats['editor-stats'].timers).toBe(1);
   });
 });

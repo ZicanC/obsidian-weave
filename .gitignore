@@ -238,6 +238,13 @@ start-dev.sh
 
 # 脚本（含激活码生成等敏感工具）
 scripts/
+!scripts/
+scripts/*
+!scripts/check-svelte5-compliance.js
+!scripts/copy-manifest.cjs
+!scripts/dev-watch.cjs
+!scripts/kill-vite.cjs
+!scripts/clean-cache.cjs
 
 # 测试文件
 test/
