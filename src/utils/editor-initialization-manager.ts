@@ -197,7 +197,7 @@ export class EditorInitializationManager {
 		options: InitializationOptions
 	): Promise<boolean> {
 		let retryCount = 0;
-		const maxRetries = options.maxRetries ?? 2;
+		const maxRetries = options.maxRetries || 2;
 
 		while (retryCount <= maxRetries) {
 			try {
