@@ -1,8 +1,8 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
-  //  v2.1.1: 静态导入 parseSourceInfo（修复响应式问题）
-  // 🆕 v2.2: 导入牌组信息获取工具
-  import { parseSourceInfo, getCardDeckIds, getCardDeckNames } from '../../utils/yaml-utils';
+  // 静态导入 parseSourceInfo，确保响应式追踪正常
+  // 导入牌组信息获取工具
+  import { parseEpubSourceInfo, parseSourceInfo, parseYAMLFromContent, extractBodyContent, getCardDeckIds, getCardDeckNames } from '../../utils/yaml-utils';
   //  v2.3: 使用 CardMetadataService 统一获取卡片元数据（带缓存 + 向后兼容）
   import { getCardMetadataService } from '../../services/CardMetadataService';
 
@@ -14,11 +14,21 @@
   //  导入国际化
   import { tr } from '../../utils/i18n';
   import type { CustomFormatAction } from "../../types/ai-types";
-  import { MarkdownView, Menu, MarkdownRenderer, Component, Notice } from "obsidian";
+  import { Menu, MarkdownRenderer, Component, Notice } from "obsidian";
+  import { FeatureUsageHintModal } from '../../modals/FeatureUsageHintModal';
+  import {
+    GLOBAL_TUTORIAL_HINT_IDS,
+    markTutorialHintDismissed,
+    shouldShowTutorialHint,
+    type GlobalTutorialHintId
+  } from '../../services/tutorial/GlobalTutorialHints';
   import { onDestroy } from 'svelte';
-  // 🆕 导入卡片关系工具函数
+  // 导入卡片关系工具函数
   import { getDerivationMethodName } from '../../utils/card-relation-helpers';
-  // 🆕 导入 AI助手菜单构建器
+  import { openLinkWithExistingLeaf } from '../../utils/workspace-navigation';
+  import { getSourceLocateOverlayService } from '../../services/ui/SourceLocateOverlayService';
+  import { SourceNavigationService } from '../../services/ui/SourceNavigationService';
+  // 导入 AI 助手菜单构建器
   import { AIAssistantMenuBuilder } from '../../services/menu/AIAssistantMenuBuilder';
   // 已移除 AnkiConnect 支持
 
@@ -35,17 +45,19 @@
     onCompactModeSettingChange?: (setting: 'auto' | 'fixed') => void;
     onToggleEdit?: () => void;
     onDelete?: (skipConfirm?: boolean) => void;
-    onRemoveFromDeck?: () => void; // 🆕 v2.0 从牌组移除（引用式牌组系统）
+    onRemoveFromDeck?: () => void; // 从牌组移除
     onSetReminder?: () => void;
     onChangePriority?: () => void;
+    onReminderAnchorChange?: (element: HTMLElement | null) => void;
+    onPriorityAnchorChange?: (element: HTMLElement | null) => void;
     onChangeDeck?: (deckId: string) => void | Promise<void>;
     onOpenPlainEditor?: () => void;
     onAIFormatCustom?: (actionId: string) => void;
-    onTestGenerate?: (actionId: string) => void; // 🆕 测试题生成
-    onSplitCard?: (actionId: string) => void; // 🆕 AI拆分
+    onTestGenerate?: (actionId: string) => void; // 测试题生成
+    onSplitCard?: (actionId: string) => void; // AI 拆分
     onManageFormatActions?: () => void;
-    onOpenDetailedView?: () => void; // 🆕 打开详细信息模态窗
-    onOpenCardDebug?: () => void; // 🆕 打开卡片数据结构调试窗口
+    onOpenDetailedView?: () => void; // 打开详细信息模态窗
+    onOpenCardDebug?: () => void; // 打开卡片数据结构调试窗口
     onRecycleCard?: () => void; // 回收卡片
     autoPlayMedia?: boolean;
     playMediaMode?: 'first' | 'all';
@@ -54,22 +66,29 @@
     onMediaAutoPlayChange?: (setting: 'enabled' | 'mode' | 'timing' | 'interval', value: boolean | 'first' | 'all' | 'cardChange' | 'showAnswer' | number) => void;
     enableDirectDelete?: boolean;
     onDirectDeleteToggle?: (enabled: boolean) => void;
-    // 🆕 教程按钮显示
+    // 教程按钮显示
     showTutorialButton?: boolean;
     onTutorialButtonToggle?: (enabled: boolean) => void;
-    // 🆕 卡片学习顺序
+    showClozeModeSwitchButton?: boolean;
+    onClozeModeSwitchButtonToggle?: (enabled: boolean) => void;
+    // 卡片学习顺序
     cardOrder?: 'sequential' | 'random';
     onCardOrderChange?: (order: 'sequential' | 'random') => void;
-    // 🆕 图谱联动
+    // 图谱联动
     isGraphLinked?: boolean;
     onGraphLinkToggle?: (enabled: boolean) => void;
     onGraphLeafChange?: (leaf: any) => void; //  传递graphSyncLeaf引用
     //  高级功能控制 - 插件未激活时隐藏AI助手和原文功能
     isPremium?: boolean;
+    timerAutoPauseSeconds?: number;
+    onTimerAutoPauseChange?: (seconds: number) => void;
+    hintMaxUses?: number;
+    onHintMaxUsesChange?: (value: number) => void;
     //  卡片关联 - 功能已移除，保留接口定义以便将来作为第三方插件实现
     // onOpenRelationPanel?: () => void;
     // onOpenRelationGraph?: () => void;
     // relationCount?: number;
+    onPanelOpen?: () => void;
   }
 
   // 来源信息接口
@@ -91,18 +110,20 @@
     onCompactModeSettingChange,
     onToggleEdit,
     onDelete,
-    onRemoveFromDeck, // 🆕 v2.0 从牌组移除
+    onRemoveFromDeck, // 从牌组移除
     onSetReminder,
     onChangePriority,
+    onReminderAnchorChange,
+    onPriorityAnchorChange,
     onChangeDeck,
     onOpenPlainEditor,
     onAIFormatCustom,
-    onTestGenerate, // 🆕 测试题生成
-    onSplitCard, // 🆕 AI拆分
+    onTestGenerate, // 测试题生成
+    onSplitCard, // AI 拆分
     onManageFormatActions,
-    onOpenDetailedView, // 🆕
-    onOpenCardDebug, // 🆕 卡片调试
-    onRecycleCard, // 🆕 回收卡片（原搁置功能）
+    onOpenDetailedView, // 打开详细信息
+    onOpenCardDebug, // 卡片调试
+    onRecycleCard, // 回收卡片
     autoPlayMedia = false,
     playMediaMode = 'first',
     playMediaTiming = 'cardChange',
@@ -110,13 +131,15 @@
     onMediaAutoPlayChange,
     enableDirectDelete = false,
     onDirectDeleteToggle,
-    // 🆕 教程按钮显示
+    // 教程按钮显示
     showTutorialButton = true,
     onTutorialButtonToggle,
-    // 🆕 卡片学习顺序
+    showClozeModeSwitchButton = true,
+    onClozeModeSwitchButtonToggle,
+    // 卡片学习顺序
     cardOrder = 'sequential',
     onCardOrderChange,
-    // 🆕 图谱联动
+    // 图谱联动
     isGraphLinked = false,
     onGraphLinkToggle,
     onGraphLeafChange,
@@ -126,6 +149,11 @@
     // onOpenRelationPanel,
     // onOpenRelationGraph,
     // relationCount = 0,
+    timerAutoPauseSeconds = 60,
+    onTimerAutoPauseChange,
+    hintMaxUses = 5,
+    onHintMaxUsesChange,
+    onPanelOpen,
   }: Props = $props();
 
   //  响应式翻译函数
@@ -228,10 +256,20 @@
     return Math.min(Math.max(priority, 1), 4);
   }
 
+  let reminderButtonElement: HTMLElement | null = $state(null);
+  let priorityButtonElement: HTMLElement | null = $state(null);
+
+  $effect(() => {
+    onReminderAnchorChange?.(reminderButtonElement);
+  });
+
+  $effect(() => {
+    onPriorityAnchorChange?.(priorityButtonElement);
+  });
+
   // 牌组切换功能
   let showDeckMenu = $state(false);
   let deckButtonElement: HTMLElement | null = $state(null);
-  let lastDeckMenuPosition: { x: number; y: number } | null = $state(null);
   
   //  关联菜单功能 - 已移除
   // let showRelationMenu = $state(false);
@@ -249,14 +287,14 @@
   let showMultiInfoMenu = $state(false);
   let multiInfoButtonElement: HTMLElement | null = $state(null);
 
-  // 🆕 源块文本浮窗
+  // 源块文本浮窗
   let showSourceBlockMenu = $state(false);
   let sourceBlockButtonElement: HTMLElement | null = $state(null);
   let sourceBlockContent = $state<string>('');
   let sourceBlockContext = $state<{ before: string[]; after: string[]; targetLine: number }>({ before: [], after: [], targetLine: -1 });
   let isLoadingSourceBlock = $state(false);
   let sourceBlockError = $state<string | null>(null);
-  // 🆕 Obsidian渲染相关
+  // Obsidian 渲染相关
   let sourceBlockRenderContainer = $state<HTMLElement | null>(null);
   let contextBeforeRenderContainer = $state<HTMLElement | null>(null);
   let contextAfterRenderContainer = $state<HTMLElement | null>(null);
@@ -268,50 +306,174 @@
   let showMoreSettingsMenu = $state(false);
   let moreSettingsButtonElement: HTMLElement | null = $state(null);
 
-  // 🆕 教程菜单
+  // 教程菜单
   let showTutorialMenu = $state(false);
   let tutorialButtonElement: HTMLElement | null = $state(null);
   let activeTab = $state<'core' | 'basics' | 'ai' | 'progressive' | 'priority' | 'queue'>('core');
   let isOverflowMenuOpen = $state(false); // 标记溢出菜单是否打开
   
-  // 🆕 标签溢出处理
+  // 标签溢出处理
   let tabsContainer: HTMLElement | null = $state(null);
   let visibleTabs = $state<string[]>(['core', 'basics', 'ai', 'progressive', 'priority', 'queue']);
   let overflowTabs = $state<string[]>([]);
   
   // 所有标签定义
-  const allTabs = [
-    { id: 'core', label: '核心特性' },
-    { id: 'basics', label: '基础格式' },
-    { id: 'ai', label: 'AI助手' },
-    { id: 'progressive', label: '渐进式挖空' },
-    { id: 'priority', label: '卡片优先级' },
-    { id: 'queue', label: '学习队列' }
-  ] as const;
+  const allTabs = $derived([
+    { id: 'core' as const, label: t('toolbar.tabCore') },
+    { id: 'basics' as const, label: t('toolbar.tabBasics') },
+    { id: 'ai' as const, label: t('toolbar.tabAI') },
+    { id: 'progressive' as const, label: t('toolbar.tabProgressive') },
+    { id: 'priority' as const, label: t('toolbar.tabPriority') },
+    { id: 'queue' as const, label: t('toolbar.tabQueue') }
+  ]);
 
-  // 🆕 AI助手菜单构建器
+  // AI 助手菜单构建器
   let aiAssistantMenuBuilder: AIAssistantMenuBuilder | null = $state(null);
 
-  // 🆕 图谱联动状态
+  // 图谱联动状态
   let graphSyncLeaf: any = $state(null); // 用于图谱同步的leaf引用
   
-  // 🆕 v2.1.1: 响应式来源信息 - 使用统一的 parseSourceInfo 工具函数
-  //  修复：使用静态 import 确保响应式追踪正常工作
+  // 响应式来源信息，使用统一的 parseSourceInfo 工具函数
+  // 静态导入可确保响应式追踪正常工作
   let sourceInfo = $derived.by(() => {
     // 显式访问 card.content 建立响应式依赖
     const content = card?.content;
     if (!content) return { sourceFile: card?.sourceFile, sourceBlock: card?.sourceBlock };
     
     const parsed = parseSourceInfo(content);
+    const epubSource = parseEpubSourceInfo(content);
     // 回退到派生字段（如果解析失败）
     return {
-      sourceFile: parsed.sourceFile || card?.sourceFile,
-      sourceBlock: parsed.sourceBlock || card?.sourceBlock
+      sourceFile: epubSource.sourceFile || parsed.sourceFile || card?.sourceFile,
+      sourceBlock: parsed.sourceBlock || card?.sourceBlock,
+      epubCfi: epubSource.cfi,
+      epubText: epubSource.text,
+      epubChapter: epubSource.chapter
     };
   });
   
-  // 🆕 检测卡片是否有来源文档（用于图谱联动指示器）
+  // 检测卡片是否有来源文档（用于图谱联动指示器）
   let hasSourceFile = $derived(!!sourceInfo.sourceFile);
+  const sourceLocateOverlay = getSourceLocateOverlayService();
+  const sourceNavigationService = plugin ? new SourceNavigationService(plugin.app) : null;
+
+  function showMarkdownSourceOverlay(openedLeaf: any, candidates: string[], fallbackEl?: HTMLElement | null) {
+    if (!plugin || !sourceNavigationService) return;
+    sourceNavigationService.locateOpenedMarkdownLeaf(openedLeaf, candidates, {
+      fallbackEl,
+      label: '定位到溯源位置',
+      icon: 'map-pinned',
+      delayMs: 220
+    });
+  }
+
+  function getCanvasSourceNodeRect(): { x: number; y: number; width?: number; height?: number } | null {
+    const content = card?.content;
+    if (!content) return null;
+
+    const yaml = parseYAMLFromContent(content);
+    const sourceValues = Array.isArray(yaml.we_source) ? yaml.we_source : [yaml.we_source];
+    const weSource = sourceValues.find(
+      (value): value is string => typeof value === 'string' && value.includes('?'),
+    ) ?? sourceValues.find(
+      (value): value is string => typeof value === 'string' && value.trim().length > 0,
+    );
+    if (typeof weSource !== 'string') return null;
+
+    const queryIndex = weSource.indexOf('?');
+    if (queryIndex === -1) return null;
+
+    const queryEnd = weSource.lastIndexOf(']]');
+    const query = weSource.slice(queryIndex + 1, queryEnd > queryIndex ? queryEnd : undefined);
+    const params = new URLSearchParams(query);
+    const x = Number(params.get('x'));
+    const y = Number(params.get('y'));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    const width = Number(params.get('w'));
+    const height = Number(params.get('h'));
+
+    return {
+      x,
+      y,
+      width: Number.isFinite(width) ? width : undefined,
+      height: Number.isFinite(height) ? height : undefined
+    };
+  }
+
+  function resolveSourceFile(sourceFilePath: string): any | null {
+    if (!plugin || !sourceFilePath) return null;
+
+    const directFile = plugin.app.vault.getAbstractFileByPath(sourceFilePath);
+    if (directFile) return directFile;
+
+    const contextPath = plugin.app.workspace.getActiveFile()?.path ?? '';
+    const linkText = sourceFilePath.replace(/\.md$/, '');
+    return plugin.app.metadataCache.getFirstLinkpathDest(linkText, contextPath);
+  }
+
+  function getCanvasTextCandidates(): string[] {
+    const body = extractBodyContent(card?.content || '');
+    if (!body) return [];
+
+    const lines = body
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^>\s?/, '').trim())
+      .filter((line) => line.length >= 12);
+
+    const uniqueCandidates = new Set<string>();
+    for (const line of lines) {
+      const normalized = line.replace(/\s+/g, ' ').trim();
+      if (normalized.length >= 12) {
+        uniqueCandidates.add(normalized.slice(0, 120));
+      }
+      if (uniqueCandidates.size >= 3) break;
+    }
+
+    return Array.from(uniqueCandidates);
+  }
+
+  async function openCanvasSourceTarget(filePath: string, blockId?: string): Promise<void> {
+    if (!plugin || !sourceNavigationService) return;
+
+    const normalizedBlockId = blockId?.replace(/^canvas:/, '').replace(/^\^/, '').split('?')[0];
+    const targetRect = getCanvasSourceNodeRect();
+    const textCandidates = getCanvasTextCandidates();
+
+    logger.info('[VerticalToolbar] Canvas source locate start', {
+      filePath,
+      blockId,
+      normalizedBlockId,
+      cardUuid: card?.uuid,
+      rawWeSource: (() => {
+        const yaml = parseYAMLFromContent(card?.content || '');
+        const sourceValues = Array.isArray(yaml.we_source) ? yaml.we_source : [yaml.we_source];
+        return sourceValues.find((value): value is string => typeof value === 'string' && value.includes('?'))
+          ?? sourceValues.find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+      })(),
+      targetRect,
+      textCandidates
+    });
+
+    const openedLeaf = await sourceNavigationService.openCanvasAndLocate(
+      filePath,
+      textCandidates,
+      normalizedBlockId,
+      {
+        label: '定位到溯源位置',
+        icon: 'map-pinned',
+        focus: true,
+        openInNewTab: true,
+        delayMs: 500,
+        fallbackEl: sourceBlockButtonElement ?? multiInfoButtonElement ?? undefined,
+        nodeRect: targetRect ?? undefined
+      }
+    );
+
+    if (!openedLeaf) {
+      new Notice(t('toolbar.sourceNotExist'));
+    }
+  }
 
   //  初始化 AI助手菜单构建器
   $effect(() => {
@@ -327,70 +489,14 @@
   });
 
   function toggleDeckMenu() {
-    showDeckMenu = !showDeckMenu;
-  }
-
-  /**
-   * 🆕 使用Obsidian原生Menu API显示牌组列表
-   * 靠左显示，与其他Obsidian菜单风格一致
-   */
-  function handleDeckMenuClick(evt: MouseEvent) {
     if (!decks || decks.length === 0) {
-      new Notice('没有可用的牌组');
+      new Notice(t('toolbar.noDecksAvailable'));
       return;
     }
 
-    const rect = (evt.currentTarget as HTMLElement).getBoundingClientRect();
-    lastDeckMenuPosition = { x: rect.left, y: rect.bottom + 4 };
-
-    showDeckMultiSelectMenu();
-  }
-
-  function showDeckMultiSelectMenu() {
-    if (!decks || decks.length === 0) return;
-    if (!card) return;
-
-    if (!lastDeckMenuPosition) {
-      lastDeckMenuPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    }
-
-    const { deckIds } = getCardDeckIds(card, decks);
-    const selectedDeckIds = new Set(deckIds);
-
-    const menu = new Menu();
-
-    menu.addItem((item) => {
-      item
-        .setTitle('设置卡片所属牌组')
-        .setDisabled(true);
-    });
-
-    menu.addSeparator();
-
-    decks.forEach((deck) => {
-      const indentLevel = deck.level || 0;
-      const prefix = indentLevel > 0 ? '  '.repeat(indentLevel) + '└ ' : '';
-      const isSelected = selectedDeckIds.has(deck.id);
-
-      menu.addItem((item) => {
-        item.setTitle(prefix + deck.name);
-        item.setIcon(isSelected ? 'check-square' : 'square');
-
-        item.onClick(async () => {
-          if (onChangeDeck) {
-            await Promise.resolve(onChangeDeck(deck.id));
-          }
-
-          if (lastDeckMenuPosition) {
-            setTimeout(() => {
-              showDeckMultiSelectMenu();
-            }, 0);
-          }
-        });
-      });
-    });
-
-    menu.showAtPosition(lastDeckMenuPosition);
+    const next = !showDeckMenu;
+    closeAllPanels();
+    showDeckMenu = next;
   }
   
   //  关联功能已移除 - 以下函数已注释
@@ -429,25 +535,82 @@
     return names.length > 0 ? names[0] : fallback;
   }
   
-  // 🆕 v2.2: 获取当前卡片的主牌组ID
+  // 获取当前卡片的主牌组 ID
   function getCurrentDeckId(): string | undefined {
     if (!card) return undefined;
-    const { primaryDeckId } = getCardDeckIds(card);
-    return primaryDeckId;
+    const service = getCardMetadataService();
+    return service.getCardDeckIds(card)[0];
   }
 
   // 多功能信息键相关函数
   function toggleMultiInfoMenu() {
-    showMultiInfoMenu = !showMultiInfoMenu;
+    const next = !showMultiInfoMenu; closeAllPanels(); showMultiInfoMenu = next;
   }
 
-  // 🆕 源块文本浮窗相关函数
+  async function maybeShowToolbarHint(
+    hintId: GlobalTutorialHintId,
+    options: {
+      title: string;
+      intro: string;
+      listItems: string[];
+      note: string;
+    }
+  ): Promise<void> {
+    if (!plugin?.app) return;
+    if (!shouldShowTutorialHint(plugin.settings, hintId)) return;
+
+    const modal = new FeatureUsageHintModal(plugin.app, {
+      ...options,
+      onConfirm: async (dismissPermanently: boolean) => {
+        if (!dismissPermanently) return;
+        try {
+          markTutorialHintDismissed(plugin.settings, hintId);
+          await plugin.saveSettings();
+        } catch (error) {
+          logger.error('[VerticalToolbar] 保存教程提示设置失败:', error);
+          new Notice('保存教程提示设置失败');
+        }
+      }
+    });
+    modal.open();
+  }
+
+  function maybeShowSourceBlockHint(): void {
+    void maybeShowToolbarHint(GLOBAL_TUTORIAL_HINT_IDS.SOURCE_BLOCK_BUTTON, {
+      title: '源块文本提示',
+      intro: '点击“源块文本”可快速查看当前卡片在源文档中的上下文位置。',
+      listItems: [
+        '可在弹窗中直接跳转源文档定位到源块',
+        '可复制源块内容到剪贴板继续编辑',
+        '若卡片没有关联源文档，此功能会自动禁用'
+      ],
+      note: '该功能适合回看原文上下文，避免脱离资料单独记忆。'
+    });
+  }
+
+  function maybeShowRecycleCardHint(): void {
+    void maybeShowToolbarHint(GLOBAL_TUTORIAL_HINT_IDS.RECYCLE_CARD_BUTTON, {
+      title: '回收卡片提示',
+      intro: '点击“回收卡片”会给当前卡片添加回收标签并移出学习队列。',
+      listItems: [
+        '回收标签支持 #回收 或 #recycle',
+        '回收后卡片不会丢失，可在内容中移除标签后重新学习',
+        '适合暂时质量不佳、需要后续重构的卡片'
+      ],
+      note: '回收是“暂存待改进”，不是删除卡片。'
+    });
+  }
+
+  // 源块文本浮窗相关函数
   function toggleSourceBlockMenu() {
     if (!showSourceBlockMenu) {
       // 打开时加载源块内容
       loadSourceBlockContent();
     }
-    showSourceBlockMenu = !showSourceBlockMenu;
+    const next = !showSourceBlockMenu; closeAllPanels(); showSourceBlockMenu = next;
+    if (next) {
+      maybeShowSourceBlockHint();
+    }
   }
 
   /**
@@ -455,9 +618,9 @@
    * 读取源文档中的块内容及上下文
    */
   async function loadSourceBlockContent() {
-    //  v2.1 修复：使用响应式 sourceInfo 从 content YAML 获取来源
+    // 使用响应式 sourceInfo 从 content YAML 获取来源
     if (!sourceInfo.sourceFile || !plugin) {
-      sourceBlockError = '该卡片没有关联的源文档';
+      sourceBlockError = t('toolbar.noSourceDoc');
       return;
     }
 
@@ -468,11 +631,11 @@
 
     try {
       const contextPath = plugin.app.workspace.getActiveFile()?.path ?? '';
-      //  v2.1.1: 使用 metadataCache 查找文件，支持仅文件名格式
+      // 使用 metadataCache 查找文件，支持仅文件名格式
       const linkText = sourceInfo.sourceFile.replace(/\.md$/, '');
       const file = plugin.app.metadataCache.getFirstLinkpathDest(linkText, contextPath);
       if (!file) {
-        sourceBlockError = '源文档不存在或已被删除';
+        sourceBlockError = t('toolbar.sourceDocDeleted');
         isLoadingSourceBlock = false;
         return;
       }
@@ -499,7 +662,7 @@
       }
 
       if (targetLine === -1) {
-        sourceBlockError = `未找到块引用 ^${blockId}`;
+        sourceBlockError = t('toolbar.blockRefNotFound', { blockId });
         isLoadingSourceBlock = false;
         return;
       }
@@ -522,11 +685,11 @@
 
       isLoadingSourceBlock = false;
       
-      // 🆕 触发Obsidian渲染
+      // 触发 Obsidian 渲染
       renderSourceBlockContents();
     } catch (error) {
       logger.error('[VerticalToolbar] 加载源块内容失败:', error);
-      sourceBlockError = '读取源文档失败';
+      sourceBlockError = t('toolbar.readSourceFailed');
       isLoadingSourceBlock = false;
     }
   }
@@ -537,7 +700,7 @@
   function copySourceBlockContent() {
     if (sourceBlockContent) {
       navigator.clipboard.writeText(sourceBlockContent);
-      new Notice('已复制源块内容');
+      new Notice(t('toolbar.copiedSourceBlock'));
     }
   }
 
@@ -559,7 +722,7 @@
   ): Promise<Component | null> {
     if (!element || !content || !plugin?.app) return null;
     
-    element.innerHTML = '';
+    element.replaceChildren();
     
     try {
       // 清理旧的组件实例
@@ -626,7 +789,7 @@
       );
     }
     
-    // 🆕 渲染完成后自动滚动到源块高亮区域
+    // 渲染完成后自动滚动到源块高亮区域
     scrollToSourceBlockHighlight();
   }
 
@@ -657,8 +820,10 @@
   });
 
   // 更多设置相关函数
+  function closeAllPanels() { showMultiInfoMenu = false; showSourceBlockMenu = false; showMoreSettingsMenu = false; showTutorialMenu = false; showDeckMenu = false; onPanelOpen?.(); }
+
   function toggleMoreSettingsMenu() {
-    showMoreSettingsMenu = !showMoreSettingsMenu;
+    const next = !showMoreSettingsMenu; closeAllPanels(); showMoreSettingsMenu = next;
   }
 
   //  AI助手按钮点击处理（Store自动保持最新数据）
@@ -668,16 +833,16 @@
     }
   }
 
-  // 🆕 教程菜单相关函数
+  // 教程菜单相关函数
   function toggleTutorialMenu() {
-    showTutorialMenu = !showTutorialMenu;
+    const next = !showTutorialMenu; closeAllPanels(); showTutorialMenu = next;
   }
 
   function switchTab(tab: 'core' | 'basics' | 'ai' | 'progressive' | 'priority' | 'queue') {
     activeTab = tab;
   }
   
-  // 🆕 显示溢出标签菜单（使用Obsidian原生Menu API）
+  // 显示溢出标签菜单（使用 Obsidian 原生 Menu API）
   function showOverflowMenu(evt: MouseEvent) {
     // 阻止事件冒泡，防止触发FloatingMenu的关闭
     // Svelte 5: 移除 stopPropagation
@@ -714,7 +879,7 @@
     menu.showAtMouseEvent(evt);
   }
   
-  // 🆕 动态计算可见标签
+  // 动态计算可见标签
   function updateVisibleTabs() {
     if (!tabsContainer) return;
     
@@ -752,7 +917,7 @@
     overflowTabs = allTabs.slice(visibleCount).map(t => t.id);
   }
   
-  // 🆕 监听容器尺寸变化
+  // 监听容器尺寸变化
   $effect(() => {
     if (tabsContainer) {
       // 初始计算
@@ -771,11 +936,11 @@
     }
   });
 
-  //  v2.1: getSourceInfo 已替换为响应式 sourceInfo ($derived)
+  // getSourceInfo 已替换为响应式 sourceInfo ($derived)
 
   // 处理文件路径点击 - 打开源文档（从 content YAML 获取）
-  //  v2.1.1: 使用 openLinkText 处理 wikilink 格式，无需完整路径
-  //  v2.1.2: 添加文件存在性检查，防止创建新文档
+  // 使用 openLinkText 处理 wikilink 格式，无需完整路径
+  // 添加文件存在性检查，防止创建新文档
   async function handleOpenSourceFile() {
     if (!sourceInfo.sourceFile || !plugin) {
       new Notice(t('toolbar.sourceNotFound'));
@@ -788,29 +953,35 @@
     const linkText = sourceInfo.sourceFile.replace(/\.md$/, '');
     
     // 验证文件是否存在
-    const file = plugin.app.metadataCache.getFirstLinkpathDest(linkText, contextPath);
+    const file = resolveSourceFile(sourceInfo.sourceFile);
     if (!file) {
       new Notice(t('toolbar.sourceNotExist'));
       return;
     }
-    
+
+    if (file.path.toLowerCase().endsWith('.canvas')) {
+      await openCanvasSourceTarget(file.path, sourceInfo.sourceBlock?.replace(/^\^/, ''));
+      showMultiInfoMenu = false;
+      return;
+    }
+
     // EPUB文件：拦截到插件内置阅读器
     if (file.path.toLowerCase().endsWith('.epub')) {
       const { EpubLinkService } = await import('../../services/epub/EpubLinkService');
       const linkService = new EpubLinkService(plugin.app);
-      await linkService.navigateToEpubLocation(file.path, '', '');
-      new Notice('已打开EPUB源文档');
+      await linkService.navigateToEpubLocation(file.path, sourceInfo.epubCfi || '', sourceInfo.epubText || '');
+      new Notice(t('toolbar.openedEpub'));
       showMultiInfoMenu = false;
       return;
     }
     
-    plugin.app.workspace.openLinkText(linkText, contextPath, true);
+    await openLinkWithExistingLeaf(plugin.app, linkText, contextPath, { openInNewTab: true, focus: true });
     showMultiInfoMenu = false;
   }
 
   // 处理块链接点击 - 跳转到块（从 content YAML 获取）
-  //  v2.1.1: 使用 Obsidian 原生 wikilink 格式跳转，支持块引用
-  //  v2.1.2: 添加文件存在性检查，防止创建新文档
+  // 使用 Obsidian 原生 wikilink 格式跳转，支持块引用
+  // 添加文件存在性检查，防止创建新文档
   async function handleOpenBlockLink() {
     if (!sourceInfo.sourceFile || !plugin) {
       new Notice(t('toolbar.blockNotFound'));
@@ -824,12 +995,18 @@
       const blockId = sourceInfo.sourceBlock?.replace(/^\^/, ''); // 移除^前缀
       
       // 验证文件是否存在
-      const file = plugin.app.metadataCache.getFirstLinkpathDest(docName, contextPath);
+      const file = resolveSourceFile(sourceInfo.sourceFile);
       if (!file) {
         new Notice(t('toolbar.sourceNotExist'));
         return;
       }
       
+      if (file.path.toLowerCase().endsWith('.canvas')) {
+        await openCanvasSourceTarget(file.path, blockId);
+        showMultiInfoMenu = false;
+        return;
+      }
+
       // 构建 wikilink 格式：文档名#^blockId
       const linkText = blockId ? `${docName}#^${blockId}` : docName;
       
@@ -837,84 +1014,35 @@
       if (file.path.toLowerCase().endsWith('.epub')) {
         const { EpubLinkService } = await import('../../services/epub/EpubLinkService');
         const linkService = new EpubLinkService(plugin.app);
-        await linkService.navigateToEpubLocation(file.path, '', '');
-        new Notice('已打开EPUB源文档');
+        await linkService.navigateToEpubLocation(file.path, sourceInfo.epubCfi || '', sourceInfo.epubText || '');
+        if (sourceBlockButtonElement) {
+          sourceLocateOverlay.showAtRect(sourceBlockButtonElement.getBoundingClientRect(), {
+            label: '定位到 EPUB 溯源位置',
+            icon: 'map-pinned'
+          });
+        }
+        new Notice(t('toolbar.openedEpub'));
         showMultiInfoMenu = false;
         return;
       }
       
       // 使用 Obsidian 原生 API 跳转，自动处理文件查找和块定位
-      await plugin.app.workspace.openLinkText(linkText, contextPath, true);
+      const openedLeaf = await openLinkWithExistingLeaf(plugin.app, linkText, contextPath, { openInNewTab: true, focus: true });
+      showMarkdownSourceOverlay(
+        openedLeaf,
+        [linkText, blockId, `^${blockId}`, docName, file.path, file.basename].filter(Boolean) as string[],
+        sourceBlockButtonElement
+      );
       showMultiInfoMenu = false;
+      return;
     } catch (error) {
       logger.error('跳转到块引用失败:', error);
       new Notice(t('toolbar.blockJumpFailed'));
     }
   }
 
-  //  已废弃的手动定位代码（保留作为参考）
-  async function _legacyOpenBlockLink() {
-    if (!sourceInfo.sourceFile || !plugin) return;
-
-    try {
-      const filePath = sourceInfo.sourceFile;
-      const blockId = sourceInfo.sourceBlock?.replace(/^\^/, '');
-      
-      const file = plugin.app.vault.getAbstractFileByPath(filePath);
-      if (!file) return;
-      
-      const leaf = plugin.app.workspace.getLeaf(false);
-      await leaf.openFile(file as any);
-      
-      if (blockId) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
-        if (view && view.editor) {
-          const content = await plugin.app.vault.read(file as any);
-          const lines = content.split('\n');
-          
-          let targetLine = -1;
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(`^${blockId}`)) {
-              targetLine = i;
-              break;
-            }
-          }
-          
-          if (targetLine >= 0) {
-            // 跳转到该行
-            view.editor.setCursor({ line: targetLine, ch: 0 });
-            view.editor.scrollIntoView({ from: { line: targetLine, ch: 0 }, to: { line: targetLine, ch: 0 } }, true);
-            
-            // 高亮显示该行（选中文本内容，排除 blockId）
-            const lineContent = lines[targetLine];
-            const blockIdMatch = lineContent.match(/\s*\^\w+$/);
-            const contentEnd = blockIdMatch ? lineContent.length - blockIdMatch[0].length : lineContent.length;
-            
-            view.editor.setSelection(
-              { line: targetLine, ch: 0 },
-              { line: targetLine, ch: contentEnd }
-            );
-            
-            new Notice('已跳转到源文档');
-          } else {
-            new Notice('无法找到源文本块');
-          }
-        }
-      } else {
-        new Notice('已打开源文档');
-      }
-      
-      showMultiInfoMenu = false;
-    } catch (error) {
-      logger.error('[VerticalToolbar] 跳转到源文档失败:', error);
-      new Notice('跳转失败');
-    }
-  }
-
   function formatDateTime(dateStr: string | undefined): string {
-    if (!dateStr) return '未知';
+    if (!dateStr) return t('toolbar.unknown');
     try {
       const date = new Date(dateStr);
       return date.toLocaleString('zh-CN', {
@@ -925,33 +1053,33 @@
         minute: '2-digit'
       });
     } catch {
-      return '格式错误';
+      return t('toolbar.formatError');
     }
   }
 
   // 格式化时间间隔（天数）
   function formatInterval(days: number | undefined): string {
-    if (days === undefined || days === null) return '未知';
-    if (days < 1) return '少于1天';
-    if (days === 1) return '1天';
-    if (days < 30) return `${Math.round(days)}天`;
-    if (days < 365) return `${Math.round(days / 30)}个月`;
-    return `${Math.round(days / 365)}年`;
+    if (days === undefined || days === null) return t('toolbar.unknown');
+    if (days < 1) return t('toolbar.lessThanOneDay');
+    if (days === 1) return t('toolbar.daysUnit', { n: 1 });
+    if (days < 30) return t('toolbar.daysUnit', { n: Math.round(days) });
+    if (days < 365) return t('toolbar.monthsUnit', { n: Math.round(days / 30) });
+    return t('toolbar.yearsUnit', { n: Math.round(days / 365) });
   }
 
   // 获取卡片状态文本
   function getCardStateText(state: number): string {
     const stateMap: Record<number, string> = {
-      0: '新卡片',
-      1: '学习中',
-      2: '复习中',
-      3: '重学中'
+      0: t('toolbar.stateNew'),
+      1: t('toolbar.stateLearning'),
+      2: t('toolbar.stateReview'),
+      3: t('toolbar.stateRelearning')
     };
-    return stateMap[state] || '未知';
+    return stateMap[state] || t('toolbar.stateUnknown');
   }
 
   // 获取当前牌组名称 - 优先从 content YAML 获取
-  //  v2.2: 使用统一的工具函数
+  // 使用统一的工具函数
   function getDeckName(): string {
     if (!card || !decks) return t('toolbar.unknownDeck');
     
@@ -968,7 +1096,7 @@
     }
   }
 
-  // 🆕 图谱联动功能
+  // 图谱联动功能
   async function toggleGraphLink() {
     const newState = !isGraphLinked;
     
@@ -1001,14 +1129,14 @@
   }
 
   async function initializeGraphSync(): Promise<boolean> {
-    //  v2.1 修复：使用响应式 sourceInfo 从 content YAML 获取来源
+    // 使用响应式 sourceInfo 从 content YAML 获取来源
     if (!sourceInfo.sourceFile || !plugin) {
       new Notice(t('toolbar.noSourceFile'));
       return false;
     }
     
     try {
-      //  v2.1.1: 使用 metadataCache 查找文件，支持仅文件名格式
+      // 使用 metadataCache 查找文件，支持仅文件名格式
       const linkText = sourceInfo.sourceFile.replace(/\.md$/, '');
       const file = plugin.app.metadataCache.getFirstLinkpathDest(linkText, '');
       if (!file) {
@@ -1019,11 +1147,11 @@
       // 获取完整路径用于图谱视图
       const fullPath = file.path;
       
-      //  核心修复：获取当前StudyView的leaf引用
-      const currentLeaf = plugin.app.workspace.activeLeaf;
+      // 获取当前 StudyView 的 leaf 引用
+      const currentLeaf = plugin.app.workspace.getMostRecentLeaf?.() ?? null;
       if (!currentLeaf) {
         logger.error('[图谱联动] 未找到当前StudyView的leaf');
-        new Notice('未找到学习视图');
+        new Notice(t('toolbar.studyViewNotFound'));
         return false;
       }
       
@@ -1096,13 +1224,13 @@
     <!-- 当前卡片计时 -->
     <div class="timer-display card-timer">
       <span class="timer-text">{formatTime(currentCardTime)}</span>
-      <div class="timer-label">{t('toolbar.currentCard')}</div>
+      <div class="timer-label" title={t('toolbar.currentCard')}>{t('toolbar.currentCard')}</div>
     </div>
 
     <!-- 平均用时 -->
     <div class="timer-display avg-timer">
       <span class="timer-text">{formatTime(averageTime)}</span>
-      <div class="timer-label">平均用时</div>
+      <div class="timer-label" title={t('toolbar.avgTime')}>{t('toolbar.avgTime')}</div>
     </div>
   </div>
 
@@ -1120,15 +1248,15 @@
   >
     <!-- 编辑/预览切换按钮 -->
     <button
-      class="toolbar-btn edit-btn"
+      class="toolbar-btn clickable-icon edit-btn"
       onclick={onToggleEdit}
       onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
       onmouseup={handleButtonDragEnd}
       ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title={isEditing ? "保存并预览（长按拖拽调整位置）" : "编辑卡片（长按拖拽调整位置）"}
+      title={isEditing ? t('toolbar.saveAndPreview') + '（' + t('toolbar.longPressDrag') + '）' : t('toolbar.editCard') + '（' + t('toolbar.longPressDrag') + '）'}
     >
       <EnhancedIcon name={isEditing ? "eye" : "edit"} size="18" />
-      <span class="btn-label">{isEditing ? "预览" : "编辑"}</span>
+      <span class="btn-label">{isEditing ? t('toolbar.preview') : t('toolbar.edit')}</span>
     </button>
 
 
@@ -1142,87 +1270,89 @@
     <!-- 普通文本编辑器按钮 - 仅临时文件失败时显示 -->
     {#if tempFileUnavailable}
       <button
-        class="toolbar-btn plain-editor-btn"
+        class="toolbar-btn clickable-icon plain-editor-btn"
         onclick={onOpenPlainEditor}
-        title="普通文本编辑器"
+        title={t('toolbar.plainTextEditor')}
       >
         <EnhancedIcon name="fileText" size="18" />
-        <span class="btn-label">文本编辑</span>
+        <span class="btn-label">{t('toolbar.textEdit')}</span>
       </button>
     {/if}
 
     <!-- 删除 -->
     <button
-      class="toolbar-btn delete-btn"
+      class="toolbar-btn clickable-icon delete-btn"
       onclick={handleDeleteClick}
       onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
       onmouseup={handleButtonDragEnd}
       ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title={enableDirectDelete ? "直接删除卡片（长按拖拽调整位置）" : "删除卡片（长按拖拽调整位置）"}
+      title={enableDirectDelete ? t('toolbar.directDeleteCard') + '（' + t('toolbar.longPressDrag') + '）' : t('toolbar.deleteCard') + '（' + t('toolbar.longPressDrag') + '）'}
     >
       <EnhancedIcon name="delete" size="18" />
-      <span class="btn-label">删除</span>
+      <span class="btn-label">{t('toolbar.delete')}</span>
     </button>
 
-    <!-- 🆕 v2.0 从牌组移除（引用式牌组系统） -->
+    <!-- 从牌组移除 -->
     {#if onRemoveFromDeck}
       <button
-        class="toolbar-btn remove-from-deck-btn"
+        class="toolbar-btn clickable-icon remove-from-deck-btn"
         onclick={onRemoveFromDeck}
-        title="从当前牌组移除（保留卡片数据）"
+        title={t('toolbar.removeFromDeck')}
       >
         <EnhancedIcon name="unlink" size="18" />
-        <span class="btn-label">移除</span>
+        <span class="btn-label">{t('toolbar.remove')}</span>
       </button>
     {/if}
 
     <!-- 提醒 -->
     <button
-      class="toolbar-btn reminder-btn"
-      onclick={onSetReminder}
+      bind:this={reminderButtonElement}
+      class="toolbar-btn clickable-icon reminder-btn"
+      onclick={() => { closeAllPanels(); onSetReminder?.(); }}
       onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
       onmouseup={handleButtonDragEnd}
       ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title="设置提醒（长按拖拽调整位置）"
+      title={t('toolbar.setReminder') + '（' + t('toolbar.longPressDrag') + '）'}
     >
       <EnhancedIcon name="bell" size="18" />
-      <span class="btn-label">提醒</span>
+      <span class="btn-label">{t('toolbar.reminder')}</span>
     </button>
 
     <!-- 优先级 -->
     <button
-      class="toolbar-btn priority-btn"
-      onclick={onChangePriority}
+      bind:this={priorityButtonElement}
+      class="toolbar-btn clickable-icon priority-btn"
+      onclick={() => { closeAllPanels(); onChangePriority?.(); }}
       onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
       onmouseup={handleButtonDragEnd}
       ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title="设置优先级（长按拖拽调整位置）"
+      title={t('toolbar.setPriority') + '（' + t('toolbar.longPressDrag') + '）'}
       style="color: {getPriorityColor(card.priority || 2)}"
     >
       <div class="priority-indicator">
         {'!'.repeat(Math.min(card.priority || 2, 3))}
       </div>
-      <span class="btn-label">优先级</span>
+      <span class="btn-label">{t('toolbar.priority')}</span>
     </button>
 
-    <!-- 🆕 AI助手 - 统一AI功能入口（高级功能，需激活） -->
+    <!-- AI 助手 - 统一 AI 功能入口（高级功能，需激活） -->
     {#if isPremium}
       <button
-        class="toolbar-btn ai-assistant-btn"
+        class="toolbar-btn clickable-icon ai-assistant-btn"
         onclick={handleAIAssistantClick}
         onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
         onmouseup={handleButtonDragEnd}
         ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-        title="AI助手（长按拖拽调整位置）"
+        title={t('toolbar.aiAssistant') + '（' + t('toolbar.longPressDrag') + '）'}
       >
         <EnhancedIcon name="robot" size="18" />
-        <span class="btn-label">AI助手</span>
+        <span class="btn-label">{t('toolbar.aiAssistant')}</span>
       </button>
     {/if}
 
-    <!-- 🆕 图谱联动 -->
+    <!-- 图谱联动 -->
     <button
-      class="toolbar-btn graph-link-btn"
+      class="toolbar-btn clickable-icon graph-link-btn"
       class:active={isGraphLinked}
       class:has-source={hasSourceFile}
       onclick={toggleGraphLink}
@@ -1230,15 +1360,15 @@
       onmouseup={handleButtonDragEnd}
       ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
       title={isGraphLinked 
-        ? t('toolbar.graphLinkEnabled') + '（长按拖拽调整位置）'
+        ? t('toolbar.graphLinkEnabled') + '（' + t('toolbar.longPressDrag') + '）'
         : hasSourceFile 
-          ? t('toolbar.graphLinkDisabled') + ' (有来源文档，长按拖拽调整位置)'
-          : t('toolbar.graphLinkDisabled') + ' (无来源文档，长按拖拽调整位置)'}
+          ? t('toolbar.graphLinkDisabled') + ' (' + t('toolbar.hasSourceDoc') + ', ' + t('toolbar.longPressDrag') + ')'
+          : t('toolbar.graphLinkDisabled') + ' (' + t('toolbar.noSourceDocShort') + ', ' + t('toolbar.longPressDrag') + ')'}
     >
       <div class="btn-icon-wrapper">
         <EnhancedIcon name="link" size="18" />
         {#if hasSourceFile}
-          <span class="source-indicator" title="该卡片有来源文档，可查看局部知识图谱"></span>
+          <span class="source-indicator" title={t('toolbar.sourceIndicatorTip')}></span>
         {/if}
       </div>
       <span class="btn-label">{t('toolbar.graphLink')}</span>
@@ -1251,40 +1381,96 @@
     <div class="deck-switcher-container">
       <button
         bind:this={deckButtonElement}
-        class="toolbar-btn deck-btn"
+        class="toolbar-btn clickable-icon deck-btn"
         class:active={showDeckMenu}
-        onclick={handleDeckMenuClick}
-        title="更换牌组"
+        onclick={toggleDeckMenu}
+        title={t('toolbar.changeDeck')}
       >
         <EnhancedIcon name="folder" size="18" />
-        <span class="btn-label">牌组</span>
+        <span class="btn-label">{t('toolbar.deck')}</span>
       </button>
+
+      <FloatingMenu
+        bind:show={showDeckMenu}
+        anchor={deckButtonElement}
+        placement="left-start"
+        onClose={() => showDeckMenu = false}
+        class="deck-menu-container"
+      >
+        {#snippet children()}
+          <div class="multi-info-menu-header">
+            <span>{t('toolbar.setCardDeck')}</span>
+            <button class="close-btn" onclick={() => showDeckMenu = false}>
+              <EnhancedIcon name="times" size="12" />
+            </button>
+          </div>
+
+          <div class="deck-menu-content">
+            {#if !decks || decks.length === 0}
+              <div class="deck-menu-empty">{t('toolbar.noDecksAvailable')}</div>
+            {:else}
+              {@const selectedDeckIds = new Set(getCardDeckIds(card, decks).deckIds)}
+              {#each decks as deck}
+                {@const indentLevel = deck.level || 0}
+                {@const isSelected = selectedDeckIds.has(deck.id)}
+                <button
+                  type="button"
+                  class="deck-menu-item"
+                  class:selected={isSelected}
+                  onclick={async () => {
+                    if (onChangeDeck) {
+                      await Promise.resolve(onChangeDeck(deck.id));
+                    }
+                  }}
+                  title={deck.name}
+                >
+                  <span class="deck-menu-item-main">
+                    <span
+                      class="deck-menu-indent"
+                      style={`padding-left: ${indentLevel * 16}px;`}
+                    >
+                      {#if indentLevel > 0}└ {/if}{deck.name}
+                    </span>
+                  </span>
+                  <span class="deck-menu-check">
+                    {#if isSelected}
+                      <EnhancedIcon name="check-square" size="14" />
+                    {:else}
+                      <EnhancedIcon name="square" size="14" />
+                    {/if}
+                  </span>
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/snippet}
+      </FloatingMenu>
     </div>
 
     <!-- 多功能信息键（查看+来源） -->
     <div class="multi-info-container">
       <button
         bind:this={multiInfoButtonElement}
-        class="toolbar-btn multi-info-btn"
+        class="toolbar-btn clickable-icon multi-info-btn"
         class:active={showMultiInfoMenu}
         onclick={toggleMultiInfoMenu}
-        title="查看卡片信息与来源"
-        aria-label="打开卡片详细信息和来源菜单"
+        title={t('toolbar.viewCardInfo')}
+        aria-label={t('toolbar.openInfoMenu')}
       >
         <EnhancedIcon name="eye" size="18" />
-        <span class="btn-label">查看</span>
+        <span class="btn-label">{t('toolbar.view')}</span>
       </button>
 
       <FloatingMenu
         bind:show={showMultiInfoMenu}
         anchor={multiInfoButtonElement}
-        placement="bottom-start"
+        placement="left-start"
         onClose={() => showMultiInfoMenu = false}
         class="multi-info-menu-container"
       >
         {#snippet children()}
           <div class="multi-info-menu-header">
-            <span>卡片信息与来源</span>
+            <span>{t('toolbar.cardInfoAndSource')}</span>
             <button class="close-btn" onclick={() => showMultiInfoMenu = false}>
               <EnhancedIcon name="times" size="12" />
             </button>
@@ -1293,35 +1479,35 @@
           <div class="multi-info-menu-content">
             <!-- 基础信息 -->
             <div class="info-section">
-              <div class="info-section-title">基础信息</div>
+              <div class="info-section-title">{t('toolbar.basicInfo')}</div>
               <div class="info-item">
-                <span class="info-label">卡片ID</span>
+                <span class="info-label">{t('toolbar.cardId')}</span>
                 <span class="info-value">{card.uuid.slice(0, 8)}...</span>
               </div>
               <div class="info-item">
-                <span class="info-label">所属牌组</span>
+                <span class="info-label">{t('toolbar.belongToDeck')}</span>
                 <span class="info-value">{getDeckName()}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">卡片状态</span>
+                <span class="info-label">{t('toolbar.cardState')}</span>
                 <span class="info-value">{card.fsrs ? getCardStateText(card.fsrs.state) : 'N/A'}</span>
               </div>
-              <!-- 🆕 卡片关系 -->
+              <!-- 卡片关系 -->
               <div class="info-item">
-                <span class="info-label">卡片关系</span>
+                <span class="info-label">{t('toolbar.cardRelation')}</span>
                 <span class="info-value">
                   {#if card.parentCardId}
-                    <span class="relation-badge-compact child">子卡片</span>
+                    <span class="relation-badge-compact child">{t('toolbar.childCard')}</span>
                     {#if card.relationMetadata?.derivationMetadata?.method}
                       <span class="relation-note">({getDerivationMethodName(card.relationMetadata.derivationMetadata.method)})</span>
                     {/if}
                   {:else if card.relationMetadata?.isParent || (card.relationMetadata?.childCardIds && card.relationMetadata.childCardIds.length > 0)}
-                    <span class="relation-badge-compact parent">父卡片</span>
+                    <span class="relation-badge-compact parent">{t('toolbar.parentCard')}</span>
                     {#if card.relationMetadata?.childCardIds}
-                      <span class="relation-note">(含 {card.relationMetadata.childCardIds.length} 张)</span>
+                      <span class="relation-note">({t('toolbar.containCards', { n: card.relationMetadata.childCardIds.length })})</span>
                     {/if}
                   {:else}
-                    <span class="relation-badge-compact normal">独立卡片</span>
+                    <span class="relation-badge-compact normal">{t('toolbar.independentCard')}</span>
                   {/if}
                 </span>
               </div>
@@ -1329,46 +1515,46 @@
 
             <!-- 学习数据 -->
             <div class="info-section">
-              <div class="info-section-title">学习数据</div>
+              <div class="info-section-title">{t('toolbar.studyData')}</div>
               <div class="info-item">
-                <span class="info-label">稳定性</span>
+                <span class="info-label">{t('toolbar.stability')}</span>
                 <span class="info-value">{card.fsrs ? card.fsrs.stability.toFixed(2) : 'N/A'}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">难度</span>
+                <span class="info-label">{t('toolbar.difficulty')}</span>
                 <span class="info-value">{card.fsrs ? card.fsrs.difficulty.toFixed(2) : 'N/A'}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">间隔</span>
+                <span class="info-label">{t('toolbar.interval')}</span>
                 <span class="info-value">{card.fsrs ? formatInterval(card.fsrs.scheduledDays) : 'N/A'}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">总复习次数</span>
-                <span class="info-value">{card.stats?.totalReviews || 0}次</span>
+                <span class="info-label">{t('toolbar.totalReviews')}</span>
+                <span class="info-value">{t('toolbar.timesUnit', { n: card.stats?.totalReviews || 0 })}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">平均用时</span>
-                <span class="info-value">{card.stats?.averageTime ? Math.round(card.stats.averageTime) + '秒' : '未知'}</span>
+                <span class="info-label">{t('toolbar.avgTime')}</span>
+                <span class="info-value">{card.stats?.averageTime ? t('toolbar.secondsUnit', { n: Math.round(card.stats.averageTime) }) : t('toolbar.unknown')}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">记忆成功率</span>
-                <span class="info-value">{card.stats?.memoryRate ? Math.round(card.stats.memoryRate * 100) + '%' : '未知'}</span>
+                <span class="info-label">{t('toolbar.memoryRate')}</span>
+                <span class="info-value">{card.stats?.memoryRate ? Math.round(card.stats.memoryRate * 100) + '%' : t('toolbar.unknown')}</span>
               </div>
             </div>
 
             <!-- 时间信息 -->
             <div class="info-section">
-              <div class="info-section-title">时间信息</div>
+              <div class="info-section-title">{t('toolbar.timeInfo')}</div>
               <div class="info-item">
-                <span class="info-label">创建时间</span>
+                <span class="info-label">{t('toolbar.createdTime')}</span>
                 <span class="info-value">{formatDateTime(card.created)}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">修改时间</span>
+                <span class="info-label">{t('toolbar.modifiedTime')}</span>
                 <span class="info-value">{formatDateTime(card.modified)}</span>
               </div>
               <div class="info-item">
-                <span class="info-label">下次复习</span>
+                <span class="info-label">{t('toolbar.nextReview')}</span>
                 <span class="info-value">{card.fsrs ? formatDateTime(card.fsrs.due) : 'N/A'}</span>
               </div>
             </div>
@@ -1376,7 +1562,7 @@
             <!-- 来源信息 - 使用响应式 sourceInfo ($derived) -->
             {#if true}
               <div class="info-section">
-                <div class="info-section-title">来源信息</div>
+                <div class="info-section-title">{t('toolbar.sourceInfo')}</div>
                 {#if !sourceInfo.sourceFile && !sourceInfo.sourceBlock}
                   <!-- 无来源信息 -->
                   <div class="info-item no-source">
@@ -1428,7 +1614,7 @@
               </div>
             {/if}
 
-            <!-- 🆕 查看详细信息按钮 -->
+            <!-- 查看详细信息按钮 -->
             {#if onOpenDetailedView}
               <div class="info-section detailed-view-section">
                 <button 
@@ -1440,12 +1626,12 @@
                   type="button"
                 >
                   <EnhancedIcon name="maximize-2" size="14" />
-                  <span>查看详细信息</span>
+                  <span>{t('toolbar.viewDetails')}</span>
                 </button>
               </div>
             {/if}
 
-            <!-- 🆕 查看卡片数据结构（调试） -->
+            <!-- 查看卡片数据结构（调试） -->
             {#if onOpenCardDebug}
               <div class="info-section card-debug-section">
                 <button 
@@ -1455,10 +1641,10 @@
                     onOpenCardDebug?.();
                   }}
                   type="button"
-                  title="查看完整的卡片数据结构（JSON格式）"
+                  title={t('toolbar.viewDataStructureTitle')}
                 >
                   <EnhancedIcon name="code" size="14" />
-                  <span>查看数据结构</span>
+                  <span>{t('toolbar.viewDataStructure')}</span>
                 </button>
               </div>
             {/if}
@@ -1467,12 +1653,12 @@
       </FloatingMenu>
     </div>
 
-    <!-- 🆕 源块文本按钮 - 高级功能 -->
+    <!-- 源块文本按钮 - 高级功能 -->
     {#if isPremium}
       <div class="source-block-container">
         <button
           bind:this={sourceBlockButtonElement}
-          class="toolbar-btn source-block-btn"
+          class="toolbar-btn clickable-icon source-block-btn"
           class:active={showSourceBlockMenu}
           class:has-source={hasSourceFile}
           onclick={toggleSourceBlockMenu}
@@ -1486,7 +1672,7 @@
       <FloatingMenu
         bind:show={showSourceBlockMenu}
         anchor={sourceBlockButtonElement}
-        placement="bottom-start"
+        placement="left-start"
         onClose={() => showSourceBlockMenu = false}
         class="source-block-menu-container"
       >
@@ -1580,7 +1766,7 @@
     <div class="more-settings-container">
       <button
         bind:this={moreSettingsButtonElement}
-        class="toolbar-btn more-settings-btn"
+        class="toolbar-btn clickable-icon more-settings-btn"
         class:active={showMoreSettingsMenu}
         onclick={toggleMoreSettingsMenu}
         title="更多设置"
@@ -1593,7 +1779,7 @@
       <FloatingMenu
         bind:show={showMoreSettingsMenu}
         anchor={moreSettingsButtonElement}
-        placement="bottom-start"
+        placement="left-start"
         onClose={() => showMoreSettingsMenu = false}
         class="more-settings-menu-container"
       >
@@ -1672,7 +1858,7 @@
               {/if}
             </div>
 
-            <!-- 🆕 学习顺序设置 -->
+            <!-- 学习顺序设置 -->
             <div class="setting-section">
               <div class="setting-item">
                 <div class="setting-label">卡片顺序</div>
@@ -1684,6 +1870,44 @@
                   ]}
                   value={cardOrder}
                   onchange={(value) => onCardOrderChange?.(value as 'sequential' | 'random')}
+                />
+              </div>
+            </div>
+
+            <!-- 超时自动暂停计时 -->
+            <div class="setting-section">
+              <div class="setting-item interval-item">
+                <div class="setting-label">
+                  超时暂停
+                  <span class="interval-value">{timerAutoPauseSeconds >= 60 ? (timerAutoPauseSeconds / 60) + 'min' : timerAutoPauseSeconds + 's'}</span>
+                </div>
+                <input
+                  type="range"
+                  class="setting-slider"
+                  min="30"
+                  max="300"
+                  step="30"
+                  value={timerAutoPauseSeconds}
+                  oninput={(e) => onTimerAutoPauseChange?.(parseInt((e.target as HTMLInputElement).value))}
+                />
+              </div>
+            </div>
+
+            <!-- 提示次数限制 -->
+            <div class="setting-section">
+              <div class="setting-item interval-item">
+                <div class="setting-label">
+                  提示次数
+                  <span class="interval-value">{hintMaxUses}</span>
+                </div>
+                <input
+                  type="range"
+                  class="setting-slider"
+                  min="1"
+                  max="20"
+                  step="1"
+                  value={hintMaxUses}
+                  oninput={(e) => onHintMaxUsesChange?.(parseInt((e.target as HTMLInputElement).value))}
                 />
               </div>
             </div>
@@ -1705,7 +1929,7 @@
               </div>
             </div>
 
-            <!-- 🆕 显示教程按钮开关 -->
+            <!-- 显示教程按钮开关 -->
             <div class="setting-section">
               <div class="setting-item toggle-item">
                 <div class="setting-label">
@@ -1716,6 +1940,22 @@
                     type="checkbox"
                     checked={showTutorialButton}
                     onchange={(e) => onTutorialButtonToggle?.((e.target as HTMLInputElement).checked)}
+                  />
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-section">
+              <div class="setting-item toggle-item">
+                <div class="setting-label">
+                  <span>显示作答方式切换</span>
+                </div>
+                <label class="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={showClozeModeSwitchButton}
+                    onchange={(e) => onClozeModeSwitchButtonToggle?.((e.target as HTMLInputElement).checked)}
                   />
                   <span class="slider"></span>
                 </label>
@@ -1734,6 +1974,7 @@
                     onclick={() => {
                       showMoreSettingsMenu = false;
                       onRecycleCard?.();
+                      maybeShowRecycleCardHint();
                     }}
                     title="回收当前卡片，暂时移出学习队列，等待改进"
                   >
@@ -1747,12 +1988,12 @@
       </FloatingMenu>
     </div>
 
-    <!-- 🆕 使用教程按钮 -->
+    <!-- 使用教程按钮 -->
     {#if showTutorialButton}
     <div class="tutorial-container">
       <button
         bind:this={tutorialButtonElement}
-        class="toolbar-btn tutorial-btn"
+        class="toolbar-btn clickable-icon tutorial-btn"
         class:active={showTutorialMenu}
         onclick={toggleTutorialMenu}
         title="查看使用教程"
@@ -2093,33 +2334,39 @@ tags: [学习]
                     
                     <div class="tutorial-text">
                       <h4>功能介绍</h4>
-                      <p>AI测试题生成是基于记忆卡片内容智能生成练习题的功能，用于巩固学习效果。</p>
+                      <p>AI测试题生成会基于当前记忆卡片内容，自动生成用于练习和自测的题目，帮助你把“会看”进一步转成“会做”。</p>
                       
-                      <h4>记忆牌组与考试牌组的关系</h4>
-                      <p><strong>记忆牌组</strong>：</p>
+                      <h4>当前数据结构：不再维护独立测试题组</h4>
+                      <p>这里需要特别说明：旧教程里提到的“为每个记忆牌组单独创建一个考试题组 / 测试题组”的方案，已经弃用。</p>
                       <ul>
-                        <li>用途：间隔重复学习</li>
-                        <li>使用FSRS算法调度复习</li>
-                        <li>卡片标识：cardPurpose='memory'</li>
-                        <li>包含字段：fsrs、reviewHistory等</li>
+                        <li><strong>现在的记忆卡片</strong>：仍然是主要学习对象，使用 <code>cardPurpose='memory'</code>，由 FSRS 负责复习调度。</li>
+                        <li><strong>现在的测试题</strong>：主要通过 <code>uuid</code> 引用记忆体系中的选择题卡片来组织和调用，不再额外复制出一个独立的“测试题组”。</li>
+                        <li><strong>这样做的好处</strong>：避免内容重复、减少两套卡片数据不一致的问题，也更方便统一维护来源、编辑和同步。</li>
                       </ul>
                       
-                      <p><strong>考试牌组</strong>：</p>
-                      <ul>
-                        <li>用途：测试和练习</li>
-                        <li>使用EWMA算法，科学评估掌握度</li>
-                        <li>卡片标识：cardPurpose='test'</li>
-                        <li>包含字段：testStats（正确率、平均用时、掌握度等）</li>
-                      </ul>
+                      <h4>你可以这样理解</h4>
+                      <pre>旧方案（已弃用）：
+记忆牌组 → 派生一个独立考试题组 → 保存测试题副本
+
+当前方案：
+记忆牌组中的选择题卡片
+        ↓
+考试学习流程通过 uuid 直接引用
+        ↓
+不再维护独立测试题组</pre>
                       
-                      <p><strong>一对一对应关系</strong>：</p>
-                      <p>每个记忆牌组可以有一个对应的考试牌组，命名格式为"牌组名 - 考试"。测试题生成时，会自动创建或关联到对应的考试牌组。</p>
+                      <h4>考试学习与记忆学习的关系</h4>
+                      <p>虽然不再使用独立测试题组，但“记忆学习”和“考试练习”仍然是两种不同的学习场景：</p>
+                      <ul>
+                        <li><strong>记忆学习</strong>：侧重长期记忆巩固，核心是 FSRS 间隔重复。</li>
+                        <li><strong>考试练习</strong>：侧重检索、判断和答题表现，核心是做题过程与掌握度评估。</li>
+                        <li><strong>底层联系</strong>：两者会围绕同一批知识内容协同工作，而不是各自维护一套重复数据。</li>
+                      </ul>
                       
                       <h4>EWMA算法：科学评估掌握度</h4>
                       <p><strong>什么是EWMA？</strong></p>
-                      <p>EWMA = Exponentially Weighted Moving Average（指数加权移动平均）</p>
-                      
-                      <p><strong>核心思想</strong>：近期的测试结果比早期结果更能反映当前掌握程度</p>
+                      <p>EWMA = Exponentially Weighted Moving Average（指数加权移动平均）。</p>
+                      <p><strong>核心思想</strong>：最近几次测试结果，比很久以前的结果更能代表你当前的真实掌握程度。</p>
                       
                       <p><strong>计算公式</strong>：</p>
                       <pre>R_t = α × result_t + (1-α) × R_{'{'}t-1{'}'}
@@ -2136,20 +2383,22 @@ tags: [学习]
   第8次：权重 13%
   ...（越早期权重越低）</pre>
                       
-                      <h4>测试题卡片的溯源</h4>
-                      <p>每张AI生成的测试题都保留完整的溯源信息：</p>
+                      <h4>测试题的溯源关系</h4>
+                      <p>AI生成的测试题会保留和原始学习内容之间的关联，方便追踪来源与后续维护：</p>
                       <ul>
-                        <li><strong>源卡片信息</strong>：sourceCardId、sourceCardContent</li>
-                        <li><strong>生成元数据</strong>：generationMethod、generationTimestamp、aiProvider、aiModel</li>
-                        <li><strong>继承的来源信息</strong>：sourceFile、sourceBlock、sourceRange</li>
+                        <li><strong>来源关联</strong>：通过 uuid 与对应的记忆卡片 / 选择题卡片建立引用关系</li>
+                        <li><strong>生成元数据</strong>：记录 generationMethod、generationTimestamp、aiProvider、aiModel 等信息</li>
+                        <li><strong>来源上下文</strong>：可继承 sourceFile、sourceBlock、sourceRange 等来源信息</li>
                       </ul>
                       
                       <h4>使用流程</h4>
-                      <pre>1. 选择源卡片（当前显示的卡片）
-2. 点击"AI助手" → "生成测试题"，选择生成功能
-3. 查看预览，选择要保存的题目
-4. 点击"收入到题库"
-5. 系统自动创建或关联对应的考试牌组</pre>
+                      <pre>1. 选择当前正在学习的记忆卡片
+2. 点击“AI助手” → “生成测试题”
+3. 预览生成结果，确认题目内容
+4. 点击“收入到题库”
+5. 系统将通过 uuid 建立与记忆内容的引用关系，用于后续考试学习</pre>
+                      
+                      <p class="tutorial-note">简而言之：现在的测试题不是“另存一份到独立牌组”，而是“围绕原有记忆内容建立引用式练习关系”。</p>
                     </div>
                   </div>
 
@@ -2184,10 +2433,10 @@ tags: [学习]
                       
                       <h4>拆分与测试题的区别</h4>
                       <ul>
-                        <li><strong>目标牌组</strong>：AI拆分→记忆牌组，测试题→考试牌组</li>
-                        <li><strong>卡片用途</strong>：AI拆分→记忆学习（cardPurpose='memory'），测试题→测试练习（cardPurpose='test'）</li>
-                        <li><strong>FSRS算法</strong>：AI拆分使用，测试题使用EWMA算法</li>
-                        <li><strong>父子关系</strong>：AI拆分建立父子关系，测试题仅记录源卡片</li>
+                        <li><strong>目标对象</strong>：AI拆分会生成新的记忆卡片；测试题生成则围绕原有记忆内容建立练习引用关系</li>
+                        <li><strong>学习用途</strong>：AI拆分用于记忆学习细化；测试题用于测试练习与掌握度评估</li>
+                        <li><strong>算法侧重</strong>：AI拆分后的记忆卡片继续使用FSRS；测试练习侧使用EWMA评估掌握度</li>
+                        <li><strong>结构关系</strong>：AI拆分建立父子卡片关系；测试题主要记录源卡片与题目之间的引用关系</li>
                       </ul>
                       
                       <h4>子卡片拆分防护</h4>
@@ -2239,7 +2488,7 @@ tags: [学习]
      ├─ AI测试题生成
      │   ├─ 选择生成类型
      │   ├─ 预览生成的题目
-     │   └─ 选择保存到考试牌组
+     │   └─ 建立与记忆内容的引用关系
      └─ AI拆分
          ├─ 选择拆分策略
          ├─ 预览子卡片
@@ -2263,7 +2512,7 @@ tags: [学习]
                       <ul>
                         <li><strong>首次使用</strong>：需要在设置中配置AI服务</li>
                         <li><strong>AI是辅助</strong>：保持人工审核和创作的主导地位</li>
-                        <li><strong>记忆与测试分离</strong>：记忆牌组使用FSRS，考试牌组使用EWMA</li>
+                        <li><strong>记忆与测试协同</strong>：记忆学习使用FSRS，测试练习侧使用EWMA评估掌握度</li>
                         <li><strong>溯源透明</strong>：所有AI生成内容都可追溯来源</li>
                         <li><strong>层级清晰</strong>：子卡片不可再拆，防止过度复杂化</li>
                       </ul>
@@ -2999,6 +3248,9 @@ D. 顺序学习算法
 
   /* 计时器区域 */
   .timer-section {
+    width: 100%;
+    box-sizing: border-box;
+    padding-inline: 0.28rem;
     border-bottom: 1px solid var(--background-modifier-border);
     padding-bottom: 1rem;
     gap: 0.75rem;
@@ -3008,31 +3260,40 @@ D. 顺序学习算法
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
     gap: 0.25rem;
-    padding: 0.5rem 0.25rem;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0.5rem 0.35rem;
     background: var(--background-primary);
     border-radius: 8px;
-    min-width: 60px;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
     border: 1px solid var(--background-modifier-border);
     position: relative;
   }
 
   .timer-text {
-    font-size: 0.8rem;
+    font-size: 0.79rem;
     font-weight: 600;
     color: var(--text-accent);
     font-family: var(--font-monospace);
-    letter-spacing: 0.3px;
+    letter-spacing: 0.12px;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
   }
 
   .timer-label {
     font-size: 0.55rem;
     color: var(--text-muted);
     font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.18px;
     text-align: center;
+    line-height: 1.15;
+    white-space: nowrap;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* 单卡计时器样式 */
@@ -3152,16 +3413,41 @@ D. 顺序学习算法
 
   /* 紧凑模式下计时器也缩小 */
   .vertical-toolbar.compact .timer-display {
-    min-width: 60px;
-    padding: 0.5rem 0.25rem;
+    width: 100%;
+    min-width: 0;
+    padding: 0.42rem 0.2rem;
+    border-radius: 7px;
   }
 
   .vertical-toolbar.compact .timer-text {
-    font-size: 0.8rem;
+    font-size: 0.74rem;
+    letter-spacing: 0;
   }
 
   .vertical-toolbar.compact .timer-label {
-    font-size: 0.55rem;
+    font-size: 0.5rem;
+    letter-spacing: 0.1px;
+  }
+
+  @media (max-width: 1360px) {
+    .timer-section {
+      padding-inline: 0.2rem;
+      gap: 0.55rem;
+    }
+
+    .timer-display {
+      padding: 0.44rem 0.24rem;
+      border-radius: 7px;
+    }
+
+    .timer-text {
+      font-size: 0.74rem;
+    }
+
+    .timer-label {
+      font-size: 0.5rem;
+      letter-spacing: 0.1px;
+    }
   }
 
   /* 紧凑模式下的删除按钮进度环 - 已移除 */
@@ -3247,6 +3533,76 @@ D. 顺序学习算法
   /* 多功能信息键容器 */
   .multi-info-container {
     position: relative;
+  }
+
+  .deck-menu-content {
+    min-width: 240px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  .deck-menu-empty {
+    padding: 12px 8px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+  }
+
+  .deck-menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-normal);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: left;
+    margin-bottom: 4px;
+  }
+
+  .deck-menu-item:last-child {
+    margin-bottom: 0;
+  }
+
+  .deck-menu-item:hover {
+    background: var(--background-modifier-hover);
+    border-color: color-mix(in srgb, var(--interactive-accent) 30%, transparent);
+  }
+
+  .deck-menu-item.selected {
+    background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+    border-color: color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+  }
+
+  .deck-menu-item-main {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .deck-menu-indent {
+    display: block;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .deck-menu-check {
+    flex-shrink: 0;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .deck-menu-item.selected .deck-menu-check {
+    color: var(--interactive-accent);
   }
 
   .close-btn {
@@ -3342,12 +3698,12 @@ D. 顺序学习算法
     }
   }
 
-  /* 🆕 AI助手按钮样式 */
+  /* AI 助手按钮样式 */
   .ai-assistant-btn:hover {
     color: var(--color-purple);
   }
 
-  /* 🆕 图谱联动按钮 - 来源文档指示器 */
+  /* 图谱联动按钮 - 来源文档指示器 */
   .graph-link-btn .btn-icon-wrapper {
     position: relative;
     display: inline-flex;
@@ -3494,7 +3850,7 @@ D. 顺序学习算法
     text-decoration-style: solid;
   }
 
-  /* 🆕 查看详细信息按钮 */
+  /* 查看详细信息按钮 */
   .detailed-view-section {
     margin-top: 8px;
     padding-top: 8px;
@@ -3530,7 +3886,7 @@ D. 顺序学习算法
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
   }
 
-  /* 🆕 查看数据结构按钮（调试） */
+  /* 查看数据结构按钮（调试） */
   .card-debug-section {
     margin-top: 8px;
     padding-top: 8px;
@@ -3643,6 +3999,7 @@ D. 顺序学习算法
     font-size: 0.85rem;
     font-weight: 500;
     color: var(--text-normal);
+    flex-shrink: 0;
   }
 
   /* 搁置项特殊样式 - 保持与其他setting-item一致 */
@@ -3706,27 +4063,19 @@ D. 顺序学习算法
     box-shadow: 0 1px 3px color-mix(in srgb, var(--interactive-accent) 20%, transparent);
   }
 
-  .setting-select {
-    padding: 6px 10px;
-    border-radius: 6px;
-    border: 1.5px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    color: var(--text-normal);
-    font-size: 0.8rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  .suspend-apply-btn:disabled {
+    background: var(--background-modifier-border);
+    color: var(--text-muted);
+    cursor: not-allowed;
+    opacity: 0.7;
+    transform: none;
+    box-shadow: none;
   }
 
-  .setting-select:hover {
-    border-color: var(--interactive-accent);
-    background: var(--background-modifier-hover);
-  }
-
-  .setting-select:focus {
-    outline: none;
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 15%, transparent);
+  .suspend-apply-btn:disabled:hover {
+    background: var(--background-modifier-border);
+    transform: none;
+    box-shadow: none;
   }
 
   :global(.obsidian-dropdown-trigger.setting-select) {
@@ -3738,6 +4087,8 @@ D. 顺序学习算法
     font-size: 0.8125rem;
     cursor: pointer;
     min-height: 0;
+    min-width: 120px;
+    margin-left: auto;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
@@ -3913,7 +4264,7 @@ D. 顺序学习算法
     color: var(--text-error);
   }
 
-  /* 🆕 紧凑版卡片关系徽章（侧边栏专用） */
+  /* 紧凑版卡片关系徽章（侧边栏专用） */
   .relation-badge-compact {
     display: inline-block;
     padding: 2px 6px;
@@ -3944,7 +4295,7 @@ D. 顺序学习算法
     font-weight: 500;
   }
 
-  /* ==================== 🆕 教程菜单样式 ==================== */
+  /* ==================== 教程菜单样式 ==================== */
   
   /* 教程容器 */
   .tutorial-container {
@@ -4012,7 +4363,7 @@ D. 顺序学习算法
     transform: rotate(90deg);
   }
 
-  /* 🆕 第三层：Tabs导航 */
+  /* 第三层：Tabs 导航 */
   .study-tutorial-tabs {
     flex-shrink: 0;
     display: flex;
@@ -4046,7 +4397,7 @@ D. 顺序学习算法
     font-weight: 600;
   }
   
-  /* 🆕 更多按钮样式 */
+  /* 更多按钮样式 */
   .study-tutorial-tabs .more-button {
     padding: 10px 16px;
     margin-left: auto; /* 推到最右边 */
@@ -4116,14 +4467,14 @@ D. 顺序学习算法
     align-items: center;
     gap: 10px;
     padding: 14px 16px;
-    background: color-mix(in srgb, var(--background-secondary) 15%, transparent);
-    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 20%, transparent);
+    background: color-mix(in srgb, var(--interactive-accent) 38%, var(--background-primary));
+    border-bottom: 1px solid color-mix(in srgb, var(--interactive-accent) 28%, transparent);
   }
 
   .tutorial-section-title span {
     font-size: 0.88rem;
-    font-weight: 600;
-    color: var(--text-normal);
+    font-weight: 700;
+    color: var(--text-on-accent, #ffffff);
     letter-spacing: 0.2px;
   }
 
@@ -4216,7 +4567,7 @@ D. 顺序学习算法
     margin-top: 8px;
   }
 
-  /* ==================== 🆕 源块文本浮窗样式 ==================== */
+  /* ==================== 源块文本浮窗样式 ==================== */
   
   .source-block-container {
     position: relative;
@@ -4383,12 +4734,6 @@ D. 顺序学习算法
   .context-section.context-after {
     border-bottom: none;
     border-top: 1px dashed color-mix(in srgb, var(--background-modifier-border) 50%, transparent);
-  }
-
-  .context-line {
-    padding: 2px 0;
-    white-space: pre-wrap;
-    word-break: break-word;
   }
 
   /* 源块高亮 */

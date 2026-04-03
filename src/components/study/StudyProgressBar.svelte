@@ -136,15 +136,19 @@
       total: t('studyInterface.progress.total').replace('{n}', String(data.total))
     };
   });
+
+  let hasData = $derived(() => progressData().total > 0);
 </script>
 
 <div class="study-progress-container {className}">
   <div
     class="study-progress-bar"
     class:loading={isLoading}
+    class:empty={!hasData()}
     title={tooltips().total}
     role="progressbar"
     aria-label={t('studyInterface.progress.ariaLabel')}
+    aria-valuetext={tooltips().total}
   >
     <!-- 已掌握区域 (绿色) -->
     <div
@@ -180,68 +184,121 @@
   .study-progress-container {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    min-width: 0;
   }
 
   .study-progress-bar {
+    --segment-mastered: #2f9b72;
+    --segment-learning: #d1a248;
+    --segment-new: #4f7fcc;
+    --segment-review: #c96a5f;
     position: relative;
-    width: 200px;
-    height: 8px;
-    background: var(--background-modifier-form-field);
-    border-radius: var(--weave-radius-sm);
+    width: 212px;
+    height: 10px;
+    background: color-mix(in srgb, var(--background-modifier-form-field) 78%, var(--background-primary) 22%);
+    border-radius: 999px;
     overflow: hidden;
-    cursor: pointer;
-    transition: var(--weave-transition-normal);
+    transition: box-shadow 0.22s ease, border-color 0.22s ease;
     display: flex;
-    border: 1px solid var(--background-modifier-border);
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, transparent);
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.22),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.04);
+    isolation: isolate;
   }
 
   .study-progress-bar:hover {
-    transform: scaleY(1.2);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border-color: color-mix(in srgb, var(--text-accent) 24%, var(--background-modifier-border));
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.2),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.06),
+      0 0 0 2px color-mix(in srgb, var(--text-accent) 10%, transparent);
+  }
+
+  .study-progress-bar.empty::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      color-mix(in srgb, var(--background-modifier-border) 22%, transparent) 48%,
+      transparent 100%
+    );
+    opacity: 0.65;
+    pointer-events: none;
+    z-index: 1;
   }
 
   /* 加载状态 */
   .study-progress-bar.loading {
-    opacity: 0.6;
+    opacity: 0.82;
     pointer-events: none;
+  }
+
+  .study-progress-bar.loading::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      100deg,
+      transparent 10%,
+      rgba(255, 255, 255, 0.3) 45%,
+      transparent 80%
+    );
+    animation: progress-loading-sheen 1.4s linear infinite;
+    pointer-events: none;
+    z-index: 2;
   }
 
   .progress-segment {
     height: 100%;
-    transition: all 0.3s ease-in-out;
+    transition: width 0.28s ease, filter 0.22s ease;
     position: relative;
-    cursor: pointer;
+    z-index: 0;
   }
 
-  .progress-segment:hover {
-    filter: brightness(1.1);
-    transform: scaleY(1.1);
-    z-index: 1;
+  .progress-segment + .progress-segment {
+    box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.16);
   }
 
-  /* 优化的学习状态颜色方案 */
+  .study-progress-bar:hover .progress-segment {
+    filter: saturate(1.06) brightness(1.02);
+  }
+
+  .progress-segment::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.22) 0%,
+      rgba(255, 255, 255, 0) 65%
+    );
+    pointer-events: none;
+  }
+
   .progress-segment.mastered {
-    background: #10b981; /* 绿色 - 已掌握 */
+    background: linear-gradient(135deg, var(--segment-mastered), color-mix(in srgb, var(--segment-mastered) 76%, #ffffff 24%));
   }
 
   .progress-segment.learning {
-    background: #f59e0b; /* 黄色 - 学习中 */
+    background: linear-gradient(135deg, var(--segment-learning), color-mix(in srgb, var(--segment-learning) 78%, #ffffff 22%));
   }
 
   .progress-segment.new {
-    background: #3b82f6; /* 蓝色 - 新卡片 */
+    background: linear-gradient(135deg, var(--segment-new), color-mix(in srgb, var(--segment-new) 78%, #ffffff 22%));
   }
 
   .progress-segment.review {
-    background: #ef4444; /* 红色 - 待复习 */
+    background: linear-gradient(135deg, var(--segment-review), color-mix(in srgb, var(--segment-review) 76%, #ffffff 24%));
   }
 
   /* 响应式设计 */
   @media (max-width: 768px) {
     .study-progress-bar {
-      width: 150px;
-      height: 6px;
+      width: 172px;
+      height: 8px;
     }
   }
 
@@ -250,70 +307,49 @@
   /* 手机端：进度条自适应宽度 */
   :global(body.is-phone) .study-progress-container {
     flex: 1;
-    gap: 0.5rem;
+    min-width: 0;
   }
 
   :global(body.is-phone) .study-progress-bar {
     width: 100%;
-    min-width: 80px;
-    max-width: 200px;
+    min-width: 96px;
+    max-width: 180px;
     height: 6px;
   }
 
   /* 平板端 */
   :global(body.is-tablet) .study-progress-bar {
-    width: 180px;
-    height: 7px;
+    width: 190px;
+    height: 8px;
   }
 
   /* 无障碍支持 */
-  .progress-segment:focus {
+  .study-progress-bar:focus-visible {
     outline: 2px solid var(--text-accent);
     outline-offset: 2px;
   }
 
-  /* 动画效果 */
-  @keyframes progressUpdate {
-    0% {
-      transform: scaleX(0.95);
+  @keyframes progress-loading-sheen {
+    from {
+      transform: translateX(-140%);
     }
-    50% {
-      transform: scaleX(1.05);
-    }
-    100% {
-      transform: scaleX(1);
+    to {
+      transform: translateX(160%);
     }
   }
 
-  .progress-segment {
-    animation: progressUpdate 0.5s ease-out;
-  }
-
-  /* 暗色主题优化 - 使用统一的主题变量 */
   :global(body.theme-dark) .study-progress-bar {
-    background: var(--background-modifier-form-field);
-    border-color: var(--background-modifier-border);
-    box-shadow: var(--weave-shadow-sm);
+    background: color-mix(in srgb, var(--background-modifier-form-field) 72%, #161616 28%);
+    border-color: color-mix(in srgb, var(--background-modifier-border) 70%, #2b2b2b 30%);
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.1),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.26);
   }
 
   :global(body.theme-dark) .study-progress-bar:hover {
-    box-shadow: var(--weave-shadow-md);
-  }
-
-  /* 暗色主题下的进度段颜色 - 优化对比度 */
-  :global(body.theme-dark) .progress-segment.mastered {
-    background: #059669; /* 深绿色 - 已掌握 */
-  }
-
-  :global(body.theme-dark) .progress-segment.learning {
-    background: #d97706; /* 深黄色 - 学习中 */
-  }
-
-  :global(body.theme-dark) .progress-segment.new {
-    background: #2563eb; /* 深蓝色 - 新卡片 */
-  }
-
-  :global(body.theme-dark) .progress-segment.review {
-    background: #dc2626; /* 深红色 - 待复习 */
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.08),
+      inset 0 -1px 1px rgba(0, 0, 0, 0.28),
+      0 0 0 2px color-mix(in srgb, var(--text-accent) 18%, transparent);
   }
 </style>

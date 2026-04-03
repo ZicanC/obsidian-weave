@@ -108,12 +108,12 @@ export interface AIConfig {
   defaultProvider?: string;
   
   /**
-   * 🆕 上次使用的AI服务提供商（用于持久化用户选择）
+   * 上次使用的 AI 服务提供商（用于持久化用户选择）
    */
   lastUsedProvider?: string;
   
   /**
-   * 🆕 上次使用的AI模型（用于持久化用户选择）
+   * 上次使用的 AI 模型（用于持久化用户选择）
    */
   lastUsedModel?: string;
   
@@ -244,7 +244,7 @@ export interface SiblingDispersionConfig {
   spacingPercentage?: number;
   
   /**
-   * 队列生成时过滤（P0）
+   * 队列生成时过滤
    * 默认: true
    * 避免同一会话中出现兄弟卡片
    */
@@ -285,7 +285,7 @@ export interface StudyConfig {
   fsrs?: FSRSConfig;
   
   /**
-   * 🆕 兄弟卡片分散配置（渐进式挖空优化）
+   * 兄弟卡片分散配置
    */
   siblingDispersion?: SiblingDispersionConfig;
   
@@ -354,7 +354,7 @@ export interface UIConfig {
   defaultView?: 'cards' | 'decks' | 'stats';
   
   /**
-   * 🆕 牌组卡片设计样式
+   * 牌组卡片设计样式
    */
   deckCardStyle?: DeckCardStyle;
 }
@@ -364,94 +364,14 @@ export interface UIConfig {
 // ============================================================================
 
 /**
- * 增量阅读聚焦界面设置（侧边功能栏状态持久化）
+ * Incremental reading global sidebar settings.
  */
-export interface IRFocusInterfaceSettings {
-  /**
-   * 是否显示左侧章节导航
-   * @default true
-   */
-  showChapterNav?: boolean;
-  
-  /**
-   * 是否显示右侧工具栏
-   * @default true
-   */
-  showToolbar?: boolean;
-  
-  /**
-   * 是否折叠统计卡片
-   * @default false
-   */
-  statsCollapsed?: boolean;
-  
-  /**
-   * 是否显示自评预测时间
-   * @default true
-   */
-  showRatingTime?: boolean;
-  
-  /**
-   * 是否始终显示自评栏
-   * @default false
-   */
-  alwaysShowRating?: boolean;
-  
-  /**
-   * 默认编辑模式
-   * @default true
-   */
-  defaultEditMode?: boolean;
-  
-  /**
-   * 是否显示优先级贴纸
-   * @default true
-   */
-  showPrioritySticker?: boolean;
-  
-  /**
-   * @deprecated v5.5: 已弃用，不再使用
-   */
-  showIntervalModifier?: boolean;
-  
-  /**
-   * @deprecated v5.5: 已弃用，不再使用
-   */
-  showCognitiveSticker?: boolean;
-  
-  /**
-   * v3.1: 是否折叠内容块导航栏
-   * @default false
-   */
-  navCollapsed?: boolean;
-  
-  /**
-   * v3.2: 工具栏按钮顺序
-   * @default undefined (使用默认顺序)
-   */
-  toolbarButtonOrder?: string[];
-  
-  /**
-   * v5.5: 是否折叠产出信息栏
-   * @default true
-   */
-  outputStatsCollapsed?: boolean;
+export interface IRCalendarSidebarSettings {
+  continuousReadingEnabled?: boolean;
+  autoStartNextTimerEnabled?: boolean;
+  showSchedulingPreview?: boolean;
+  showMaterialTimers?: boolean;
 }
-
-/**
- * 增量阅读聚焦界面默认设置
- */
-export const DEFAULT_IR_FOCUS_SETTINGS: IRFocusInterfaceSettings = {
-  showChapterNav: true,
-  showToolbar: true,
-  statsCollapsed: false,
-  showRatingTime: true,
-  alwaysShowRating: false,
-  defaultEditMode: true,
-  showPrioritySticker: true,
-  navCollapsed: false,
-  outputStatsCollapsed: true
-};
 
 /**
  * 增量阅读全局设置
@@ -511,11 +431,19 @@ export interface IncrementalReadingSettings {
    * @default 'weave/incremental-reading'
    */
   importFolder?: string;
+
+  selectionQuickCreateDeleteSource?: boolean;
+
+  selectionQuickCreateLastFolder?: string;
+
+  selectionQuickCreateBacklinkPosition?: 'start' | 'end';
+
+  selectionQuickCreateSourceDocumentBacklinkPosition?: 'start' | 'end';
   
   /**
-   * 聚焦界面设置（侧边功能栏状态持久化）
+   * Global sidebar settings.
    */
-  focusInterface?: IRFocusInterfaceSettings;
+  calendarSidebar?: IRCalendarSidebarSettings;
   
   // ============================================
   // v3.0 调度系统新增设置
@@ -654,6 +582,10 @@ export const DEFAULT_IR_SETTINGS: IncrementalReadingSettings = {
   reviewThreshold: 7,
   maxInterval: 365,
   importFolder: '',
+  selectionQuickCreateDeleteSource: false,
+  selectionQuickCreateLastFolder: '',
+  selectionQuickCreateBacklinkPosition: 'start',
+  selectionQuickCreateSourceDocumentBacklinkPosition: 'start',
   // v3.0 新增
   scheduleStrategy: 'processing',
   dailyTimeBudgetMinutes: 40,
@@ -663,7 +595,13 @@ export const DEFAULT_IR_SETTINGS: IncrementalReadingSettings = {
   autoPostponeStrategy: 'gentle',
   priorityHalfLifeDays: 7,
   learnAheadDays: 3,
-  tagGroupFollowMode: 'ask'
+  tagGroupFollowMode: 'ask',
+  calendarSidebar: {
+    continuousReadingEnabled: false,
+    autoStartNextTimerEnabled: false,
+    showSchedulingPreview: false,
+    showMaterialTimers: true
+  }
 };
 
 // ============================================================================
@@ -690,7 +628,7 @@ export interface WeaveSettings {
   uiConfig?: UIConfig;
   
   /**
-   * 🆕 牌组标签组配置
+   * 牌组标签组配置
    * 用于看板视图按标签组分组
    */
   deckTagGroups?: import('../types/deck-kanban-types').DeckTagGroup[];
@@ -717,16 +655,9 @@ export interface WeaveSettings {
   showPremiumFeaturesPreview?: boolean;
   
   /**
-   * 🆕 是否显示性能优化设置
+   * 是否显示性能优化设置
    */
   showPerformanceSettings?: boolean;
-
-  /**
-   * 是否启用第三方插件系统
-   * 关闭时不加载插件、不显示插件标签页
-   * @default false
-   */
-  enableThirdPartyPlugins?: boolean;
 
   /**
    * 是否启用预览
@@ -775,6 +706,11 @@ export interface WeaveSettings {
 
   weaveParentFolder?: string;
 
+  createCardPreferences?: {
+    lastSelectedDeckId?: string;
+    lastSelectedDeckNames?: string[];
+  };
+
   /**
    * 是否跳过指南牌组自动创建
    * 用户手动删除教程牌组后设为 true，防止重启后自动恢复
@@ -782,6 +718,30 @@ export interface WeaveSettings {
    * @default false
    */
   skipGuideDeck?: boolean;
+
+  /**
+   * 超时自动暂停计时（秒）
+   * 单张卡片计时超过此值后自动暂停，防止离开时计时虚高
+   * @default 60
+   */
+  timerAutoPauseSeconds?: number;
+
+  /**
+   * 提示功能每次学习会话最大使用次数
+   * @default 5
+   */
+  hintMaxUses?: number;
+
+  /**
+   * 记忆学习底部“作答方式（显示答案/输入作答）”切换按钮显示设置
+   * @default true
+   */
+  showClozeModeSwitchButton?: boolean;
+
+  /**
+   * 全局教程提示持久化状态（true 表示永久不再显示）
+   */
+  tutorialHints?: import('../services/tutorial/GlobalTutorialHints').GlobalTutorialHintState;
 }
 
 /**

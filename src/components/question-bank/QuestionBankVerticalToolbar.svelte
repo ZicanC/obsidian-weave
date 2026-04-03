@@ -1,7 +1,7 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
-  //  v2.1.1: 静态导入 parseSourceInfo（修复响应式问题）
-  import { parseSourceInfo } from '../../utils/yaml-utils';
+  // 静态导入 parseSourceInfo，确保响应式追踪正常
+  import { parseEpubSourceInfo, parseSourceInfo } from '../../utils/yaml-utils';
 
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
   import FloatingMenu from "../ui/FloatingMenu.svelte";
@@ -9,7 +9,10 @@
   import type { Card } from "../../data/types";
   import type { WeavePlugin } from "../../main";
   import { tr } from '../../utils/i18n';
-  import { MarkdownView, Notice } from "obsidian";
+  import { Notice } from "obsidian";
+  import { openLinkWithExistingLeaf } from '../../utils/workspace-navigation';
+  import { getSourceLocateOverlayService } from '../../services/ui/SourceLocateOverlayService';
+  import { SourceNavigationService } from '../../services/ui/SourceNavigationService';
 
   interface Props {
     card: Card;
@@ -25,6 +28,7 @@
     onDelete?: (skipConfirm?: boolean) => void;
     onToggleFavorite?: () => void;
     onChangePriority?: () => void;
+    onPriorityAnchorChange?: (element: HTMLElement | null) => void;
     onOpenPlainEditor?: () => void;
     onOpenDetailedView?: () => void;
     onOpenCardDebug?: () => void;
@@ -50,6 +54,7 @@
     onDelete,
     onToggleFavorite,
     onChangePriority,
+    onPriorityAnchorChange,
     onOpenPlainEditor,
     onOpenDetailedView,
     onOpenCardDebug,
@@ -135,16 +140,20 @@
     draggedButtonElement = null;
   }
 
-  //  v2.1.1: 响应式来源信息 - 使用统一的 parseSourceInfo 工具函数
-  //  修复：使用静态 import 确保响应式追踪正常工作
+  // 响应式来源信息，使用统一的 parseSourceInfo 工具函数
+  // 静态导入可确保响应式追踪正常工作
   let sourceInfo = $derived.by(() => {
     const content = card?.content;
     if (!content) return { sourceFile: card?.sourceFile, sourceBlock: card?.sourceBlock };
     
     const parsed = parseSourceInfo(content);
+    const epubSource = parseEpubSourceInfo(content);
     return {
-      sourceFile: parsed.sourceFile || card?.sourceFile,
-      sourceBlock: parsed.sourceBlock || card?.sourceBlock
+      sourceFile: epubSource.sourceFile || parsed.sourceFile || card?.sourceFile,
+      sourceBlock: parsed.sourceBlock || card?.sourceBlock,
+      epubCfi: epubSource.cfi,
+      epubText: epubSource.text,
+      epubChapter: epubSource.chapter
     };
   });
 
@@ -172,9 +181,27 @@
     return Math.min(Math.max(priority, 1), 4);
   }
 
+  let priorityButtonElement: HTMLElement | null = $state(null);
+
+  $effect(() => {
+    onPriorityAnchorChange?.(priorityButtonElement);
+  });
+
   // 多功能信息键
   let showMultiInfoMenu = $state(false);
+  const sourceLocateOverlay = getSourceLocateOverlayService();
+  const sourceNavigationService = plugin ? new SourceNavigationService(plugin.app) : null;
   let multiInfoButtonElement: HTMLElement | null = $state(null);
+
+  function showMarkdownSourceOverlay(openedLeaf: any, candidates: string[], fallbackEl?: HTMLElement | null) {
+    if (!plugin || !sourceNavigationService) return;
+    sourceNavigationService.locateOpenedMarkdownLeaf(openedLeaf, candidates, {
+      fallbackEl,
+      label: '定位到溯源位置',
+      icon: 'map-pinned',
+      delayMs: 220
+    });
+  }
 
   //  新增：源卡片信息
   let sourceCard = $state<Card | null>(null);
@@ -189,16 +216,28 @@
   let tutorialButtonElement: HTMLElement | null = $state(null);
   let activeTutorialTab = $state<'tutorial' | 'algorithm'>('tutorial');
 
+  function closeAllPanels() {
+    showMultiInfoMenu = false;
+    showMoreSettingsMenu = false;
+    showTutorialMenu = false;
+  }
+
   function toggleMultiInfoMenu() {
-    showMultiInfoMenu = !showMultiInfoMenu;
+    const next = !showMultiInfoMenu;
+    closeAllPanels();
+    showMultiInfoMenu = next;
   }
 
   function toggleMoreSettingsMenu() {
-    showMoreSettingsMenu = !showMoreSettingsMenu;
+    const next = !showMoreSettingsMenu;
+    closeAllPanels();
+    showMoreSettingsMenu = next;
   }
 
   function toggleTutorialMenu() {
-    showTutorialMenu = !showTutorialMenu;
+    const next = !showTutorialMenu;
+    closeAllPanels();
+    showTutorialMenu = next;
   }
 
   function switchTutorialTab(tab: 'tutorial' | 'algorithm') {
@@ -208,8 +247,8 @@
   // 获取来源信息
   function getSourceInfo() {
     return {
-      sourceFile: card?.sourceFile,
-      sourceBlock: card?.sourceBlock,
+      sourceFile: sourceInfo.sourceFile,
+      sourceBlock: sourceInfo.sourceBlock,
       sourceCardId: card?.metadata?.sourceCardId as string | undefined  //  新增：源记忆卡片ID
     };
   }
@@ -242,8 +281,8 @@
     }
   });
 
-  // 处理文件路径点击 -  v2.1.1: 使用 openLinkText 处理 wikilink 格式
-  //  v2.1.2: 添加文件存在性检查，防止创建新文档
+  // 处理文件路径点击，使用 openLinkText 处理 wikilink 格式
+  // 添加文件存在性检查，防止创建新文档
   async function handleOpenSourceFile() {
     if (!sourceInfo.sourceFile || !plugin) {
       new Notice(t('toolbar.sourceNotFound'));
@@ -266,18 +305,30 @@
     if (file.path.toLowerCase().endsWith('.epub')) {
       const { EpubLinkService } = await import('../../services/epub/EpubLinkService');
       const linkService = new EpubLinkService(plugin.app);
-      await linkService.navigateToEpubLocation(file.path, '', '');
-      new Notice('已打开EPUB源文档');
+      await linkService.navigateToEpubLocation(file.path, sourceInfo.epubCfi || '', sourceInfo.epubText || '');
+      if (multiInfoButtonElement) {
+        sourceLocateOverlay.showAtRect(multiInfoButtonElement.getBoundingClientRect(), {
+          label: '定位到 EPUB 溯源位置',
+          icon: 'map-pinned'
+        });
+      }
+      new Notice(t('toolbar.openedEpub'));
       showMultiInfoMenu = false;
       return;
     }
     
-    plugin.app.workspace.openLinkText(linkText, contextPath, true);
+    const openedLeaf = await openLinkWithExistingLeaf(plugin.app, linkText, contextPath, { openInNewTab: true, focus: true });
+    showMarkdownSourceOverlay(
+      openedLeaf,
+      [linkText, sourceInfo.sourceFile, file.path, file.basename].filter(Boolean) as string[],
+      multiInfoButtonElement
+    );
     showMultiInfoMenu = false;
+    return;
   }
 
-  // 处理块链接点击 -  v2.1.1: 使用 Obsidian 原生 wikilink 格式跳转
-  //  v2.1.2: 添加文件存在性检查，防止创建新文档
+  // 处理块链接点击，使用 Obsidian 原生 wikilink 格式跳转
+  // 添加文件存在性检查，防止创建新文档
   async function handleOpenBlockLink() {
     if (!sourceInfo.sourceFile || !plugin) {
       new Notice(t('toolbar.blockNotFound'));
@@ -304,72 +355,29 @@
       if (file.path.toLowerCase().endsWith('.epub')) {
         const { EpubLinkService } = await import('../../services/epub/EpubLinkService');
         const linkService = new EpubLinkService(plugin.app);
-        await linkService.navigateToEpubLocation(file.path, '', '');
-        new Notice('已打开EPUB源文档');
+        await linkService.navigateToEpubLocation(file.path, sourceInfo.epubCfi || '', sourceInfo.epubText || '');
+        if (multiInfoButtonElement) {
+          sourceLocateOverlay.showAtRect(multiInfoButtonElement.getBoundingClientRect(), {
+            label: '定位到 EPUB 溯源位置',
+            icon: 'map-pinned'
+          });
+        }
+        new Notice(t('toolbar.openedEpub'));
         showMultiInfoMenu = false;
         return;
       }
       
       // 使用 Obsidian 原生 API 跳转
-      await plugin.app.workspace.openLinkText(linkText, contextPath, true);
+      const openedLeaf = await openLinkWithExistingLeaf(plugin.app, linkText, contextPath, { openInNewTab: true, focus: true });
+      showMarkdownSourceOverlay(
+        openedLeaf,
+        [linkText, blockId, `^${blockId}`, docName, file.path, file.basename].filter(Boolean) as string[],
+        multiInfoButtonElement
+      );
       showMultiInfoMenu = false;
+      return;
     } catch (error) {
       new Notice(t('toolbar.blockJumpFailed'));
-    }
-  }
-
-  //  已废弃的手动定位代码（保留作为参考）
-  async function _legacyOpenBlockLink() {
-    if (!sourceInfo.sourceFile || !plugin) return;
-
-    try {
-      const filePath = sourceInfo.sourceFile;
-      const blockId = sourceInfo.sourceBlock?.replace(/^\^/, '');
-      
-      const file = plugin.app.vault.getAbstractFileByPath(filePath);
-      if (!file) return;
-      
-      const leaf = plugin.app.workspace.getLeaf(false);
-      await leaf.openFile(file as any);
-      
-      if (blockId) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        const view = plugin.app.workspace.getActiveViewOfType(MarkdownView);
-        if (view && view.editor) {
-          const content = await plugin.app.vault.read(file as any);
-          const lines = content.split('\n');
-          
-          let targetLine = -1;
-          for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(`^${blockId}`)) {
-              targetLine = i;
-              break;
-            }
-          }
-          
-          if (targetLine >= 0) {
-            view.editor.setCursor({ line: targetLine, ch: 0 });
-            view.editor.scrollIntoView({ from: { line: targetLine, ch: 0 }, to: { line: targetLine, ch: 0 } }, true);
-            
-            const lineContent = lines[targetLine];
-            const blockIdMatch = lineContent.match(/\s*\^\w+$/);
-            const contentEnd = blockIdMatch ? lineContent.length - blockIdMatch[0].length : lineContent.length;
-            
-            view.editor.setSelection(
-              { line: targetLine, ch: 0 },
-              { line: targetLine, ch: contentEnd }
-            );
-            
-            new Notice('已跳转到源文档');
-          }
-        }
-      }
-      
-      showMultiInfoMenu = false;
-    } catch (error) {
-      logger.error('[QuestionBankVerticalToolbar] 跳转失败:', error);
-      new Notice('跳转失败');
     }
   }
 
@@ -445,6 +453,7 @@
       title={isEditing ? "保存并预览" : "编辑卡片"}
     >
       <EnhancedIcon name={isEditing ? "eye" : "edit"} size="18" />
+      <span class="btn-label">{isEditing ? "预览" : "编辑"}</span>
     </button>
 
     <!-- 普通文本编辑器按钮 -->
@@ -458,6 +467,7 @@
         title="普通文本编辑器"
       >
         <EnhancedIcon name="fileText" size="18" />
+        <span class="btn-label">文本</span>
       </button>
     {/if}
 
@@ -471,6 +481,7 @@
       title={enableDirectDelete ? "直接删除卡片" : "删除卡片"}
     >
       <EnhancedIcon name="delete" size="18" />
+      <span class="btn-label">删除</span>
     </button>
 
     <!-- 收藏 -->
@@ -484,10 +495,12 @@
       title={card.tags?.includes('#收藏') ? "取消收藏" : "收藏卡片"}
     >
       <EnhancedIcon name={card.tags?.includes('#收藏') ? "starFilled" : "star"} size="18" />
+      <span class="btn-label">收藏</span>
     </button>
 
     <!-- 重要程度 -->
     <button
+      bind:this={priorityButtonElement}
       class="toolbar-btn priority-btn"
       onclick={onChangePriority}
       onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
@@ -499,6 +512,7 @@
       <div class="priority-indicator">
         {'!'.repeat(Math.min(card.priority || 2, 3))}
       </div>
+      <span class="btn-label">重要</span>
     </button>
 
     <!-- 多功能信息键 -->
@@ -520,7 +534,7 @@
       <FloatingMenu
         bind:show={showMultiInfoMenu}
         anchor={multiInfoButtonElement}
-        placement="bottom-start"
+        placement="left-start"
         onClose={() => showMultiInfoMenu = false}
         class="multi-info-menu-container"
       >
@@ -640,7 +654,7 @@
               </div>
             {/if}
 
-            <!-- 🆕 查看题目数据结构（调试） -->
+            <!-- 查看题目数据结构（调试） -->
             {#if onOpenCardDebug}
               <div class="info-section card-debug-section">
                 <button 
@@ -675,12 +689,13 @@
         title="更多设置"
       >
         <EnhancedIcon name="settings" size="18" />
+        <span class="btn-label">更多</span>
       </button>
 
       <FloatingMenu
         bind:show={showMoreSettingsMenu}
         anchor={moreSettingsButtonElement}
-        placement="bottom-start"
+        placement="left-start"
         onClose={() => showMoreSettingsMenu = false}
         class="more-settings-menu-container"
       >
@@ -759,6 +774,7 @@
         title="查看使用教程"
       >
         <EnhancedIcon name="book-open" size="18" />
+        <span class="btn-label">教程</span>
       </button>
 
       <FloatingMenu
@@ -978,7 +994,7 @@ E) 定期重构代码 &#123;✓&#125;
                       </div>
                       
                       <h4>与记忆牌组的关系</h4>
-                      <p>就像记忆牌组使用 <strong>FSRS6算法</strong> 预测遗忘时间一样，考试牌组使用 <strong>EWMA算法</strong> 评估掌握程度。两者都是科学严谨的算法，只是应用场景不同。</p>
+                      <p>就像记忆牌组使用 <strong>FSRS6算法</strong> 预测遗忘时间一样，考试题组使用 <strong>EWMA算法</strong> 评估掌握程度。两者都是科学严谨的算法，只是应用场景不同。</p>
                     </div>
                   </div>
 
@@ -1490,7 +1506,7 @@ E) 定期重构代码 &#123;✓&#125;
     box-shadow: 0 2px 6px color-mix(in srgb, var(--interactive-accent) 30%, transparent);
   }
 
-  /* 🆕 查看数据结构按钮（调试） */
+  /* 查看数据结构按钮（调试） */
   .card-debug-section {
     margin-top: 8px;
     padding-top: 8px;
@@ -1572,91 +1588,6 @@ E) 定期重构代码 &#123;✓&#125;
     font-size: 0.85rem;
     font-weight: 500;
     color: var(--text-normal);
-  }
-
-  /* 按钮显示模式选项 */
-  .compact-mode-options {
-    display: flex;
-    gap: 10px;
-  }
-
-  .compact-mode-option {
-    flex: 1;
-    position: relative;
-    cursor: pointer;
-  }
-
-  .compact-mode-option input[type="radio"] {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .option-content {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    padding: 16px 10px;
-    background: var(--background-primary);
-    border: 1.5px solid var(--background-modifier-border);
-    border-radius: 10px;
-    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-  }
-
-  .compact-mode-option:hover .option-content {
-    background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
-    transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  }
-
-  .compact-mode-option.active .option-content {
-    background: linear-gradient(135deg, var(--interactive-accent) 0%, color-mix(in srgb, var(--interactive-accent) 85%, black) 100%);
-    border-color: var(--interactive-accent);
-    color: var(--text-on-accent);
-    box-shadow: 0 4px 16px color-mix(in srgb, var(--interactive-accent) 30%, transparent);
-  }
-
-  .compact-mode-option.active .option-content :global(svg) {
-    color: var(--text-on-accent);
-  }
-
-  .option-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    text-align: center;
-    letter-spacing: 0.3px;
-  }
-
-  /* 下拉选择框样式 */
-  .setting-select {
-    padding: 8px 32px 8px 12px;
-    background: var(--background-primary);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
-    border-radius: 6px;
-    font-size: 0.82rem;
-    font-weight: 500;
-    color: var(--text-normal);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L2 4h8z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 10px center;
-  }
-
-  .setting-select:hover {
-    background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
-  }
-
-  .setting-select:focus {
-    outline: none;
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 15%, transparent);
   }
 
   :global(.obsidian-dropdown-trigger.setting-select) {

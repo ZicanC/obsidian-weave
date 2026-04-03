@@ -9,6 +9,8 @@
    * @version 1.0.0
    */
 
+  import { tr } from '../../utils/i18n';
+
   interface StatsData {
     retentionRate: number;  // 保持率 (0-100)
     reviewCount: number;    // 复习次数
@@ -32,6 +34,8 @@
       studyTime: '0h'
     }
   }: Props = $props();
+
+  let t = $derived($tr);
 </script>
 
 {#if expanded}
@@ -39,19 +43,19 @@
     <div class="stats-info-items">
       <div class="stats-info-item">
         <span class="stats-info-value">{stats.retentionRate}%</span>
-        <span class="stats-info-label">保持率</span>
+        <span class="stats-info-label">{t('study.mobileStats.retentionRate')}</span>
       </div>
       <div class="stats-info-item">
         <span class="stats-info-value">{stats.reviewCount}</span>
-        <span class="stats-info-label">复习</span>
+        <span class="stats-info-label">{t('study.mobileStats.reviews')}</span>
       </div>
       <div class="stats-info-item">
         <span class="stats-info-value">{stats.cardCount}</span>
-        <span class="stats-info-label">卡片</span>
+        <span class="stats-info-label">{t('study.mobileStats.cards')}</span>
       </div>
       <div class="stats-info-item">
         <span class="stats-info-value">{stats.studyTime}</span>
-        <span class="stats-info-label">时间</span>
+        <span class="stats-info-label">{t('study.mobileStats.time')}</span>
       </div>
     </div>
   </div>

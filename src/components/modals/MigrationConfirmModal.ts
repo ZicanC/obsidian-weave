@@ -3,115 +3,109 @@
  * 使用 Obsidian 原生 Modal API
  */
 
-import { Modal, App, Setting } from 'obsidian';
-import type { WeavePlugin } from '../../main';
-import { logger } from '../../utils/logger';
+import { App, Modal, Setting } from "obsidian";
+import type { WeavePlugin } from "../../main";
+import { logger } from "../../utils/logger";
 
 export interface MigrationStats {
-  total: number;
-  needsMigration: number;
-  alreadyMigrated: number;
+	total: number;
+	needsMigration: number;
+	alreadyMigrated: number;
 }
 
 export class MigrationConfirmModal extends Modal {
-  private plugin: WeavePlugin;
-  private stats: MigrationStats;
-  private onConfirm: () => Promise<void>;
-  private onSkip: () => void;
+	private plugin: WeavePlugin;
+	private stats: MigrationStats;
+	private onConfirm: () => Promise<void>;
+	private onSkip: () => void;
 
-  constructor(
-    app: App,
-    plugin: WeavePlugin,
-    stats: MigrationStats,
-    onConfirm: () => Promise<void>,
-    onSkip: () => void
-  ) {
-    super(app);
-    this.plugin = plugin;
-    this.stats = stats;
-    this.onConfirm = onConfirm;
-    this.onSkip = onSkip;
-  }
+	constructor(
+		app: App,
+		plugin: WeavePlugin,
+		stats: MigrationStats,
+		onConfirm: () => Promise<void>,
+		onSkip: () => void
+	) {
+		super(app);
+		this.plugin = plugin;
+		this.stats = stats;
+		this.onConfirm = onConfirm;
+		this.onSkip = onSkip;
+	}
 
-  onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
-    contentEl.addClass('weave-migration-modal');
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.addClass("weave-migration-modal");
 
-    // 标题
-    contentEl.createEl('h2', { text: '数据格式升级' });
+		// 标题
+		contentEl.createEl("h2", { text: "数据格式升级" });
 
-    // 说明文字
-    const descEl = contentEl.createEl('div', { cls: 'migration-description' });
-    descEl.createEl('p', {
-      text: '检测到部分卡片需要升级到新的 YAML 元数据格式。升级后，卡片的来源文档、标签、牌组等信息将统一存储在卡片内容中。'
-    });
+		// 说明文字
+		const descEl = contentEl.createEl("div", { cls: "migration-description" });
+		descEl.createEl("p", {
+			text: "检测到部分卡片需要升级到新的 YAML 元数据格式。升级后，卡片的来源文档、标签、牌组等信息将统一存储在卡片内容中。",
+		});
 
-    // 统计信息
-    const statsEl = contentEl.createEl('div', { cls: 'migration-stats' });
-    
-    new Setting(statsEl)
-      .setName('总卡片数')
-      .setDesc(`${this.stats.total} 张`);
-    
-    new Setting(statsEl)
-      .setName('需要升级')
-      .setDesc(`${this.stats.needsMigration} 张`);
-    
-    new Setting(statsEl)
-      .setName('已是新格式')
-      .setDesc(`${this.stats.alreadyMigrated} 张`);
+		// 统计信息
+		const statsEl = contentEl.createEl("div", { cls: "migration-stats" });
 
-    // 提示
-    const tipEl = contentEl.createEl('div', { cls: 'migration-tip' });
-    tipEl.createEl('p', {
-      text: '升级过程通常很快完成，期间请勿关闭 Obsidian。',
-      cls: 'mod-warning'
-    });
+		new Setting(statsEl).setName("总卡片数").setDesc(`${this.stats.total} 张`);
 
-    // 按钮区域
-    const buttonContainer = contentEl.createEl('div', { cls: 'migration-buttons' });
-    
-    // 跳过按钮
-    const skipBtn = buttonContainer.createEl('button', { 
-      text: '稍后升级',
-      cls: 'mod-muted'
-    });
-    skipBtn.addEventListener('click', () => {
-      this.onSkip();
-      this.close();
-    });
+		new Setting(statsEl).setName("需要升级").setDesc(`${this.stats.needsMigration} 张`);
 
-    // 确认按钮
-    const confirmBtn = buttonContainer.createEl('button', { 
-      text: '立即升级',
-      cls: 'mod-cta'
-    });
-    confirmBtn.addEventListener('click', async () => {
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = '升级中...';
-      skipBtn.disabled = true;
-      
-      try {
-        await this.onConfirm();
-        this.close();
-      } catch (error) {
-        logger.error('[Migration] 迁移失败:', error);
-        confirmBtn.textContent = '升级失败，请重试';
-        confirmBtn.disabled = false;
-        skipBtn.disabled = false;
-      }
-    });
-  }
+		new Setting(statsEl).setName("已是新格式").setDesc(`${this.stats.alreadyMigrated} 张`);
 
-  onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
-  }
+		// 提示
+		const tipEl = contentEl.createEl("div", { cls: "migration-tip" });
+		tipEl.createEl("p", {
+			text: "升级过程通常很快完成，期间请勿关闭 Obsidian。",
+			cls: "mod-warning",
+		});
+
+		// 按钮区域
+		const buttonContainer = contentEl.createEl("div", { cls: "migration-buttons" });
+
+		// 跳过按钮
+		const skipBtn = buttonContainer.createEl("button", {
+			text: "稍后升级",
+			cls: "mod-muted",
+		});
+		skipBtn.addEventListener("click", () => {
+			this.onSkip();
+			this.close();
+		});
+
+		// 确认按钮
+		const confirmBtn = buttonContainer.createEl("button", {
+			text: "立即升级",
+			cls: "mod-cta",
+		});
+		confirmBtn.addEventListener("click", async () => {
+			confirmBtn.disabled = true;
+			confirmBtn.textContent = "升级中...";
+			skipBtn.disabled = true;
+
+			try {
+				await this.onConfirm();
+				this.close();
+			} catch (error) {
+				logger.error("[Migration] 迁移失败:", error);
+				confirmBtn.textContent = "升级失败，请重试";
+				confirmBtn.disabled = false;
+				skipBtn.disabled = false;
+			}
+		});
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
 }
 
 // 样式
-const styles = `
+const _styles = `
 .weave-migration-modal {
   padding: 20px;
 }

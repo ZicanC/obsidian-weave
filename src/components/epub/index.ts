@@ -1,7 +1,10 @@
-export { default as EpubReaderApp } from './EpubReaderApp.svelte';
-export { default as EpubReaderView } from './EpubReaderView.svelte';
-export { default as EpubSidebar } from './EpubSidebar.svelte';
-export { default as EpubToolbar } from './EpubToolbar.svelte';
-export { default as BookInfoPanel } from './BookInfoPanel.svelte';
-export { default as TableOfContents } from './TableOfContents.svelte';
-export { default as EpubSettingsPanel } from './EpubSettingsPanel.svelte';
+export { default as EpubReaderApp } from "./EpubReaderApp.svelte";
+export { default as EpubReaderView } from "./EpubReaderView.svelte";
+export { default as EpubGlobalSidebar } from "./EpubGlobalSidebar.svelte";
+export { default as EpubHighlightToolbar } from "./EpubHighlightToolbar.svelte";
+export { default as BookshelfView } from "./BookshelfView.svelte";
+export { default as BookmarkPanel } from "./BookmarkPanel.svelte";
+export { default as NotesPanel } from "./NotesPanel.svelte";
+export { default as SelectionToolbar } from "./SelectionToolbar.svelte";
+export { default as ScreenshotOverlay } from "./ScreenshotOverlay.svelte";
+export { default as TableOfContents } from "./TableOfContents.svelte";

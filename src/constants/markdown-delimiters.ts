@@ -94,7 +94,8 @@ export const DELIMITER_PATTERNS = {
 	META_SEPARATOR: /^\s*---\s*meta(data)?\s*---\s*$/im,
 
 	/** 匹配任意语义标记（用于快速检测） */
-	ANY_SEMANTIC_MARKER: /^(?:(?:\uD83D\uDCA1\s*)?(?:Hint|Context)|Explanation|Tags|Source|Difficulty|Related):/m,
+	ANY_SEMANTIC_MARKER:
+		/^(?:(?:\uD83D\uDCA1\s*)?(?:Hint|Context)|Explanation|Tags|Source|Difficulty|Related):/m,
 } as const;
 
 /**

@@ -58,7 +58,7 @@
     border: none;
     box-shadow: inset 0 0 0 2px rgba(128, 128, 128, 0.6);
     border-radius: 4px;
-    background: var(--background-primary);
+    background: var(--weave-table-page-bg, var(--background-primary));
     transition: all 0.2s ease;
     display: flex;
     align-items: center;

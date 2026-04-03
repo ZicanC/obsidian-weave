@@ -1,92 +1,272 @@
 <script lang="ts">
-	import { setIcon } from 'obsidian';
-	import type { EpubBook, Highlight, Note } from '../../services/epub';
+	import { onMount } from 'svelte';
+	import { logger } from '../../utils/logger';
+	import type { EpubBook, Note } from '../../services/epub';
 	import type { EpubAnnotationService } from '../../services/epub';
+	import type { EpubBacklinkHighlightService } from '../../services/epub/EpubBacklinkHighlightService';
+	import { EpubLinkService } from '../../services/epub/EpubLinkService';
+	import EpubAnnotationCard from './EpubAnnotationCard.svelte';
 
 	interface Props {
 		book: EpubBook | null;
 		annotationService: EpubAnnotationService;
-		onNavigate?: (cfi: string) => void;
+		backlinkService?: EpubBacklinkHighlightService;
+		filePath?: string;
+		annotationRevision?: number;
+		onNavigate?: (cfi: string, text?: string, color?: string) => void;
 	}
 
-	let { book, annotationService, onNavigate }: Props = $props();
+	let { book, annotationService, backlinkService, filePath, annotationRevision = 0, onNavigate }: Props = $props();
 
-	let highlights = $state<Highlight[]>([]);
-	let notes = $state<Note[]>([]);
+	type HighlightColor = 'yellow' | 'green' | 'blue' | 'red' | 'purple';
 
-	function icon(node: HTMLElement, name: string) {
-		setIcon(node, name);
-		return {
-			update(newName: string) {
-				node.innerHTML = '';
-				setIcon(node, newName);
-			}
-		};
+	interface DisplayHighlight {
+		cfiRange: string;
+		text: string;
+		color: HighlightColor;
+		createdTime: number;
+		sourceFile?: string;
 	}
 
-	function getHighlightClass(color: string): string {
-		return `hl-${color}`;
+	interface DisplayNote extends Note {
+		color: HighlightColor;
 	}
+
+	let highlights = $state<DisplayHighlight[]>([]);
+	let notes = $state<DisplayNote[]>([]);
+	let loading = $state(false);
+	let annotationLoadToken = 0;
+	let panelDisposed = false;
 
 	function formatTime(timestamp: number): string {
-		const now = Date.now();
-		const diff = now - timestamp;
-		const minutes = Math.floor(diff / 60000);
-		if (minutes < 1) return 'Just now';
-		if (minutes < 60) return `${minutes}m ago`;
-		const hours = Math.floor(minutes / 60);
-		if (hours < 24) return `${hours}h ago`;
-		const days = Math.floor(hours / 24);
-		return `${days}d ago`;
+		if (!timestamp) return '';
+		const date = new Date(timestamp);
+		const y = date.getFullYear();
+		const m = String(date.getMonth() + 1).padStart(2, '0');
+		const d = String(date.getDate()).padStart(2, '0');
+		const h = String(date.getHours()).padStart(2, '0');
+		const min = String(date.getMinutes()).padStart(2, '0');
+		return `${y}-${m}-${d} ${h}:${min}`;
+	}
+
+	function getSourceLabel(sourceFile?: string): string {
+		return sourceFile ? (sourceFile.split('/').pop() || sourceFile) : '';
+	}
+
+	function navigateToHighlight(hl: DisplayHighlight) {
+		if (hl.cfiRange) {
+			onNavigate?.(hl.cfiRange, hl.text, hl.color);
+		}
+	}
+
+	function navigateToNote(note: DisplayNote) {
+		if (note.cfi) {
+			onNavigate?.(note.cfi, note.quotedText || note.content, note.color);
+		}
+	}
+
+	function normalizeColor(color?: string): HighlightColor {
+		switch (color) {
+			case 'green':
+			case 'blue':
+			case 'red':
+			case 'purple':
+				return color;
+			case 'pink':
+				return 'red';
+			default:
+				return 'yellow';
+		}
+	}
+
+	function isStaleAnnotationsLoad(loadToken: number, expectedBookId: string, expectedFilePath?: string): boolean {
+		return panelDisposed
+			|| loadToken !== annotationLoadToken
+			|| book?.id !== expectedBookId
+			|| (filePath ?? '') !== (expectedFilePath ?? '');
 	}
 
 	async function loadAnnotations() {
-		if (!book) return;
+		const currentBook = book;
+		if (!currentBook) {
+			highlights = [];
+			notes = [];
+			loading = false;
+			return;
+		}
+		const expectedFilePath = filePath;
+		const loadToken = ++annotationLoadToken;
+		loading = true;
 		try {
-			highlights = await annotationService.getHighlights(book.id);
-			notes = await annotationService.getNotes(book.id);
+			const [allHighlights, allNotes] = await Promise.all([
+				backlinkService && expectedFilePath
+					? annotationService.collectAllHighlights(currentBook.id, expectedFilePath, backlinkService)
+					: annotationService.getHighlights(currentBook.id),
+				annotationService.getNotes(currentBook.id)
+			]);
+			if (isStaleAnnotationsLoad(loadToken, currentBook.id, expectedFilePath)) {
+				return;
+			}
+
+			const mappedHighlights = allHighlights
+				.map((highlight) => ({
+					cfiRange: highlight.cfiRange,
+					text: highlight.text || '',
+					color: normalizeColor(highlight.color),
+					createdTime: highlight.createdTime || 0,
+					sourceFile: 'sourceFile' in highlight ? highlight.sourceFile : undefined
+				}))
+				.sort((a, b) => (b.createdTime || 0) - (a.createdTime || 0));
+
+			const colorByCfi = new Map<string, HighlightColor>();
+			for (const highlight of mappedHighlights) {
+				colorByCfi.set(EpubLinkService.normalizeCfi(highlight.cfiRange), highlight.color);
+			}
+
+			highlights = mappedHighlights;
+			notes = allNotes
+				.map((note) => ({
+					...note,
+					color: note.cfi ? (colorByCfi.get(EpubLinkService.normalizeCfi(note.cfi)) || 'yellow') : 'yellow'
+				}))
+				.sort((a, b) => b.createdTime - a.createdTime);
 		} catch (error) {
-			console.error('Failed to load annotations:', error);
+			if (isStaleAnnotationsLoad(loadToken, currentBook.id, expectedFilePath)) {
+				return;
+			}
+			logger.error('[NotesPanel] Failed to load annotations:', error);
+			highlights = [];
+			notes = [];
+		} finally {
+			if (!isStaleAnnotationsLoad(loadToken, currentBook.id, expectedFilePath)) {
+				loading = false;
+			}
 		}
 	}
 
 	$effect(() => {
-		if (book) {
-			loadAnnotations();
+		annotationRevision;
+		if (book && annotationService) {
+			void loadAnnotations();
+		} else {
+			annotationLoadToken += 1;
+			highlights = [];
+			notes = [];
+			loading = false;
 		}
+	});
+
+	onMount(() => {
+		return () => {
+			panelDisposed = true;
+			annotationLoadToken += 1;
+		};
 	});
 </script>
 
 <div class="epub-notes-panel">
-	{#if highlights.length === 0 && notes.length === 0}
-		<div class="epub-placeholder">No highlights or notes yet. Select text while reading to add annotations.</div>
+	{#if loading}
+		<div class="epub-placeholder">正在加载摘录与笔记...</div>
+	{:else if highlights.length === 0 && notes.length === 0}
+		<div class="epub-placeholder">暂时还没有摘录或笔记，阅读时选中文本后就可以在这里回看。</div>
 	{:else}
-		{#each highlights as hl}
-			<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-			<div class="epub-note-card clickable" onclick={() => hl.cfiRange && onNavigate?.(hl.cfiRange)}>
-				<div class="note-icon">
-					<span use:icon={'bookmark'}></span>
+		{#if highlights.length > 0}
+			<section class="notes-section">
+				<div class="notes-section-list">
+					{#each highlights as hl}
+						<EpubAnnotationCard
+							clickable={true}
+							onActivate={() => navigateToHighlight(hl)}
+							color={hl.color}
+							quoteText={hl.text}
+							metaLeft={getSourceLabel(hl.sourceFile)}
+							metaRight={formatTime(hl.createdTime)}
+						/>
+					{/each}
 				</div>
-				<div class="note-body">
-					<div class="note-quote {getHighlightClass(hl.color)}">{hl.text}</div>
-					<span class="note-time">{formatTime(hl.createdTime)}</span>
+			</section>
+		{/if}
+
+		{#if notes.length > 0}
+			<section class="notes-section" aria-labelledby="epub-notes-heading">
+				<div class="notes-section-header">
+					<h3 class="notes-section-title" id="epub-notes-heading">笔记批注</h3>
+					<span class="notes-section-count">{notes.length}</span>
 				</div>
-			</div>
-		{/each}
-		{#each notes as note}
-			<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-			<div class="epub-note-card clickable" onclick={() => note.cfi && onNavigate?.(note.cfi)}>
-				<div class="note-icon">
-					<span use:icon={'pencil'}></span>
+				<div class="notes-section-list">
+					{#each notes as note}
+						<EpubAnnotationCard
+							clickable={true}
+							onActivate={() => navigateToNote(note)}
+							color={note.color}
+							quoteText={note.quotedText || ''}
+							commentText={note.content}
+							metaRight={formatTime(note.createdTime)}
+							commentMuted={true}
+						/>
+					{/each}
 				</div>
-				<div class="note-body">
-					{#if note.quotedText}
-						<div class="note-quote">{note.quotedText}</div>
-					{/if}
-					<div class="note-comment">{note.content}</div>
-					<span class="note-time">{formatTime(note.createdTime)}</span>
-				</div>
-			</div>
-		{/each}
+			</section>
+		{/if}
 	{/if}
 </div>
+
+<style>
+	.epub-notes-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		padding: 14px 12px 22px;
+	}
+
+	.epub-placeholder {
+		padding: 22px 14px;
+		border-radius: 16px;
+		background: color-mix(in srgb, var(--weave-elevated-background, var(--background-secondary)) 88%, transparent);
+		color: var(--text-muted);
+		font-size: 13px;
+		line-height: 1.7;
+	}
+
+	.notes-section {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.notes-section-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 0 4px;
+	}
+
+	.notes-section-title {
+		margin: 0;
+		font-size: 15px;
+		font-weight: 600;
+		line-height: 1.25;
+		color: var(--text-normal);
+	}
+
+	.notes-section-count {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 4px 10px;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--weave-elevated-background, var(--background-secondary)) 92%, transparent);
+		border: 1px solid color-mix(in srgb, var(--background-modifier-border) 68%, transparent);
+		color: var(--text-muted);
+		font-size: 12px;
+		font-weight: 600;
+		line-height: 1;
+	}
+
+	.notes-section-list {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+</style>

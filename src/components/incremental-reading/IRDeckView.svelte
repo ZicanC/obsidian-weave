@@ -82,16 +82,16 @@
 
 <script lang="ts">
   /**
-   * 增量阅读牌组视图
+   * 增量阅读专题视图
    * 
    * 复用记忆牌组的卡片设计，支持样式切换
    * 
    * @module components/incremental-reading/IRDeckView
    * @version 2.0.0
    */
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { Notice, Menu, Modal, Setting, TFile } from 'obsidian';
-  import MaterialImportModal from './MaterialImportModal.svelte';
+  import { MaterialImportModalObsidian } from './MaterialImportModalObsidian';
   import IRLoadForecastModal from '../modals/IRLoadForecastModal.svelte';
   import type { BatchImportResult } from '../../services/incremental-reading/ReadingMaterialManager';
   import type { WeavePlugin } from '../../main';
@@ -102,13 +102,15 @@
   // v3.0: 移除旧的 IRScheduler 导入，改用 getServices 中的 schedulingFacade
   // 增量阅读专用卡片组件
   import IRDeckCard from './IRDeckCard.svelte';
+  import DeckGridCard from '../deck-views/DeckGridCard.svelte';
+  import type { DeckCardStyle } from '../../types/plugin-settings.d';
+  import { getColorSchemeForDeck } from '../../config/card-color-schemes';
   import IRNoBlocksAvailableModal from './IRNoBlocksAvailableModal.svelte';
   import IRTemporaryLearnAheadModal from './IRTemporaryLearnAheadModal.svelte';
-  import { resolveIRImportFolder } from '../../config/paths';
-  import { DirectoryUtils } from '../../utils/directory-utils';
   import { calculateSelectionScore } from '../../services/incremental-reading/IRCoreAlgorithmsV4';
-  import { IRContentSplitter } from '../../services/incremental-reading/IRContentSplitter';
   import { IRPdfBookmarkTaskService } from '../../services/incremental-reading/IRPdfBookmarkTaskService';
+  import { IREpubBookmarkTaskService } from '../../services/incremental-reading/IREpubBookmarkTaskService';
+  import { recomputeAndBroadcastIRData } from '../../services/incremental-reading/IRScheduleRefreshService';
 
   interface Props {
     plugin: WeavePlugin;
@@ -127,7 +129,22 @@
     ) => void;
   }
 
+  function buildSessionTotalsByBlockId(sessions: Array<{ blockId?: string; duration?: number }> | undefined | null): Map<string, number> {
+    const totals = new Map<string, number>();
+    for (const session of sessions || []) {
+      const blockId = String(session?.blockId || '').trim();
+      const duration = Number(session?.duration || 0);
+      if (!blockId || duration <= 0) continue;
+      totals.set(blockId, (totals.get(blockId) || 0) + duration);
+    }
+    return totals;
+  }
+
   let { plugin, onStartReading }: Props = $props();
+
+  const deckCardStyle = $derived<DeckCardStyle>(
+    (plugin.settings.deckCardStyle as DeckCardStyle) || 'default'
+  );
 
   // v6.0: 获取模块级别的服务实例
   const services = getServices(plugin.app, plugin.settings?.incrementalReading?.importFolder);
@@ -138,7 +155,7 @@
   let isLoading = $state(true);
   
   // 导入模态窗状态
-  let showImportModal = $state(false);
+  let importModalInstance: MaterialImportModalObsidian | null = null;
   
   // 负载预测模态窗状态
   let showLoadForecastModal = $state(false);
@@ -157,13 +174,23 @@
 
   // 打开导入模态窗（供外部事件调用）
   export function openImportModal() {
-    showImportModal = true;
+    if (importModalInstance) {
+      importModalInstance.close();
+      importModalInstance = null;
+    }
+
+    importModalInstance = new MaterialImportModalObsidian(plugin.app, {
+      plugin,
+      onImportComplete: handleImportComplete,
+      onClose: () => {
+        importModalInstance = null;
+      }
+    });
+    importModalInstance.open();
   }
   
   // 处理导入完成（MaterialImportModal回调）
   function handleImportComplete(result: BatchImportResult) {
-    showImportModal = false;
-    
     // 显示导入结果通知
     if (result.errors.length > 0) {
       new Notice(`导入完成：${result.success} 个成功，${result.skipped} 个跳过，${result.errors.length} 个失败`);
@@ -173,9 +200,8 @@
       new Notice(`成功导入 ${result.success} 个阅读材料`);
     }
     
-    // 刷新牌组列表
-    loadDecks();
-    window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+    // 导入弹窗内部已经触发统一重排，这里只刷新当前视图
+    void loadDecks();
   }
 
   // 加载牌组数据
@@ -195,6 +221,8 @@
         dailyReviewLimit: plugin.settings?.incrementalReading?.dailyReviewLimit ?? 50,
         learnAheadDays: plugin.settings?.incrementalReading?.learnAheadDays ?? 3
       });
+      const history = await storageService.getHistory();
+      const readingSecondsById = buildSessionTotalsByBlockId(history.sessions);
       
       const dailyBudget = plugin.settings?.incrementalReading?.dailyTimeBudgetMinutes || 30;
       const loadRateDays = 3;
@@ -232,6 +260,7 @@
 
       // 加载 PDF 书签任务，按牌组分组，用于合并到主统计和负载率计算
       let pdfTasksByDeckId = new Map<string, any[]>();
+      let epubTasksByDeckId = new Map<string, any[]>();
       try {
         const pdfService = new IRPdfBookmarkTaskService(plugin.app);
         await pdfService.initialize();
@@ -247,6 +276,21 @@
       } catch (e) {
         logger.debug('[IRDeckView] 加载 PDF 书签任务失败', e);
       }
+      try {
+        const epubService = new IREpubBookmarkTaskService(plugin.app);
+        await epubService.initialize();
+        const allEpubTasks = await epubService.getAllTasks();
+        for (const task of allEpubTasks) {
+          const deckId = String((task as any)?.deckId || '').trim();
+          if (!deckId) continue;
+          const status = String((task as any)?.status || 'new');
+          if (status === 'done' || status === 'suspended' || status === 'removed') continue;
+          const list = epubTasksByDeckId.get(deckId);
+          if (list) { list.push(task); } else { epubTasksByDeckId.set(deckId, [task]); }
+        }
+      } catch (e) {
+        logger.debug('[IRDeckView] 加载 EPUB 书签任务失败', e);
+      }
       
       const newStats: Record<string, IRDeckStats> = {};
       for (const d of decksWithStats) {
@@ -261,6 +305,10 @@
             const dayMs = 24 * 60 * 60 * 1000;
 
             const estimateChunkMinutes = (chunk: IRChunkFileData): number => {
+              const historicalSeconds = readingSecondsById.get(String(chunk.chunkId || '')) || 0;
+              if (historicalSeconds > 0 && chunk.stats?.impressions > 0) {
+                return (historicalSeconds / chunk.stats.impressions) / 60;
+              }
               const stats = (chunk as any).stats as any;
               if (stats?.effectiveReadingTimeSec && stats?.impressions > 0) {
                 return (stats.effectiveReadingTimeSec / stats.impressions) / 60;
@@ -269,6 +317,10 @@
             };
 
             const estimateBlockMinutes = (block: IRBlock): number => {
+              const historicalSeconds = readingSecondsById.get(String(block.id || '')) || 0;
+              if (historicalSeconds > 0 && block.reviewCount && block.reviewCount > 0) {
+                return (historicalSeconds / block.reviewCount) / 60;
+              }
               const totalReadingTime = (block as any).totalReadingTime as number | undefined;
               const reviewCount = (block as any).reviewCount as number | undefined;
               if (totalReadingTime && reviewCount && reviewCount > 0) {
@@ -278,6 +330,24 @@
             };
 
             const estimatePdfTaskMinutes = (task: any): number => {
+              const historicalSeconds = readingSecondsById.get(String(task?.id || '')) || 0;
+              const impressions = Number(task?.stats?.impressions || 0);
+              if (historicalSeconds > 0 && impressions > 0) {
+                return (historicalSeconds / impressions) / 60;
+              }
+              const s = task?.stats;
+              if (s?.effectiveReadingTimeSec && s?.impressions > 0) {
+                return (s.effectiveReadingTimeSec / s.impressions) / 60;
+              }
+              return 5;
+            };
+
+            const estimateEpubTaskMinutes = (task: any): number => {
+              const historicalSeconds = readingSecondsById.get(String(task?.id || '')) || 0;
+              const impressions = Number(task?.stats?.impressions || 0);
+              if (historicalSeconds > 0 && impressions > 0) {
+                return (historicalSeconds / impressions) / 60;
+              }
               const s = task?.stats;
               if (s?.effectiveReadingTimeSec && s?.impressions > 0) {
                 return (s.effectiveReadingTimeSec / s.impressions) / 60;
@@ -288,6 +358,7 @@
             const deckChunks = chunksByDeckId?.get(deckKey) || [];
             const deckBlocks = blockById ? (d.deck.blockIds || []).map(id => blockById![id]).filter(Boolean) : [];
             const deckPdfTasks = pdfTasksByDeckId.get(deckKey) || [];
+            const deckEpubTasks = epubTasksByDeckId.get(deckKey) || [];
 
             let maxRatio = 0;
             for (let i = 0; i < loadRateDays; i++) {
@@ -331,6 +402,15 @@
                   dayMinutes += estimatePdfTaskMinutes(task);
                 } else if (nrd < targetMs && i === 0) {
                   dayMinutes += estimatePdfTaskMinutes(task);
+                }
+              }
+
+              for (const task of deckEpubTasks) {
+                const nrd = (task.nextRepDate as number) || 0;
+                if (nrd >= targetMs && nrd < nextDayMs) {
+                  dayMinutes += estimateEpubTaskMinutes(task);
+                } else if (nrd < targetMs && i === 0) {
+                  dayMinutes += estimateEpubTaskMinutes(task);
                 }
               }
 
@@ -404,9 +484,9 @@
   // 将 IRDeckStats 转换为 DeckStats 格式（适配卡片组件）
   function toMemoryStats(irStats: IRDeckStats): DeckStats {
     return {
-      newCards: irStats.newCount,
-      learningCards: irStats.learningCount,
-      reviewCards: irStats.reviewCount,
+      newCards: irStats.dueToday,
+      learningCards: Math.max(0, (irStats.dueWithinDays ?? irStats.dueToday) - irStats.dueToday),
+      reviewCards: irStats.questionCount,
       totalCards: irStats.totalCount,
       memoryRate: 0,
       todayNew: 0,
@@ -419,7 +499,7 @@
     };
   }
 
-  // 显示牌组菜单 (v2.0: 扩展菜单功能，使用 deckId 作为主要标识)
+  // 显示牌组菜单，使用 deckId 作为主要标识
   function showDeckMenu(event: MouseEvent, deck: IRDeck) {
     const menu = new Menu();
     const deckId = deck.id || deck.path || '';
@@ -432,7 +512,7 @@
         .onClick(() => handleStartReading(deckId))
     );
     
-    // v2.1: 提前阅读（所有内容块）
+    // 提前阅读所有内容块
     menu.addItem((item) =>
       item
         .setTitle('提前阅读')
@@ -480,7 +560,7 @@
             logger.debug(`[IRDeckView] 解散牌组: ${deckId}`);
             await deckManager.disbandDeck(deckId);
             await loadDecks();
-            window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+            await recomputeAndBroadcastIRData(plugin.app, 'remove_block');
             new Notice('牌组已解散（内容块数据已保留）');
           }
         })
@@ -504,7 +584,7 @@
             logger.debug(`[IRDeckView] 删除牌组: ${deckId}`);
             await deckManager.deleteDeck(deckId);
             await loadDecks();
-            window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+            await recomputeAndBroadcastIRData(plugin.app, 'remove_block');
             new Notice('牌组及内容块数据已删除');
           }
         })
@@ -609,7 +689,7 @@
         }
 
         await loadDecks();
-        window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+        await recomputeAndBroadcastIRData(plugin.app, 'tag_group_changed');
         plugin.app.workspace.trigger('Weave:data-changed');
         new Notice('牌组已更新');
         modal.close();
@@ -628,6 +708,15 @@
     logger.info('[IRDeckView] deckPath:', deckPath);
     
     try {
+      const redirectDeck = decks.find(d => d.id === deckPath || d.path === deckPath);
+      const redirectDeckName = redirectDeck?.name || deckPath.split('/').pop() || '增量阅读';
+      await plugin.redirectIncrementalReadingToSidebar({
+        deckPath,
+        deckName: redirectDeckName,
+        closeLegacyFocusLeaves: true
+      });
+      return;
+
       // V4: 使用 IRStorageAdapterV4
       logger.debug('[IRDeckView] 初始化 IRStorageAdapterV4...');
       const storageAdapter = new IRStorageAdapterV4(plugin.app);
@@ -709,11 +798,15 @@
       
       if (onStartReading) {
         logger.info('[IRDeckView] 调用 onStartReading 回调...');
-        onStartReading(deckPath, blocksToUse, deckName, focusStats);
+        onStartReading?.(deckPath, blocksToUse, deckName, focusStats);
       } else {
         logger.info('[IRDeckView] 直接调用 plugin.openIRFocusView (完整界面)...');
         // v6.0: 直接传递 V4 blocks
-        await plugin.openIRFocusView(deckPath, blocksToUse, deckName, focusStats);
+        await plugin.redirectIncrementalReadingToSidebar({
+          deckPath,
+          deckName,
+          closeLegacyFocusLeaves: true
+        });
         logger.info('[IRDeckView] 已打开完整聚焦阅读界面:', deckPath, '学习队列:', blocksToUse.length);
       }
       logger.info('[IRDeckView] ========== handleStartReading V4 完成 ==========');
@@ -724,9 +817,18 @@
     }
   }
   
-  // v2.1: 提前阅读（阅读所有内容块，不管是否到期）- V4版本
+  // 提前阅读所有内容块，不管是否到期
   async function handleAdvanceReading(deckPath: string, overrideLearnAheadDays?: number) {
     try {
+      const redirectDeck = decks.find(d => d.id === deckPath || d.path === deckPath);
+      const redirectDeckName = redirectDeck?.name || deckPath.split('/').pop() || '增量阅读';
+      await plugin.redirectIncrementalReadingToSidebar({
+        deckPath,
+        deckName: redirectDeckName,
+        closeLegacyFocusLeaves: true
+      });
+      return;
+
       // V4: 使用 IRStorageAdapterV4
       const storageAdapter = new IRStorageAdapterV4(plugin.app);
       await storageAdapter.initialize();
@@ -814,10 +916,14 @@
       const deckName = deck?.name || deckPath.split('/').pop() || '增量阅读';
       
       if (onStartReading) {
-        onStartReading(deckPath, allBlocksV4, deckName);
+        onStartReading?.(deckPath, allBlocksV4, deckName);
       } else {
         // v6.0: 直接传递 V4 blocks
-        await plugin.openIRFocusView(deckPath, allBlocksV4, deckName);
+        await plugin.redirectIncrementalReadingToSidebar({
+          deckPath,
+          deckName,
+          closeLegacyFocusLeaves: true
+        });
         logger.info('[IRDeckView] 已打开提前阅读完整界面:', deckPath, '总块数:', allBlocksV4.length);
       }
     } catch (error) {
@@ -826,116 +932,6 @@
     }
   }
 
-  // 复制文件到导入文件夹
-  async function copyFileToImportFolder(file: TFile, targetFolder: string): Promise<TFile> {
-    const adapter = plugin.app.vault.adapter;
-    
-    // 确保目标文件夹存在
-    await DirectoryUtils.ensureDirRecursive(adapter, targetFolder);
-    
-    // 生成目标文件路径（处理重名）
-    let targetPath = `${targetFolder}/${file.basename}.${file.extension}`;
-    let counter = 1;
-    while (await adapter.exists(targetPath)) {
-      targetPath = `${targetFolder}/${file.basename}-${counter}.${file.extension}`;
-      counter++;
-    }
-    
-    // 读取源文件内容
-    const content = await plugin.app.vault.read(file);
-    
-    // 创建新文件
-    const newFile = await plugin.app.vault.create(targetPath, content);
-    logger.info(`[IRDeckView] ✅ 文件已复制: ${file.path} -> ${newFile.path}`);
-    
-    return newFile;
-  }
-
-  // 检查文件是否已在导入文件夹中
-  function isInImportFolder(filePath: string, importFolder: string): boolean {
-    return filePath.startsWith(importFolder + '/');
-  }
-
-  // 处理导入文件夹
-  async function handleImport(folderPaths: string[]) {
-    try {
-      // 🔧 简化：直接初始化服务
-      const storageService = new IRStorageService(plugin.app);
-      await storageService.initialize();
-      const deckManager = new IRDeckManager(plugin.app, storageService, plugin.settings?.incrementalReading?.importFolder);
-      const contentSplitter = new IRContentSplitter(plugin.app, storageService);
-      
-      // 获取导入目标文件夹
-      const importFolder = resolveIRImportFolder(
-        plugin.settings?.incrementalReading?.importFolder,
-        plugin.settings?.weaveParentFolder
-      );
-      logger.info(`[IRDeckView] ========================================`);
-      logger.info(`[IRDeckView] 开始导入，目标文件夹: ${importFolder}`);
-      
-      new Notice(`正在导入 ${folderPaths.length} 个文件夹...`);
-      
-      let importedCount = 0;
-      let copiedFiles = 0;
-      
-      for (const path of folderPaths) {
-        try {
-          // 导入牌组（使用导入文件夹路径作为牌组路径）
-          const deck = await deckManager.importFolder(importFolder);
-          logger.debug('[IRDeckView] 导入牌组成功:', deck.path);
-          
-          // 扫描源文件夹中的文件
-          const sourceFiles = await deckManager.getDeckFiles(path);
-          logger.info(`[IRDeckView] 扫描到源文件: ${sourceFiles.length} 个`);
-          
-          for (const file of sourceFiles) {
-            try {
-              let targetFile = file;
-              
-              // 检查文件是否已在导入文件夹中
-              if (isInImportFolder(file.path, importFolder)) {
-                logger.debug(`[IRDeckView] 文件已在导入文件夹中，跳过复制: ${file.path}`);
-              } else {
-                // 复制文件到导入文件夹
-                logger.info(`[IRDeckView] 复制文件: ${file.path} -> ${importFolder}`);
-                targetFile = await copyFileToImportFolder(file, importFolder);
-                copiedFiles++;
-              }
-              
-              // 拆分文件并获取内容块
-              const blocks = await contentSplitter.splitFile(targetFile, importFolder, deck.settings);
-              
-              // v2.2: 写入拆分标记到文件
-              if (blocks.length > 0) {
-                await contentSplitter.injectInitialMarkers(targetFile, blocks, deck.settings);
-                logger.info(`[IRDeckView] ✅ 已写入 ${blocks.length} 个内容块标记: ${targetFile.path}`);
-              }
-            } catch (fileError) {
-              logger.error(`[IRDeckView] 处理文件失败: ${file.path}`, fileError);
-            }
-          }
-          
-          importedCount++;
-        } catch (e) {
-          logger.error('[IRDeckView] 导入单个文件夹失败:', path, e);
-        }
-      }
-      
-      // 刷新数据
-      logger.debug('[IRDeckView] 开始刷新牌组列表...');
-      await loadDecks();
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
-      
-      logger.info(`[IRDeckView] ========================================`);
-      logger.info(`[IRDeckView] 导入完成: ${importedCount} 个牌组, ${copiedFiles} 个文件已复制`);
-      new Notice(`成功导入 ${importedCount} 个牌组，复制了 ${copiedFiles} 个文件`);
-    } catch (error) {
-      logger.error('[IRDeckView] 导入失败:', error);
-      new Notice('导入失败: ' + (error as Error).message);
-    }
-  }
-
-  // 监听导入事件（从左上角菜单触发）
   $effect(() => {
     const handleIRImport = () => {
       openImportModal();
@@ -955,14 +951,21 @@
     };
     
     window.addEventListener('Weave:ir-data-updated', handleDataUpdate);
+    window.addEventListener('Weave:ir-timer-updated', handleDataUpdate);
     
     return () => {
       window.removeEventListener('Weave:ir-data-updated', handleDataUpdate);
+      window.removeEventListener('Weave:ir-timer-updated', handleDataUpdate);
     };
   });
 
   onMount(() => {
     loadDecks();
+  });
+
+  onDestroy(() => {
+    importModalInstance?.close();
+    importModalInstance = null;
   });
 </script>
 
@@ -977,7 +980,7 @@
     <!-- 空状态（简化版，与记忆牌组一致） -->
     <div class="mode-placeholder">
       <div class="placeholder-icon">--</div>
-      <h2 class="placeholder-title">暂无增量阅读牌组</h2>
+      <h2 class="placeholder-title">暂无增量阅读专题</h2>
       <p class="placeholder-desc">点击左上角菜单导入文件夹开始增量阅读</p>
     </div>
   {:else}
@@ -988,27 +991,32 @@
         {@const irStats = getStats(deckId)}
         {@const colorVariant = ((index % 4) + 1) as 1 | 2 | 3 | 4}
         
-        <!-- 增量阅读专用卡片：显示未读/待读/提问 -->
-        <IRDeckCard
-          deck={irDeck}
-          stats={irStats}
-          {colorVariant}
-          compact={false}
-          onStudy={() => handleStartReading(deckId)}
-          onMenu={(e) => showDeckMenu(e, irDeck)}
-        />
+        {#if deckCardStyle === 'chinese-elegant'}
+          <!-- 典雅风格卡片 -->
+          <IRDeckCard
+            deck={irDeck}
+            stats={irStats}
+            {colorVariant}
+            compact={false}
+            onStudy={() => handleStartReading(deckId)}
+            onMenu={(e) => showDeckMenu(e, irDeck)}
+          />
+        {:else}
+          <!-- 默认风格卡片 -->
+          {@const colorScheme = getColorSchemeForDeck(deckId)}
+          <DeckGridCard
+            deck={toMemoryDeck(irDeck)}
+            stats={toMemoryStats(irStats)}
+            {colorScheme}
+            deckMode="incremental-reading"
+            onStudy={() => handleStartReading(deckId)}
+            onMenu={(e) => showDeckMenu(e, irDeck)}
+          />
+        {/if}
       {/each}
     </div>
   {/if}
 </div>
-
-<!-- 导入模态窗 -->
-<MaterialImportModal
-  {plugin}
-  bind:open={showImportModal}
-  onClose={() => showImportModal = false}
-  onImportComplete={handleImportComplete}
-/>
 
 <!-- 负载预测模态窗 -->
 {#if showLoadForecastModal}
@@ -1069,7 +1077,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 1rem;
+    padding: var(--weave-deck-page-content-gap, 1rem);
     overflow: auto;
   }
 

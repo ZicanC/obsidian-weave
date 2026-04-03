@@ -1,5 +1,5 @@
 <script lang="ts">
-  import EnhancedIcon from "../ui/EnhancedIcon.svelte";
+  import ObsidianIcon from "../ui/ObsidianIcon.svelte";
   import { tr } from "../../utils/i18n";
   import { showObsidianConfirm } from "../../utils/obsidian-confirm";
   import type { App } from "obsidian";
@@ -95,7 +95,7 @@
 </script>
 
 {#if visible}
-  <div class="weave-batch-toolbar" class:visible={selectedCount > 0} class:mobile={isMobile}>
+  <div class="weave-batch-toolbar" class:mobile={isMobile}>
     <div class="weave-toolbar-info">
       <span>已选{selectedCount}张</span>
     </div>
@@ -103,50 +103,50 @@
       {#if isIRDataSource}
         <!-- 增量阅读模式按钮顺序：组建牌组、更换牌组、收藏、提取卡片、标签操作、删除 -->
         {#if onBuildIRDeck}
-          <div class="weave-toolbar-btn weave-btn-primary" role="button" tabindex="-1" title="组建增量牌组" onclick={handleBuildIRDeckClick}>
-            <EnhancedIcon name="layers" size={16} />
-          </div>
+          <button type="button" class="weave-toolbar-btn weave-btn-primary" title="组建增量牌组" onclick={handleBuildIRDeckClick}>
+            <ObsidianIcon name="layers" size={16} />
+          </button>
         {/if}
         {#if onIRChangeDeck}
-          <div class="weave-toolbar-btn" role="button" tabindex="-1" title="更换牌组" onclick={handleIRChangeDeckClick}>
-            <EnhancedIcon name="folder" size={16} />
-          </div>
+          <button type="button" class="weave-toolbar-btn" title="更换牌组" onclick={handleIRChangeDeckClick}>
+            <ObsidianIcon name="folder" size={16} />
+          </button>
         {/if}
         {#if onIRToggleFavorite}
-          <div class="weave-toolbar-btn" role="button" tabindex="-1" title="切换收藏" onclick={handleIRToggleFavoriteClick}>
-            <EnhancedIcon name="heart" size={16} />
-          </div>
+          <button type="button" class="weave-toolbar-btn" title="切换收藏" onclick={handleIRToggleFavoriteClick}>
+            <ObsidianIcon name="heart" size={16} />
+          </button>
         {/if}
         {#if onIRExtractCards}
-          <div class="weave-toolbar-btn" role="button" tabindex="-1" title="提取卡片" onclick={handleIRExtractCardsClick}>
-            <EnhancedIcon name="file-plus" size={16} />
-          </div>
+          <button type="button" class="weave-toolbar-btn" title="提取卡片" onclick={handleIRExtractCardsClick}>
+            <ObsidianIcon name="file-plus" size={16} />
+          </button>
         {/if}
       {:else}
         <!-- 记忆/考试模式按钮顺序：组建牌组、更换牌组、标签操作、删除 -->
         {#if onBuildDeck}
-          <div class="weave-toolbar-btn weave-btn-primary" role="button" tabindex="-1" title="组建牌组" onclick={handleBuildDeckClick}>
-            <EnhancedIcon name="layers" size={16} />
-          </div>
+          <button type="button" class="weave-toolbar-btn weave-btn-primary" title="组建牌组" onclick={handleBuildDeckClick}>
+            <ObsidianIcon name="layers" size={16} />
+          </button>
         {/if}
         {#if onBatchChangeDeck}
-          <div class="weave-toolbar-btn" role="button" tabindex="-1" title={t('cardManagement.batchToolbar.changeDeck')} onclick={handleBatchChangeDeckClick}>
-            <EnhancedIcon name="folder" size={16} />
-          </div>
+          <button type="button" class="weave-toolbar-btn" title={t('cardManagement.batchToolbar.changeDeck')} onclick={handleBatchChangeDeckClick}>
+            <ObsidianIcon name="folder" size={16} />
+          </button>
         {/if}
       {/if}
       <!-- 通用按钮：标签操作、删除 -->
       {#if onBatchTagsMenu}
-        <div class="weave-toolbar-btn" role="button" tabindex="-1" title="标签操作" onclick={handleBatchTagsMenuClick}>
-          <EnhancedIcon name="tag" size={16} />
-        </div>
+        <button type="button" class="weave-toolbar-btn" title="标签操作" onclick={handleBatchTagsMenuClick}>
+          <ObsidianIcon name="tag" size={16} />
+        </button>
       {/if}
-      <div class="weave-toolbar-btn weave-btn-danger" role="button" tabindex="-1" title={t('ui.delete')} onclick={handleBatchDeleteClick}>
-        <EnhancedIcon name="trash-2" size={16} />
-      </div>
-      <div class="weave-toolbar-btn weave-btn-secondary" role="button" tabindex="-1" title="取消选择" onclick={() => onClearSelection?.()}>
-        <EnhancedIcon name="x-circle" size={16} />
-      </div>
+      <button type="button" class="weave-toolbar-btn weave-btn-danger" title={t('ui.delete')} onclick={handleBatchDeleteClick}>
+        <ObsidianIcon name="trash-2" size={16} />
+      </button>
+      <button type="button" class="weave-toolbar-btn weave-btn-secondary" title="取消选择" onclick={() => onClearSelection?.()}>
+        <ObsidianIcon name="x-circle" size={16} />
+      </button>
     </div>
   </div>
 {/if}
@@ -160,7 +160,7 @@
     background: var(--background-secondary);
     border: 1px solid var(--background-modifier-border);
     border-radius: 0.75rem;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    box-shadow: none;
     backdrop-filter: blur(8px);
     z-index: var(--weave-z-overlay);
     animation: slideInUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -217,6 +217,11 @@
     background: transparent;
   }
 
+  .weave-toolbar-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
+  }
+
   .weave-btn-danger {
     color: var(--text-error);
   }
@@ -235,14 +240,14 @@
     color: var(--text-normal);
   }
 
-  /* 🆕 主要操作按钮（组建牌组） */
+  /* 主要操作按钮（组建牌组） */
   .weave-btn-primary {
     background: var(--interactive-accent);
     color: var(--text-on-accent);
   }
 
   .weave-btn-primary:hover {
-    background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+    background: var(--interactive-accent-hover, var(--interactive-accent));
   }
 
 

@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, fireEvent, screen, waitFor } from '@testing-library/svelte';
 import WeaveCardTable from '../WeaveCardTable.svelte';
 import type { Card } from '../../../data/types';
 import { CardState } from '../../../data/types';
 import { vaultStorage } from '../../../utils/vault-local-storage';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../utils/vault-local-storage', () => ({
   vaultStorage: {
@@ -29,15 +29,21 @@ const mockCards: Card[] = [
       due: new Date().toISOString(),
       stability: 1,
       difficulty: 5,
-      elapsed_days: 0,
-      scheduled_days: 1,
+      elapsedDays: 0,
+      scheduledDays: 1,
       reps: 0,
       lapses: 0,
-      last_review: null
+      lastReview: undefined,
+      retrievability: 1
     },
     priority: 3,
+    stats: {
+      totalReviews: 0,
+      totalTime: 0,
+      averageTime: 0
+    },
     created: new Date().toISOString(),
-    updated: new Date().toISOString()
+    modified: new Date().toISOString()
   },
   {
     id: '2',
@@ -54,15 +60,21 @@ const mockCards: Card[] = [
       due: new Date().toISOString(),
       stability: 2,
       difficulty: 4,
-      elapsed_days: 1,
-      scheduled_days: 2,
+      elapsedDays: 1,
+      scheduledDays: 2,
       reps: 1,
       lapses: 0,
-      last_review: new Date()
+      lastReview: new Date().toISOString(),
+      retrievability: 1
     },
     priority: 2,
+    stats: {
+      totalReviews: 1,
+      totalTime: 30,
+      averageTime: 30
+    },
     created: new Date().toISOString(),
-    updated: new Date().toISOString()
+    modified: new Date().toISOString()
   }
 ];
 

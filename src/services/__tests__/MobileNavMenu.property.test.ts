@@ -9,8 +9,6 @@
  * @module services/__tests__/MobileNavMenu.property.test
  * @version 1.0.0
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 
 // ===== 类型定义 =====
@@ -51,7 +49,7 @@ const MENU_SECTIONS: MenuSection[] = [
     items: [
       { id: 'incremental-reading', icon: 'book-open', label: '增量摘录' },
       { id: 'memory-deck', icon: 'brain', label: '记忆牌组' },
-      { id: 'quiz-deck', icon: 'edit-3', label: '考试牌组' }
+      { id: 'quiz-deck', icon: 'edit-3', label: '考试题组' }
     ]
   }
 ];

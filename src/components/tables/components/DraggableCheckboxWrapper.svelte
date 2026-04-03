@@ -132,7 +132,7 @@
     justify-content: center;
     position: relative;
     cursor: pointer;
-    /* 🔧 修复：移除padding，避免与表头复选框位置不一致 */
+    /* 移除 padding，避免与表头复选框位置不一致 */
     padding: 0;
   }
   

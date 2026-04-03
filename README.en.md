@@ -111,25 +111,25 @@ Incremental Reading can also output readable Markdown into a visible directory a
 
 ## Disclosures
 
-### Closed Source Modules
-The following modules are distributed as compiled JavaScript without TypeScript source:
-- `src/services/editor/` -- Detached leaf editor
-- `src/services/incremental-reading/` -- Incremental reading engine (TVP-DS)
-- `src/services/progressive-cloze/` -- Progressive cloze deletion
-- `src/services/batch-parsing/` -- Batch card parsing
-- `src/services/question-bank/` -- Question bank and exam system
-- `src/services/image-mask/` -- Image mask overlay
-- `src/services/premium/` -- License management
-
-All other source code (Svelte components, FSRS algorithm, data layer, utilities, etc.) is fully open source.
-
 ### Payment
-Some advanced features require a license key for full access. Core features (memory decks, basic review, card creation) are free.
+- Core learning features are available for free.
+- Some advanced features require a valid paid license key to unlock.
+- Premium activation requires an email address so the license can be associated with the user and validated across devices.
 
 ### Network Use
-- **AI Assistant**: Connects to user-configured AI API endpoints (e.g., OpenAI) for AI-powered features. The API key and endpoint are configured by the user.
-- **License Validation**: Connects to a cloud server to validate license keys for premium features.
-- **AnkiConnect**: Connects to local Anki application via AnkiConnect API (localhost only, no external network requests).
+- **AI Assistant**: Connects to user-configured AI API endpoints. The data sent depends on the user's action and the configured provider.
+- **License activation/validation**: Connects to the plugin's license service. Requests may include the license key, bound email address, derived device fingerprint, and platform information.
+- **AnkiConnect**: Connects to the local Anki application through `localhost` only and does not send Anki data to a public remote server.
+
+### File Access
+- The plugin reads and writes Markdown files, attachments, card data, and learning state inside the current Obsidian vault.
+- The plugin also stores local state, cache, backup, and log data under `.obsidian/plugins/weave/`.
+- Vault content is not uploaded to external services unless the user explicitly uses a networked feature.
+
+### Telemetry, Ads, and Source Code
+- The plugin does not include ads.
+- The plugin does not include product analytics telemetry.
+- This repository contains the source code used for review and release. Private keys, server-side credentials, and other true secrets are not shipped in the client repository.
 
 ## License
 
@@ -151,6 +151,5 @@ Note: development mode uses the Vite watch build flow.
 
 ## More Documentation
 
-- Installation and testing: `INSTALLATION.md`
 - Release guide: `docs/RELEASE_GUIDE.md`
 - Image masking: `docs/IMAGE_MASK_GUIDE.md`

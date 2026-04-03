@@ -389,13 +389,16 @@ export class BatchProcessor<T> {
 
 // 全局性能监控器实例
 function getOrCreatePerformanceMonitor(): PerformanceMonitor {
-	if (typeof window === 'undefined') {
+	if (typeof window === "undefined") {
 		return new PerformanceMonitor();
 	}
 
-	const w = window as any;
+	const w = window as Window & {
+		__weaveConfigPerformanceMonitor?: PerformanceMonitor | null;
+		__weaveConfigPerformanceMonitorCleanup?: (() => void) | null;
+	};
 	if (w.__weaveConfigPerformanceMonitor) {
-		return w.__weaveConfigPerformanceMonitor as PerformanceMonitor;
+		return w.__weaveConfigPerformanceMonitor;
 	}
 
 	const instance = new PerformanceMonitor();
@@ -403,11 +406,10 @@ function getOrCreatePerformanceMonitor(): PerformanceMonitor {
 	w.__weaveConfigPerformanceMonitorCleanup = () => {
 		try {
 			(w.__weaveConfigPerformanceMonitor as PerformanceMonitor | undefined)?.stopMonitoring();
-		} catch {
-		}
+		} catch {}
 		try {
-			delete w.__weaveConfigPerformanceMonitor;
-			delete w.__weaveConfigPerformanceMonitorCleanup;
+			w.__weaveConfigPerformanceMonitor = undefined;
+			w.__weaveConfigPerformanceMonitorCleanup = undefined;
 		} catch {
 			w.__weaveConfigPerformanceMonitor = null;
 			w.__weaveConfigPerformanceMonitorCleanup = null;

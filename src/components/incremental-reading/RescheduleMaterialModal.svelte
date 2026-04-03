@@ -96,8 +96,16 @@
 
 <div 
   class="reschedule-backdrop"
-  onclick={onClose}
-  onkeydown={(e) => e.key === 'Enter' && onClose()}
+  onclick={(event) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }}
+  onkeydown={(event) => {
+    if (event.target === event.currentTarget && event.key === 'Enter') {
+      onClose();
+    }
+  }}
   role="button"
   tabindex="0"
   aria-label="关闭"
@@ -105,8 +113,6 @@
   <div 
     class="reschedule-modal"
     class:show={showContent}
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
     role="dialog"
     tabindex="-1"
     aria-labelledby="reschedule-title"

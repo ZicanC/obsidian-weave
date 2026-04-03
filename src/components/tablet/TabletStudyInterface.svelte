@@ -9,6 +9,7 @@
   import { gestureManager, type GestureEvent } from '../../utils/gesture-manager';
   import type { Card } from '../../data/types';
   import { getCardFieldContent } from '../../utils/card-field-helper';
+  import { tr } from '../../utils/i18n';
 
   interface Props {
     /** 当前学习的卡片 */
@@ -38,6 +39,7 @@
   let touchSizes = $state({ minSize: 44, recommendedSize: 48, spacing: 8 });
   let cardContentArea: HTMLElement;
   let actionArea: HTMLElement;
+  let t = $derived($tr);
 
   onMount(() => {
     const device = detectDevice();
@@ -182,21 +184,21 @@
                 {#if !showAnswer}
                   <div class="gesture-item">
                     <span class="gesture-icon">[U]</span>
-                    <span class="gesture-text">上滑或双击显示答案</span>
+                    <span class="gesture-text">{t('study.tablet.swipeUpOrDoubleTapShowAnswer')}</span>
                   </div>
                 {:else}
                   <div class="gesture-grid">
                     <div class="gesture-item">
                       <span class="gesture-icon">[D]</span>
-                      <span class="gesture-text">重来</span>
+                      <span class="gesture-text">{t('study.rating.again')}</span>
                     </div>
                     <div class="gesture-item">
                       <span class="gesture-icon">[L]</span>
-                      <span class="gesture-text">良好</span>
+                      <span class="gesture-text">{t('study.rating.good')}</span>
                     </div>
                     <div class="gesture-item">
                       <span class="gesture-icon">[R]</span>
-                      <span class="gesture-text">简单</span>
+                      <span class="gesture-text">{t('study.rating.easy')}</span>
                     </div>
                   </div>
                 {/if}
@@ -219,8 +221,8 @@
         </div>
       {:else}
         <div class="no-card-state">
-          <div class="no-card-icon">提示</div>
-          <div class="no-card-text">暂无学习内容</div>
+          <div class="no-card-icon">{t('study.tablet.hint')}</div>
+          <div class="no-card-text">{t('study.tablet.noStudyContent')}</div>
         </div>
       {/if}
     </div>
@@ -234,7 +236,7 @@
           style="min-height: {touchSizes.recommendedSize}px; margin: {touchSizes.spacing}px;"
           onclick={handleShowAnswer}
         >
-          <span class="button-text">显示答案</span>
+          <span class="button-text">{t('study.rating.showAnswer')}</span>
         </button>
       {:else}
         <!-- 学习评分按钮组 -->
@@ -244,7 +246,7 @@
             style="min-height: {touchSizes.recommendedSize}px; margin: {touchSizes.spacing}px;"
             onclick={() => handleAnswer('again')}
           >
-            <span class="button-text">重来</span>
+            <span class="button-text">{t('study.rating.again')}</span>
             <span class="button-shortcut">1</span>
           </button>
 
@@ -253,7 +255,7 @@
             style="min-height: {touchSizes.recommendedSize}px; margin: {touchSizes.spacing}px;"
             onclick={() => handleAnswer('hard')}
           >
-            <span class="button-text">困难</span>
+            <span class="button-text">{t('study.rating.hard')}</span>
             <span class="button-shortcut">2</span>
           </button>
 
@@ -262,7 +264,7 @@
             style="min-height: {touchSizes.recommendedSize}px; margin: {touchSizes.spacing}px;"
             onclick={() => handleAnswer('good')}
           >
-            <span class="button-text">良好</span>
+            <span class="button-text">{t('study.rating.good')}</span>
             <span class="button-shortcut">3</span>
           </button>
 
@@ -271,7 +273,7 @@
             style="min-height: {touchSizes.recommendedSize}px; margin: {touchSizes.spacing}px;"
             onclick={() => handleAnswer('easy')}
           >
-            <span class="button-text">简单</span>
+            <span class="button-text">{t('study.rating.easy')}</span>
             <span class="button-shortcut">4</span>
           </button>
         </div>
@@ -284,7 +286,7 @@
           style="min-height: {touchSizes.minSize}px; margin: {touchSizes.spacing}px;"
           onclick={handleUndo}
         >
-          <span class="button-text">撤销</span>
+          <span class="button-text">{t('study.toolbar.undo')}</span>
         </button>
       {/if}
     </div>

@@ -4,145 +4,144 @@
 
   let { card, onPriorityUpdate }: PriorityCellProps = $props();
 
-  //  移动端检测
   const isMobile = Platform.isMobile;
 
-  // 优先级配置：颜色和标签
-  const priorityConfig: Record<number, { color: string; label: string; cssClass: string }> = {
-    1: { color: 'var(--color-red)', label: '紧急', cssClass: 'priority-1' },
-    2: { color: 'var(--color-orange)', label: '高', cssClass: 'priority-2' },
-    3: { color: 'var(--color-blue)', label: '中', cssClass: 'priority-3' },
-    4: { color: 'var(--text-faint)', label: '低', cssClass: 'priority-4' },
+  const priorityConfig: Record<number, { label: string; short: string; tone: string }> = {
+    1: { label: '低', short: 'P1', tone: 'gray' },
+    2: { label: '中', short: 'P2', tone: 'blue' },
+    3: { label: '高', short: 'P3', tone: 'orange' },
+    4: { label: '紧急', short: 'P4', tone: 'red' },
   };
 
-  // 当前优先级（默认为2）
   let currentPriority = $derived(card.priority || 2);
   let config = $derived(priorityConfig[currentPriority] || priorityConfig[2]);
 
-  //  移动端：显示 Obsidian Menu 选择优先级
   function showPriorityMenu(event: MouseEvent) {
     if (!onPriorityUpdate) return;
-    
+
     const menu = new Menu();
-    
-    [1, 2, 3, 4].forEach(priority => {
-      const cfg = priorityConfig[priority];
-      menu.addItem(item => {
+    [1, 2, 3, 4].forEach((priority) => {
+      const itemConfig = priorityConfig[priority];
+      menu.addItem((item) => {
         item
-          .setTitle(`P${priority} - ${cfg.label}`)
+          .setTitle(`${itemConfig.short} · ${itemConfig.label}`)
           .setIcon(priority === currentPriority ? 'check' : 'circle')
-          .onClick(() => {
-            onPriorityUpdate(card.uuid, priority);
-          });
+          .onClick(() => onPriorityUpdate(card.uuid, priority));
       });
     });
 
     menu.showAtMouseEvent(event);
   }
 
-  //  桌面端：点击切换优先级（循环 1-4）
   function handleDesktopClick() {
     if (!onPriorityUpdate) return;
-    const newPriority = currentPriority >= 4 ? 1 : currentPriority + 1;
-    onPriorityUpdate(card.uuid, newPriority);
+    const nextPriority = currentPriority >= 4 ? 1 : currentPriority + 1;
+    onPriorityUpdate(card.uuid, nextPriority);
   }
 </script>
 
 <td class="weave-priority-column">
   <button
-    class="weave-priority-badge {config.cssClass}"
+    class="weave-priority-badge tone-{config.tone}"
     onclick={isMobile ? showPriorityMenu : handleDesktopClick}
-    aria-label="优先级 P{currentPriority} - {config.label}"
-    title={isMobile ? '点击选择优先级' : `优先级: ${config.label}（点击切换）`}
+    aria-label={`优先级 ${config.short} ${config.label}`}
+    title={isMobile ? '点击选择优先级' : `优先级 ${config.label}，点击切换`}
+    type="button"
   >
-    {#if isMobile}
-      <span class="priority-number">{currentPriority}</span>
-    {:else}
-      <span class="priority-text">P{currentPriority}</span>
-    {/if}
+    <span class="priority-dot"></span>
+    <span class="priority-text">{config.short}</span>
   </button>
 </td>
 
 <style>
   .weave-priority-column {
-    width: 48px;
-    min-width: 48px;
-    max-width: 48px;
+    width: 64px;
+    min-width: 64px;
+    max-width: 64px;
     text-align: center;
   }
 
-  /*  数字徽章样式 */
   .weave-priority-badge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 28px;
-    height: 22px;
-    padding: 0 6px;
-    border: none;
-    border-radius: 4px;
+    gap: 6px;
+    min-width: 42px;
+    height: 24px;
+    padding: 0 9px;
+    border: 1px solid transparent;
+    border-radius: 999px;
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     cursor: pointer;
-    transition: all 0.15s ease;
-    background: var(--background-modifier-hover);
-    color: var(--text-muted);
+    transition: transform 0.16s ease, filter 0.16s ease, border-color 0.16s ease;
   }
 
-  /* 优先级颜色 */
-  .weave-priority-badge.priority-1 {
-    background: rgba(var(--color-red-rgb), 0.15);
-    color: var(--color-red);
+  .priority-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.9;
   }
 
-  .weave-priority-badge.priority-2 {
-    background: rgba(var(--color-orange-rgb), 0.15);
-    color: var(--color-orange);
-  }
-
-  .weave-priority-badge.priority-3 {
-    background: rgba(var(--color-blue-rgb), 0.15);
-    color: var(--color-blue);
-  }
-
-  .weave-priority-badge.priority-4 {
-    background: var(--background-modifier-hover);
-    color: var(--text-faint);
-  }
-
-  .weave-priority-badge:hover {
-    transform: scale(1.05);
-    filter: brightness(1.1);
-  }
-
-  .weave-priority-badge:active {
-    transform: scale(0.95);
-  }
-
-  .weave-priority-badge:focus {
-    outline: 2px solid var(--color-accent);
-    outline-offset: 1px;
-  }
-
-  .priority-text,
-  .priority-number {
+  .priority-text {
     line-height: 1;
   }
 
-  /*  移动端适配 - 更紧凑的数字显示 */
-  :global(body.is-mobile) .weave-priority-column {
-    width: 36px;
-    min-width: 36px;
-    max-width: 36px;
+  .weave-priority-badge.tone-gray {
+    background: color-mix(in srgb, var(--color-gray) 12%, transparent);
+    color: var(--color-gray);
+    border-color: color-mix(in srgb, var(--color-gray) 20%, transparent);
   }
 
-  :global(body.is-mobile) .weave-priority-badge {
-    min-width: 24px;
-    height: 24px;
-    padding: 0 4px;
-    font-size: 12px;
-    border-radius: 6px;
+  .weave-priority-badge.tone-blue {
+    background: color-mix(in srgb, var(--color-blue) 12%, transparent);
+    color: var(--color-blue);
+    border-color: color-mix(in srgb, var(--color-blue) 20%, transparent);
+  }
+
+  .weave-priority-badge.tone-orange {
+    background: color-mix(in srgb, var(--color-orange) 12%, transparent);
+    color: var(--color-orange);
+    border-color: color-mix(in srgb, var(--color-orange) 22%, transparent);
+  }
+
+  .weave-priority-badge.tone-red {
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    color: var(--color-red);
+    border-color: color-mix(in srgb, var(--color-red) 22%, transparent);
+  }
+
+  .weave-priority-badge:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.04);
+  }
+
+  .weave-priority-badge:active {
+    transform: scale(0.97);
+  }
+
+  @media (max-width: 768px) {
+    .weave-priority-column {
+      width: 72px;
+      min-width: 72px;
+      max-width: 72px;
+    }
+
+    .weave-priority-badge {
+      gap: 4px;
+      min-width: 50px;
+      height: 24px;
+      padding: 0 10px;
+      font-size: 11px;
+      border-radius: 10px;
+    }
+
+    .priority-dot {
+      width: 4px;
+      height: 4px;
+      opacity: 0.78;
+    }
   }
 </style>
-
-

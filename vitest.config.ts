@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelteTesting } from '@testing-library/svelte/vite';
 
 export default defineConfig({
   plugins: [
@@ -11,7 +12,8 @@ export default defineConfig({
         }
       },
       hot: false
-    })
+    }),
+    svelteTesting()
   ],
   test: {
     environment: 'jsdom',
@@ -40,8 +42,7 @@ export default defineConfig({
     alias: {
       '@': '/src',
       'obsidian': '/src/tests/mocks/obsidian.ts'
-    },
-    conditions: ['browser']
+    }
   },
   define: {
     global: 'globalThis'

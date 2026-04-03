@@ -9,8 +9,6 @@
  * @module services/__tests__/MobileDeckEditSheet.property.test
  * @version 1.0.0
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 
 // ===== 类型定义 =====
@@ -225,7 +223,7 @@ describe('保存行为', () => {
         (tags, deckName) => {
           // 模拟保存行为
           let savedName: string | null = null;
-          let savedTagIds: string[] | null = null;
+          let savedTagIds: unknown = null;
           
           const handleSave = (name: string, selectedTagIds: string[]) => {
             savedName = name;
@@ -234,11 +232,11 @@ describe('保存行为', () => {
           
           const selectedIds = getSelectedTagIds(tags);
           handleSave(deckName, selectedIds);
+          const savedTagCount = Array.isArray(savedTagIds) ? savedTagIds.length : -1;
           
           return (
             savedName === deckName &&
-            savedTagIds !== null &&
-            savedTagIds.length === selectedIds.length
+            savedTagCount === selectedIds.length
           );
         }
       ),

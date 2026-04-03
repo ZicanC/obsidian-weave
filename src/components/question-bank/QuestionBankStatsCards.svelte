@@ -28,7 +28,7 @@
       ? (session.completedQuestions / session.totalQuestions) * 100
       : 0;
 
-    // 🆕 计算当前测试得分 - 直接使用session中的score字段
+    // 计算当前测试得分，直接使用 session 中的 score 字段
     const currentScore = session.score || 0;
     
     // 如果有历史统计数据，显示该题目的累计数据

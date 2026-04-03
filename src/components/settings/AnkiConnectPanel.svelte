@@ -1219,11 +1219,15 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       <!-- 牌组管理 -->
       <DeckMappingSection
         {ankiDecks}
+        {ankiModels}
         {weaveDecks}
         {isFetchingDecks}
+        {isFetchingModels}
+        {isConnected}
         {settings}
         mappings={settings.deckMappings}
         onFetchDecks={fetchAnkiDecks}
+        onFetchModels={fetchAnkiModels}
         onAddMapping={addDeckMapping}
         onUpdateMapping={updateDeckMapping}
         onRemoveMapping={removeDeckMapping}
@@ -1480,6 +1484,5 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     }
   }
 </style>
-
 
 

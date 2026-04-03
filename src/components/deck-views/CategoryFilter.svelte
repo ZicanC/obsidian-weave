@@ -1,7 +1,7 @@
 <script lang="ts">
   /**
    * 牌组模式筛选器
-   * 🆕 v0.10 - 题库功能：改为模式切换
+   * 题库功能改为模式切换
    * - memory: 记忆牌组（FSRS学习）
    * - reading: 增量阅读（未实现，预留）
    * - question-bank: 题库牌组（考试测试）
@@ -11,10 +11,14 @@
    * - child: 子卡片牌组（已废弃，映射到memory）
    * - all: 全部牌组（已废弃，映射到memory）
    * 
-   *  v0.10.1 - 移动端样式统一
+   * 移动端样式统一
    * - 移除移动端特殊样式，桌面端和移动端使用相同的 16px 圆点
    * - 通过扩大触控区域（::before 伪元素）确保移动端可点击性
    */
+  import { tr } from '../../utils/i18n';
+  import { get } from 'svelte/store';
+  import { PremiumFeatureGuard, PREMIUM_FEATURES } from '../../services/premium/PremiumFeatureGuard';
+
   export type DeckFilter = 'memory' | 'reading' | 'question-bank' | 'incremental-reading' | 'parent' | 'child' | 'all';
 
   interface Props {
@@ -24,30 +28,69 @@
 
   let { selectedFilter, onSelect }: Props = $props();
 
-  // 🆕 v0.10 - 三个模式选项（顺序：增量摘录、记忆牌组、考试牌组）
-  const filters: Array<{ id: DeckFilter; name: string; icon: string; colorStart: string; colorEnd: string }> = [
+  let t = $derived($tr);
+  const premiumGuard = PremiumFeatureGuard.getInstance();
+  let isPremium = $state(get(premiumGuard.isPremiumActive));
+  let showPremiumFeaturesPreview = $state(get(premiumGuard.premiumFeaturesPreviewEnabled));
+
+  $effect(() => {
+    const unsubscribePremium = premiumGuard.isPremiumActive.subscribe(value => {
+      isPremium = value;
+    });
+    const unsubscribePreview = premiumGuard.premiumFeaturesPreviewEnabled.subscribe(value => {
+      showPremiumFeaturesPreview = value;
+    });
+
+    return () => {
+      unsubscribePremium();
+      unsubscribePreview();
+    };
+  });
+
+  const filterDefs: Array<{ id: DeckFilter; nameKey: string; icon: string; colorStart: string; colorEnd: string }> = [
     {
       id: 'incremental-reading',
-      name: '增量阅读',
+      nameKey: 'decks.categoryFilter.incrementalReading',
       icon: '📖',
       colorStart: '#ef4444',
       colorEnd: '#dc2626'
     },
     {
       id: 'memory',
-      name: '记忆牌组',
+      nameKey: 'decks.categoryFilter.memory',
       icon: '📚',
       colorStart: '#3b82f6',
       colorEnd: '#2563eb'
     },
     {
       id: 'question-bank',
-      name: '考试牌组 🔒',
+      nameKey: 'decks.categoryFilter.questionBank',
       icon: '📝',
       colorStart: '#10b981',
       colorEnd: '#059669'
     }
   ];
+
+  const filters = $derived(filterDefs.map(f => ({ ...f, name: t(f.nameKey) })));
+  const visibleFilters = $derived(
+    filters.filter(filter => {
+      if (filter.id === 'incremental-reading') {
+        return premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.INCREMENTAL_READING, {
+          isPremium,
+          showPremiumPreview: showPremiumFeaturesPreview
+        });
+      }
+
+      if (filter.id === 'question-bank') {
+        return premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.QUESTION_BANK, {
+          isPremium,
+          showPremiumPreview: showPremiumFeaturesPreview
+        });
+      }
+
+      return true;
+    })
+  );
 
   function getGradientStyle(filter: typeof filters[0]): string {
     return `background: linear-gradient(135deg, ${filter.colorStart}, ${filter.colorEnd})`;
@@ -55,7 +98,7 @@
 </script>
 
 <div class="category-filter">
-  {#each filters as filter}
+  {#each visibleFilters as filter}
     <button
       class="category-dot"
       class:selected={selectedFilter === filter.id}

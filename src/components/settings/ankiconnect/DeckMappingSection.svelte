@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Menu, Notice } from 'obsidian';
-  import type { AnkiDeckInfo } from '../../../types/ankiconnect-types';
+  import type { AnkiDeckInfo, AnkiModelInfo } from '../../../types/ankiconnect-types';
   import type { Deck } from '../../../data/types';
   import type { DeckSyncMapping } from '../../settings/types/settings-types';
   import type { AnkiConnectSettings } from '../../settings/types/settings-types';
@@ -21,11 +21,15 @@
   
   let {
     ankiDecks = [],
+    ankiModels = [],
     weaveDecks = [],
     isFetchingDecks = false,
+    isFetchingModels = false,
+    isConnected = false,
     mappings = {},
     settings,
     onFetchDecks,
+    onFetchModels,
     onAddMapping,
     onUpdateMapping,
     onRemoveMapping,
@@ -35,11 +39,15 @@
     onBatchSync
   }: {
     ankiDecks: AnkiDeckInfo[];
+    ankiModels?: AnkiModelInfo[];
     weaveDecks: Deck[];
     isFetchingDecks?: boolean;
+    isFetchingModels?: boolean;
+    isConnected?: boolean;
     mappings: Record<string, DeckSyncMapping>;
     settings: AnkiConnectSettings;
     onFetchDecks: () => Promise<void>;
+    onFetchModels: () => Promise<void>;
     onAddMapping: (mapping: DeckSyncMapping) => void;
     onUpdateMapping: (id: string, updates: Partial<DeckSyncMapping>) => void;
     onRemoveMapping: (id: string) => void;
@@ -64,6 +72,8 @@
     });
     return unsubscribe;
   });
+
+  const bidirectionalSyncEnabled = $derived(Boolean(settings.bidirectionalSync?.enabled));
 
   // 将 mappings 转换为数组，保留 key 信息
   let mappingList = $derived.by(() => {
@@ -258,20 +268,20 @@
       item
         .setTitle(`批量双向同步`)
         .setIcon("repeat")
-        .setDisabled(enabledCount === 0 || !settings.bidirectionalSync.enabled)
+        .setDisabled(enabledCount === 0 || !bidirectionalSyncEnabled)
         .onClick(async () => {
           if (enabledCount === 0) {
             new Notice('没有启用的牌组映射');
             return;
           }
-          if (!settings.bidirectionalSync.enabled) {
+          if (!bidirectionalSyncEnabled) {
             new Notice('双向同步未启用，请在高级设置中启用');
             return;
           }
           await onBatchSync('bidirectional');
         });
       
-      if (enabledCount > 0 && settings.bidirectionalSync.enabled) {
+      if (enabledCount > 0 && bidirectionalSyncEnabled) {
         (item as any).setSection?.(`${enabledCount} 个已启用`);
       }
     });
@@ -331,10 +341,14 @@
   <!-- 工具栏操作 -->
   <ToolbarActions
     {ankiDecks}
+    {ankiModels}
     {weaveDecks}
     {isFetchingDecks}
+    {isFetchingModels}
+    {isConnected}
     {showAddModal}
     onFetchDecks={handleFetch}
+    {onFetchModels}
     onToggleAddModal={() => showAddModal = !showAddModal}
   />
 
@@ -954,5 +968,4 @@
     }
   }
 </style>
-
 

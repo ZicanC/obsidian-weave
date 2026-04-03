@@ -1,4 +1,4 @@
-<script lang="ts">
+﻿<script lang="ts">
   import { logger } from '../../utils/logger';
   import { vaultStorage } from '../../utils/vault-local-storage';
 
@@ -9,16 +9,15 @@
   import type { Card, Deck } from "../../data/types";
   import type { TimeFilterType } from "../../types/time-filter-types";
   import { MarkdownView, Platform, Menu, TFile, Modal, FuzzySuggestModal } from "obsidian";
+  import type { WorkspaceLeaf } from "obsidian";
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
-  import EnhancedButton from "../ui/EnhancedButton.svelte";
   import BouncingBallsLoader from "../ui/BouncingBallsLoader.svelte";
-  import FloatingMenu from "../ui/FloatingMenu.svelte";
   import WeaveCardTable from "../tables/WeaveCardTable.svelte";
   import TableSortingOverlay from "../tables/components/TableSortingOverlay.svelte";
   import KanbanView from "../study/KanbanView.svelte";
   import GridView from "../views/GridView.svelte";
   import MasonryGridView from "../views/MasonryGridView.svelte";
-  import SavedFilterBar from "../filters/SavedFilterBar.svelte";
+  import GridTimelineView from "../views/GridTimelineView.svelte";
   import WeaveBatchToolbar from "../batch/WeaveBatchToolbar.svelte";
   // BatchTemplateChangeModal 已删除（基于弃用的字段模板系统）
   // BatchDeckChangeModal、BatchRemoveTagsModal、BatchAddTagsModal 已改用 Obsidian Menu API
@@ -27,7 +26,7 @@
   // 🆕 v2.0 增量阅读牌组模态窗
   import BuildIRDeckModal from "../modals/BuildIRDeckModal.svelte";
   // 🆕 v2.2 数据管理模态窗
-  import DataManagementModal from "../modals/DataManagementModal.svelte";
+  import { DataManagementModalObsidian } from "../modals/DataManagementModalObsidian";
   // EditCardModal 已改为全局方法，不再局部导入
   import { EmbeddableEditorManager } from "../../services/editor/EmbeddableEditorManager";
 
@@ -39,18 +38,10 @@
   import { onMount, onDestroy, untrack, tick } from "svelte";
   import { waitForServiceReady } from "../../utils/service-ready-event";
 
-  import { getCardContentBySide, generateUUID } from "../../utils/helpers";
+  import { getCardContentBySide } from "../../utils/helpers";
   import { showNotification } from "../../utils/notifications";
-  // FieldTemplate 类型已删除（基于弃用的字段模板系统）
-  // 🆕 FSRS复习数据工具
-  import { deriveReviewData, getCardModifiedTime } from "../../utils/card-review-data-utils";
-  
-  // 🆕 源文档路径匹配工具
-  import { 
-    matchesSourceDocument, 
-    filterCardsBySourceDocument,
-    extractSourcePath 
-  } from "../../utils/source-path-matcher";
+  // 源文档路径筛选工具
+  import { filterCardsBySourceDocument } from "../../utils/source-path-matcher";
   // 🆕 标签层级筛选工具
   import { matchesTagFilter } from "../../utils/tag-utils";
   // 旧的三位一体模板系统已完全移除
@@ -59,7 +50,7 @@
   import { getCardMetadata, setCardProperties, getCardDeckIds, getCardDeckNames as getCardDeckNamesFromYaml, extractBodyContent, parseSourceInfo, parseYAMLFromContent } from "../../utils/yaml-utils";
   import { MAIN_SEPARATOR } from "../../constants/markdown-delimiters";
   import { cardsToCSV, groupCardsBySource, groupCardsByMonth, groupCardsByDeck, sanitizeFileName, type ExportGroupMode } from "../../utils/card-export-utils";
-  import { showObsidianConfirm, showObsidianInput } from "../../utils/obsidian-confirm";
+  import { showObsidianConfirm } from "../../utils/obsidian-confirm";
   import { detectCardQuestionType, getQuestionTypeDistribution } from "../../utils/card-type-utils";
   import { getErrorBookDistribution, getCardErrorLevel } from "../../utils/error-book-utils";
   import { CardType } from "../../data/types";
@@ -76,19 +67,15 @@
   // 🆕 v2.1 YAML 元数据服务
   import { getCardMetadataService } from "../../services/CardMetadataService";
   import { invalidateCardCache } from "../../services/CardMetadataCache";
-  import type { FilterConfig, SavedFilter } from "../../types/filter-types";
-  
-  // 牌组选择器
-  import { DeckSelectorStorage } from "../../services/deck-selector-storage";
+  import type { SavedFilter } from "../../types/filter-types";
   
   // 高级功能守卫
   import { PremiumFeatureGuard, PREMIUM_FEATURES } from "../../services/premium/PremiumFeatureGuard";
   import ActivationPrompt from "../premium/ActivationPrompt.svelte";
-  import PremiumBadge from "../premium/PremiumBadge.svelte";
   
   // 🆕 题库数据存储
   import { QuestionBankStorage } from "../../services/question-bank/QuestionBankStorage";
-  import type { TestSession, QuestionTestStats } from "../../types/question-bank-types";
+  import type { QuestionTestStats } from "../../types/question-bank-types";
   
   
   // 🆕 移动端组件
@@ -99,18 +86,13 @@
   import CardSearchInput from "../search/CardSearchInput.svelte";
   import { parseSearchQuery, matchSearchQuery } from "../../utils/search-parser";
   import type { SearchQuery } from "../../utils/search-parser";
-  
-  // 🆕 侧边栏导航头部组件
-  import SidebarNavHeader from "../navigation/SidebarNavHeader.svelte";
-  import type { CardViewType } from "../navigation/SidebarNavHeader.svelte";
+  import { getQuestionTypeLabelFromCard } from "../../utils/question-type-utils";
   
   // 🆕 增量阅读活动文档store（用于文档关联筛选）
   import { irActiveDocumentStore } from "../../stores/ir-active-document-store";
   // EPUB阅读器活动文档store（用于文档关联筛选）
   import { epubActiveDocumentStore } from "../../stores/epub-active-document-store";
   
-  // 🆕 v2.0 增量阅读模式
-  import ContentListView from "../content/ContentListView.svelte";
   import { IRStorageService } from "../../services/incremental-reading/IRStorageService";
   import { IRPdfBookmarkTaskService, isPdfBookmarkTaskId } from "../../services/incremental-reading/IRPdfBookmarkTaskService";
   import type { IRPdfBookmarkTask } from "../../services/incremental-reading/IRPdfBookmarkTaskService";
@@ -118,6 +100,7 @@
   
   // 进度条模态窗
   import { executeBatchWithProgress } from "../../utils/progress-modal";
+  import { SourceNavigationService } from "../../services/ui/SourceNavigationService";
   
   class ExportFolderPickerModal extends FuzzySuggestModal<string> {
     private folders: string[];
@@ -136,9 +119,10 @@
     dataStorage: WeaveDataStorage;
     plugin: WeavePlugin;
     fsrs: FSRS;
+    currentLeaf?: WorkspaceLeaf;
   }
 
-  let { dataStorage, plugin }: Props = $props();
+  let { dataStorage, plugin, currentLeaf }: Props = $props();
 
   // 🌍 响应式翻译函数
   let t = $derived($tr);
@@ -155,7 +139,18 @@
   let parsedSearchQuery = $state<SearchQuery | null>(null);
   
   // 🆕 视图状态（从 plugin.settings 初始化）
-  type GridCardAttributeType = 'none' | 'uuid' | 'source' | 'priority' | 'retention' | 'modified';
+  type GridCardAttributeType =
+    | 'none'
+    | 'uuid'
+    | 'source'
+    | 'priority'
+    | 'retention'
+    | 'modified'
+    | 'accuracy'
+    | 'question_type'
+    | 'ir_state'
+    | 'ir_priority';
+  type GridLayoutMode = 'fixed' | 'masonry' | 'timeline';
   
   const viewPrefs = plugin.settings.cardManagementViewPreferences || {
     currentView: 'table',
@@ -188,13 +183,16 @@
   }
   
   let currentView = $state<'table' | 'grid' | 'kanban'>(getInitialView());
-  let gridLayout = $state<"fixed" | "masonry">(viewPrefs.gridLayout);
+  let gridLayout = $state<GridLayoutMode>(
+    viewPrefs.gridLayout === 'masonry' || viewPrefs.gridLayout === 'timeline'
+      ? viewPrefs.gridLayout
+      : 'fixed'
+  );
   let kanbanGroupBy = $state<'status' | 'type' | 'priority' | 'deck' | 'createTime'>('status'); // 看板分组方式
   let kanbanLayoutMode = $state<'compact' | 'comfortable' | 'spacious'>(viewPrefs.kanbanLayoutMode);
   let tableViewMode = $state<'basic' | 'review' | 'questionBank' | 'irContent'>(viewPrefs.tableViewMode);
   let enableCardLocationJump = $state(viewPrefs.enableCardLocationJump);
   let gridCardAttribute = $state<GridCardAttributeType>(viewPrefs.gridCardAttribute);
-  let showGridAttributeMenu = $state(false); // 属性选择菜单显示状态（UI临时状态）
   
   // 🆕 全局筛选状态（从FilterStateService同步）
   let globalSelectedDeckId = $state<string | null>(null);
@@ -239,10 +237,12 @@
 
   // 🆕 字段管理器状态
   let showColumnManager = $state(false);
+  let columnManagerAnchorEl = $state<HTMLElement | null>(null);
+  let columnManagerPanelEl = $state<HTMLDivElement | null>(null);
+  let columnManagerPopoverTop = $state(96);
+  let columnManagerPopoverLeft = $state(24);
+  let columnManagerPopoverPlacement = $state<'top' | 'bottom'>('bottom');
   
-  /**
-   * 保存视图偏好到插件设置
-   */
   async function saveViewPreferences() {
     try {
       if (!plugin.settings.cardManagementViewPreferences) {
@@ -274,83 +274,22 @@
   
   // 🆕 v2.2 数据管理模态窗（含质量扫描）
   let showDataManagementModal = $state(false);
-  let dataManagementInitialTab = $state<'data' | 'quality'>('data');
+  let dataManagementModalInstance: DataManagementModalObsidian | null = null;
   // 🆕 v2.0 引用式牌组系统模态窗状态
   let showBuildDeckModal = $state(false);
   // 🆕 v2.0 增量阅读牌组模态窗状态
   let showBuildIRDeckModal = $state(false);
-  // 🆕 更多菜单状态
-  let showMoreMenu = $state(false);
-  let moreButtonElement = $state<HTMLElement | null>(null);
-  // 🆕 工具栏容器引用
-  let toolbarContainerRef = $state<HTMLElement | null>(null);
   let filterManager = $state<FilterManager | null>(null);
   let savedFilters = $state<SavedFilter[]>([]);
 
   // 文档过滤功能状态
   let documentFilterMode = $state<'all' | 'current'>('all'); // 过滤模式
   let currentActiveDocument = $state<string | null>(null); // 当前活动文档路径
+  let lastExternalActiveDocument = $state<string | null>(null); // 最近一次真正激活的外部文档路径
+  let lastExternalDocumentKind = $state<'file' | 'epub' | 'ir' | null>(null);
   
   // 🆕 侧边栏检测状态
   let isInSidebar = $state(false);
-  let viewWidth = $state(0);
-  
-  // 🆕 工具栏模式状态
-  let toolbarMode = $state<'sidebar' | 'full'>('full');
-  
-  // 🆕 网格属性选择器按钮引用
-  let gridAttributeButtonElement = $state<HTMLElement | null>(null);
-  
-  // 🆕 检测工具栏模式
-  // 🔧 修复：使用 DOM 结构检测侧边栏 + 宽度检测双重方案
-  function detectToolbarMode() {
-    const rootContainer = document.querySelector('.weave-card-management-page');
-    if (!rootContainer) {
-      logger.debug('[detectToolbarMode] rootContainer not found');
-      return;
-    }
-    
-    // 🔧 方案1：使用 DOM 结构检测是否在侧边栏（最可靠）
-    const inSidebarByDOM = checkIfInSidebar(rootContainer as HTMLElement);
-    
-    // 🔧 方案2：使用 workspace-leaf 的宽度检测（作为补充）
-    const leafContent = rootContainer.closest('.workspace-leaf-content');
-    const containerWidth = leafContent 
-      ? (leafContent as HTMLElement).clientWidth 
-      : (rootContainer as HTMLElement).clientWidth;
-    
-    const inSidebarByWidth = containerWidth > 0 && containerWidth < 600;
-    
-    // 任一方案检测到侧边栏则使用紧凑模式
-    const newMode = (inSidebarByDOM || inSidebarByWidth) ? 'sidebar' : 'full';
-    
-    logger.debug(`[detectToolbarMode] DOM=${inSidebarByDOM}, width=${containerWidth}, widthCheck=${inSidebarByWidth}, mode=${newMode}`);
-    
-    if (toolbarMode !== newMode) {
-      toolbarMode = newMode;
-    }
-  }
-  
-  // 🔧 检测是否在侧边栏的辅助函数（基于 DOM 结构）
-  function checkIfInSidebar(element: HTMLElement): boolean {
-    let current = element.parentElement;
-    while (current) {
-      const classList = current.classList;
-      
-      // 检测 Obsidian 侧边栏容器
-      if (classList.contains('mod-right-split') || classList.contains('mod-left-split')) {
-        return true;
-      }
-      
-      // 检查是否在主编辑区（mod-root 表示主内容区）
-      if (classList.contains('mod-root')) {
-        return false;
-      }
-      
-      current = current.parentElement;
-    }
-    return false;
-  }
   
   // 🆕 移动端状态 - 使用多种检测方法确保准确性
   function detectMobileDevice(): boolean {
@@ -373,21 +312,19 @@
   }
   
   const isMobile = detectMobileDevice();
-  let isMobileMenuOpen = $state(false);
   let showMobileSearchInput = $state(false);
 
   // allFieldTemplates 已删除（新系统使用动态解析，无需预定义模板）
   let allDecks = $state<Deck[]>([]);
   
-  // 高级功能相关状态
   let isPremium = $state(false);
   let showActivationPrompt = $state(false);
   let promptFeatureId = $state('');
-  
-  // 🆕 高级功能预览模式（从设置中读取）
-  let showPremiumPreview = $derived(plugin.settings.showPremiumFeaturesPreview ?? false);
-  // 🆕 是否显示高级功能（已激活或预览模式）
-  let showPremiumFeatures = $derived(isPremium || showPremiumPreview);
+
+  function promptPremiumFeature(featureId: string) {
+    promptFeatureId = featureId;
+    showActivationPrompt = true;
+  }
   
   // 订阅高级版状态（添加挂载状态保护）
   $effect(() => {
@@ -443,25 +380,21 @@
     const currentSortField = sortConfig.field;
     const currentSortDirection = sortConfig.direction;
     
-    // 🆕 根据数据源选择卡片数据
-    const sourceCards = dataSource === 'questionBank' 
-      ? questionBankCards 
-      : dataSource === 'incremental-reading' 
-        ? irContentCards 
-        : cards;
+    const sourceCards = currentSourceCards;
     
     if (!Array.isArray(sourceCards)) {
       filteredAndSortedCards = [];
       return;
     }
 
-    const deckById = new Map(allDecks.map(d => [d.id, d] as const));
+    const activeDecks = currentDataSourceDecks;
+    const deckById = new Map(activeDecks.map(d => [d.id, d] as const));
     const deckIdsCache = new Map<string, ReturnType<typeof getCardDeckIds>>();
     const getCachedCardDeckIds = (card: Card) => {
       const key = card.uuid;
       const cached = deckIdsCache.get(key);
       if (cached) return cached;
-      const computed = getCardDeckIds(card);
+      const computed = getCardDeckIds(card, activeDecks);
       deckIdsCache.set(key, computed);
       return computed;
     };
@@ -541,18 +474,16 @@
       result = applyTimeFilter(result, globalSelectedTimeFilter);
     }
     
-    // 🆕 6. 孤儿卡片筛选（v2.0 引用式牌组系统）
-    // 孤儿卡片定义：不被任何牌组的 cardUUIDs 所引用
+    // 孤儿卡片筛选：当前数据源下没有任何牌组归属的卡片
     if (globalShowOrphanCards) {
-      const referencedUUIDs = new Set<string>();
-      for (const deck of allDecks) {
-        if (deck.cardUUIDs) {
-          for (const uuid of deck.cardUUIDs) {
-            referencedUUIDs.add(uuid);
-          }
+      const activeDecks = getDecksForDataSource();
+      result = result.filter((card) => {
+        if (activeDecks.some(deck => deck.cardUUIDs?.includes(card.uuid))) {
+          return false;
         }
-      }
-      result = result.filter(card => !referencedUUIDs.has(card.uuid));
+        const { deckIds } = getCardDeckIds(card, activeDecks);
+        return deckIds.length === 0;
+      });
     }
 
     // 应用搜索筛选（使用卡片搜索解析器）
@@ -776,74 +707,220 @@
   });
 
 
+  type ColumnManagerPresetId = 'minimal' | 'learning' | 'review' | 'exam' | 'reading' | 'all';
+
+  interface ColumnManagerPreset {
+    id: ColumnManagerPresetId;
+    label: string;
+    description: string;
+  }
+
+  function createDefaultColumnVisibilityForSource(source: 'memory' | 'questionBank' | 'incremental-reading') {
+    const next = {
+      front: true,
+      back: true,
+      status: true,
+      deck: true,
+      tags: true,
+      priority: true,
+      created: true,
+      modified: false,
+      next_review: false,
+      retention: false,
+      interval: false,
+      difficulty: false,
+      review_count: false,
+      actions: true,
+      uuid: false,
+      obsidian_block_link: true,
+      source_document: true,
+      field_template: true,
+      source_document_status: true,
+      question_type: false,
+      accuracy: false,
+      test_attempts: false,
+      last_test: false,
+      error_level: false,
+      ir_title: false,
+      ir_source_file: false,
+      ir_state: false,
+      ir_priority: false,
+      ir_tags: false,
+      ir_favorite: false,
+      ir_next_review: false,
+      ir_review_count: false,
+      ir_reading_time: false,
+      ir_notes: false,
+      ir_extracted_cards: false,
+      ir_created: false,
+      ir_decks: false,
+    };
+
+    if (source === 'questionBank') {
+      next.question_type = true;
+      next.accuracy = true;
+      next.test_attempts = true;
+      next.last_test = true;
+      next.error_level = true;
+      return next;
+    }
+
+    if (source === 'incremental-reading') {
+      next.front = false;
+      next.back = false;
+      next.status = false;
+      next.deck = false;
+      next.tags = false;
+      next.priority = false;
+      next.created = false;
+      next.obsidian_block_link = false;
+      next.source_document = false;
+      next.field_template = false;
+      next.source_document_status = false;
+
+      next.ir_title = true;
+      next.ir_source_file = true;
+      next.ir_state = true;
+      next.ir_priority = true;
+      next.ir_tags = true;
+      next.ir_favorite = true;
+      next.ir_next_review = true;
+      next.ir_review_count = true;
+      next.ir_extracted_cards = true;
+      next.ir_created = true;
+      next.ir_decks = true;
+      return next;
+    }
+
+    return next;
+  }
+
+  const MEMORY_MINIMAL_COLUMNS: ColumnKey[] = ['front', 'status', 'deck', 'tags', 'priority', 'actions'];
+  const MEMORY_LEARNING_COLUMNS: ColumnKey[] = ['front', 'back', 'status', 'deck', 'tags', 'priority', 'source_document', 'created', 'actions'];
+  const MEMORY_REVIEW_COLUMNS: ColumnKey[] = ['front', 'back', 'status', 'next_review', 'retention', 'interval', 'difficulty', 'review_count', 'actions'];
+  const QUESTION_BANK_MINIMAL_COLUMNS: ColumnKey[] = ['front', 'status', 'question_type', 'accuracy', 'error_level', 'actions'];
+  const QUESTION_BANK_EXAM_COLUMNS: ColumnKey[] = ['front', 'back', 'status', 'deck', 'question_type', 'accuracy', 'test_attempts', 'last_test', 'error_level', 'actions'];
+  const IR_MINIMAL_COLUMNS: ColumnKey[] = ['ir_title', 'ir_state', 'ir_priority', 'ir_tags', 'actions'];
+  const IR_READING_COLUMNS: ColumnKey[] = ['ir_title', 'ir_source_file', 'ir_state', 'ir_priority', 'ir_tags', 'ir_favorite', 'ir_next_review', 'ir_review_count', 'ir_extracted_cards', 'ir_created', 'ir_decks', 'actions'];
+
   // 列可见性状态
-  let columnVisibility = $state({
-    front: true,
-    back: true,
-    status: true,
-    deck: true,     // 🆕 新增：牌组列，默认显示
-    tags: true,
-    priority: true,
-    created: true,
-    modified: false, // 修改时间，默认隐藏
-    next_review: false, // 下次复习，默认隐藏（复习模式显示）
-    retention: false, // 记忆率，默认隐藏（复习模式显示）
-    interval: false, // 间隔，默认隐藏（复习模式显示）
-    difficulty: false, // 难度，默认隐藏（复习模式显示）
-    review_count: false, // 复习次数，默认隐藏（复习模式显示）
-    actions: true,
-    // 新增字段，默认显示
-    uuid: false,  // UUID默认隐藏，避免界面过于复杂
-    obsidian_block_link: true,
-    source_document: true,
-    field_template: true, // 新增：字段模板列，默认显示
-    source_document_status: true, // 新增：源文档状态列，默认显示
-    // 🆕 题库专用列（根据dataSource动态显示）
-    question_type: false,    // 题型，考试模式显示
-    accuracy: false,         // 正确率，考试模式显示
-    test_attempts: false,    // 测试次数，考试模式显示
-    last_test: false,        // 最后测试，考试模式显示
-    error_level: false,      // 错题等级，考试模式显示
-    source_card: false,      // 关联记忆卡片，考试模式显示
-    // 🆕 增量阅读专用列（irContent模式显示）
-    ir_title: true,          // 标题，默认显示
-    ir_source_file: true,    // 源文档，默认显示
-    ir_state: true,          // 阅读状态，默认显示
-    ir_priority: true,       // 优先级，默认显示
-    ir_tags: true,           // 标签，默认显示
-    ir_favorite: true,       // 收藏，默认显示
-    ir_next_review: true,    // 下次复习，默认显示
-    ir_review_count: true,   // 复习次数，默认显示
-    ir_reading_time: false,  // 阅读时长，默认隐藏
-    ir_notes: false,         // 笔记，默认隐藏
-    ir_extracted_cards: true,// 已提取卡片，默认显示
-    ir_created: true,        // 创建时间，默认显示
-    ir_decks: true,          // 🆕 所属牌组，默认显示
-  });
+  let columnVisibility = $state(createDefaultColumnVisibilityForSource('memory'));
 
   // 列顺序状态
   let columnOrder = $state<ColumnOrder>([...DEFAULT_COLUMN_ORDER]);
 
-  function handleVisibilityChange(key: keyof typeof columnVisibility, value: boolean) {
-    columnVisibility[key] = value;
-    
-    // 持久化到 localStorage
+  function persistColumnVisibility(nextVisibility = columnVisibility) {
     try {
-      vaultStorage.setItem('weave-column-visibility', JSON.stringify(columnVisibility));
+      vaultStorage.setItem('weave-column-visibility', JSON.stringify(nextVisibility));
     } catch (error) {
       logger.error('保存列设置失败:', error);
     }
   }
 
-  function handleOrderChange(newOrder: ColumnOrder) {
-    columnOrder = newOrder;
-    
-    // 持久化到 localStorage
+  function persistColumnOrder(nextOrder = columnOrder) {
     try {
-      vaultStorage.setItem('weave-column-order', JSON.stringify(newOrder));
+      vaultStorage.setItem('weave-column-order', JSON.stringify(nextOrder));
     } catch (error) {
       logger.error('保存列顺序失败:', error);
     }
+  }
+
+  function handleVisibilityChange(key: keyof typeof columnVisibility, value: boolean) {
+    columnVisibility[key] = value;
+    persistColumnVisibility();
+  }
+
+  function handleOrderChange(newOrder: ColumnOrder) {
+    columnOrder = newOrder;
+    persistColumnOrder(newOrder);
+  }
+
+  function applyColumnVisibilitySet(visibleKeys: ColumnKey[]) {
+    const visibleSet = new Set<ColumnKey>(visibleKeys);
+    const nextVisibility = { ...columnVisibility };
+
+    for (const key of Object.keys(nextVisibility) as ColumnKey[]) {
+      nextVisibility[key] = visibleSet.has(key);
+    }
+
+    nextVisibility.actions = true;
+    columnVisibility = nextVisibility;
+    persistColumnVisibility(nextVisibility);
+  }
+
+  function getColumnManagerPresets(): ColumnManagerPreset[] {
+    if (dataSource === 'questionBank') {
+      return [
+        { id: 'minimal', label: '极简', description: '保留考试最核心字段' },
+        { id: 'exam', label: '考试', description: '显示考试分析常用字段' },
+        { id: 'all', label: '全部', description: '显示当前数据源的全部字段' },
+      ];
+    }
+
+    if (dataSource === 'incremental-reading') {
+      return [
+        { id: 'minimal', label: '极简', description: '保留阅读流程核心字段' },
+        { id: 'reading', label: '阅读', description: '显示增量阅读常用字段' },
+        { id: 'all', label: '全部', description: '显示当前数据源的全部字段' },
+      ];
+    }
+
+    return [
+      { id: 'minimal', label: '极简', description: '只保留卡片浏览最常用字段' },
+      { id: 'learning', label: '学习', description: '显示卡片管理常用字段' },
+      { id: 'review', label: '复习', description: '显示复习分析常用字段' },
+      { id: 'all', label: '全部', description: '显示记忆牌组全部字段' },
+    ];
+  }
+
+  function getPresetColumns(presetId: ColumnManagerPresetId): ColumnKey[] {
+    if (dataSource === 'questionBank') {
+      if (presetId === 'minimal') return QUESTION_BANK_MINIMAL_COLUMNS;
+      if (presetId === 'exam') return QUESTION_BANK_EXAM_COLUMNS;
+      return DEFAULT_COLUMN_ORDER.filter((key) => !key.startsWith('ir_'));
+    }
+
+    if (dataSource === 'incremental-reading') {
+      if (presetId === 'minimal') return IR_MINIMAL_COLUMNS;
+      if (presetId === 'reading') return IR_READING_COLUMNS;
+      return DEFAULT_COLUMN_ORDER.filter((key) => key.startsWith('ir_') || key === 'actions');
+    }
+
+    if (presetId === 'minimal') return MEMORY_MINIMAL_COLUMNS;
+    if (presetId === 'learning') return MEMORY_LEARNING_COLUMNS;
+    if (presetId === 'review') return MEMORY_REVIEW_COLUMNS;
+
+    return DEFAULT_COLUMN_ORDER.filter((key) => !key.startsWith('ir_') && !['question_type', 'accuracy', 'test_attempts', 'last_test', 'error_level'].includes(key));
+  }
+
+  function applyColumnManagerPreset(presetId: ColumnManagerPresetId) {
+    applyColumnVisibilitySet(getPresetColumns(presetId));
+  }
+
+  function resolveCurrentColumnManagerPreset(): ColumnManagerPresetId | null {
+    const currentVisibleKeys = (Object.keys(columnVisibility) as ColumnKey[])
+      .filter((key) => columnVisibility[key]);
+
+    for (const preset of getColumnManagerPresets()) {
+      const presetKeys = [...new Set(getPresetColumns(preset.id))].sort();
+      const normalizedCurrent = [...currentVisibleKeys].sort();
+
+      if (
+        presetKeys.length === normalizedCurrent.length &&
+        presetKeys.every((key, index) => key === normalizedCurrent[index])
+      ) {
+        return preset.id;
+      }
+    }
+
+    return null;
+  }
+
+  function resetColumnManagerConfig() {
+    columnVisibility = createDefaultColumnVisibilityForSource(dataSource);
+    columnOrder = [...DEFAULT_COLUMN_ORDER];
+    persistColumnVisibility(columnVisibility);
+    persistColumnOrder(columnOrder);
   }
 
   /**
@@ -852,95 +929,15 @@
    */
   function syncColumnVisibilityWithDataSource(source: 'memory' | 'questionBank' | 'incremental-reading') {
     if (source === 'questionBank') {
-      // 题库模式：显示题库专用列，隐藏其他
       tableViewMode = 'questionBank';
-      columnVisibility.question_type = true;
-      columnVisibility.accuracy = true;
-      columnVisibility.test_attempts = true;
-      columnVisibility.last_test = true;
-      columnVisibility.error_level = true;
-      columnVisibility.source_card = true;
-      // 隐藏记忆学习专用列
-      columnVisibility.next_review = false;
-      columnVisibility.retention = false;
-      columnVisibility.interval = false;
-      columnVisibility.difficulty = false;
-      columnVisibility.review_count = false;
-      // 隐藏IR专用列
-      columnVisibility.ir_title = false;
-      columnVisibility.ir_source_file = false;
-      columnVisibility.ir_state = false;
-      columnVisibility.ir_priority = false;
-      columnVisibility.ir_tags = false;
-      columnVisibility.ir_favorite = false;
-      columnVisibility.ir_next_review = false;
-      columnVisibility.ir_review_count = false;
-      columnVisibility.ir_reading_time = false;
-      columnVisibility.ir_notes = false;
-      columnVisibility.ir_extracted_cards = false;
-      columnVisibility.ir_created = false;
-      // 恢复卡片基础列
-      columnVisibility.front = true;
-      columnVisibility.back = true;
-      columnVisibility.status = true;
-      columnVisibility.deck = true;
     } else if (source === 'incremental-reading') {
-      // IR模式：显示IR专用列，隐藏卡片列
       tableViewMode = 'irContent';
-      columnVisibility.ir_title = true;
-      columnVisibility.ir_source_file = true;
-      columnVisibility.ir_state = true;
-      columnVisibility.ir_priority = true;
-      columnVisibility.ir_tags = true;
-      columnVisibility.ir_favorite = true;
-      columnVisibility.ir_next_review = true;
-      columnVisibility.ir_review_count = true;
-      columnVisibility.ir_reading_time = false;
-      columnVisibility.ir_notes = false;
-      columnVisibility.ir_extracted_cards = true;
-      columnVisibility.ir_created = true;
-      // 隐藏卡片专用列
-      columnVisibility.front = false;
-      columnVisibility.back = false;
-      columnVisibility.status = false;
-      columnVisibility.deck = false;
-      columnVisibility.question_type = false;
-      columnVisibility.accuracy = false;
-      columnVisibility.test_attempts = false;
-      columnVisibility.last_test = false;
-      columnVisibility.error_level = false;
-      columnVisibility.source_card = false;
     } else {
-      // 记忆模式（默认）：显示基础列，隐藏专用列
       tableViewMode = 'basic';
-      // 隐藏题库专用列
-      columnVisibility.question_type = false;
-      columnVisibility.accuracy = false;
-      columnVisibility.test_attempts = false;
-      columnVisibility.last_test = false;
-      columnVisibility.error_level = false;
-      columnVisibility.source_card = false;
-      // 隐藏IR专用列
-      columnVisibility.ir_title = false;
-      columnVisibility.ir_source_file = false;
-      columnVisibility.ir_state = false;
-      columnVisibility.ir_priority = false;
-      columnVisibility.ir_tags = false;
-      columnVisibility.ir_favorite = false;
-      columnVisibility.ir_next_review = false;
-      columnVisibility.ir_review_count = false;
-      columnVisibility.ir_reading_time = false;
-      columnVisibility.ir_notes = false;
-      columnVisibility.ir_extracted_cards = false;
-      columnVisibility.ir_created = false;
-      // 恢复卡片基础列
-      columnVisibility.front = true;
-      columnVisibility.back = true;
-      columnVisibility.status = true;
-      columnVisibility.deck = true;
-      columnVisibility.tags = true;
-      columnVisibility.priority = true;
     }
+
+    columnVisibility = createDefaultColumnVisibilityForSource(source);
+    persistColumnVisibility(columnVisibility);
   }
 
   // 筛选状态
@@ -983,8 +980,7 @@
   let questionTypeCounts = $state<Record<string, number>>({});     // 新增：题型统计
   let errorBookCounts = $state<Record<string, number>>({});        // 新增：错题集统计
   
-  // 🆕 搜索组件需要的数据
-  const searchSourceCards = $derived.by(() => {
+  const currentSourceCards = $derived.by(() => {
     return dataSource === 'questionBank'
       ? questionBankCards
       : dataSource === 'incremental-reading'
@@ -992,13 +988,22 @@
         : cards;
   });
 
-  const searchAvailableDecks = $derived.by(() => {
-    if (dataSource === 'questionBank') return questionBankDecks;
-    if (dataSource === 'incremental-reading') {
-      return Object.values(irDecks).map(d => ({ id: d.id, name: d.name } as unknown as Deck));
+  function getDecksForDataSource(source: 'memory' | 'questionBank' | 'incremental-reading' = dataSource): Deck[] {
+    if (source === 'questionBank') {
+      return questionBankDecks;
+    }
+    if (source === 'incremental-reading') {
+      return Object.values(irDecks).map(d => ({ id: d.id, name: d.name } as Deck));
     }
     return allDecks;
-  });
+  }
+
+  // 🆕 搜索组件需要的数据
+  const searchSourceCards = $derived(currentSourceCards);
+
+  const currentDataSourceDecks = $derived.by(() => getDecksForDataSource(dataSource));
+
+  const searchAvailableDecks = $derived(currentDataSourceDecks);
 
   const searchAvailableTags = $derived.by(() => {
     // 使用与侧边栏标签树相同的 calculateTagCounts 逻辑，确保标签提取一致
@@ -1083,16 +1088,6 @@
     return ['high', 'common', 'light', 'none'];
   });
 
-  const searchAvailableSourceCards = $derived.by(() => {
-    if (dataSource !== 'questionBank') return [];
-    const set = new Set<string>();
-    for (const c of questionBankCards) {
-      const id = (c as any).metadata?.sourceCardId;
-      if (typeof id === 'string' && id) set.add(id);
-    }
-    return Array.from(set).slice(0, 50);
-  });
-
   const searchAvailableYamlKeys = $derived.by(() => {
     const keySet = new Set<string>();
     const sample = searchSourceCards.slice(0, 200);
@@ -1124,11 +1119,7 @@
     
     // 🔧 根据数据源选择统计用的源数据
     const currentSource = dataSource;
-    const statsCards = currentSource === 'questionBank' 
-      ? questionBankCards 
-      : currentSource === 'incremental-reading' 
-        ? irContentCards 
-        : cards;
+    const statsCards = currentSourceCards;
     
     if (!Array.isArray(statsCards)) {
       statusCounts = {};
@@ -1163,6 +1154,8 @@
       statusCounts = newStatusCounts;
     }
 
+    const statsDecks = getDecksForDataSource(currentSource);
+
     // 🆕 v2.0: 引用式牌组架构 - 计算牌组统计
     const deckMap = new Map<string, number>();
     
@@ -1182,14 +1175,13 @@
       
       // IR 牌组名称解析
       availableDecks = Array.from(deckMap.entries()).map(([id, count]) => {
-        const irDeck = Object.values(irDecks).find(d => d.id === id);
-        return { id, name: irDeck?.name || id, count };
+        return { id, name: getIRDeckName(id, id), count };
       });
     } else {
       const cardUUIDSet = new Set(statsCards.map(c => c.uuid));
       
       // 方式1：通过 deck.cardUUIDs 统计（优先）
-      allDecks.forEach(deck => {
+      statsDecks.forEach(deck => {
         if (deck.cardUUIDs && deck.cardUUIDs.length > 0) {
           const count = deck.cardUUIDs.filter(uuid => cardUUIDSet.has(uuid)).length;
           if (count > 0) {
@@ -1201,23 +1193,23 @@
       // 方式2：对于没有 cardUUIDs 的牌组，通过 we_decks/referencedByDecks/deckId 统计
       // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取牌组ID
       statsCards.forEach(card => {
-        const { deckIds: cardDeckIds } = getCardDeckIds(card);
+        const { deckIds: cardDeckIds } = getCardDeckIds(card, statsDecks);
         if (cardDeckIds.length > 0) {
           cardDeckIds.forEach((deckId: string) => {
-            const deck = allDecks.find(d => d.id === deckId);
+            const deck = statsDecks.find(d => d.id === deckId);
             if (!deck?.cardUUIDs?.length) {
               deckMap.set(deckId, (deckMap.get(deckId) || 0) + 1);
             }
           });
         } else if (card.referencedByDecks && card.referencedByDecks.length > 0) {
           card.referencedByDecks.forEach((deckId: string) => {
-            const deck = allDecks.find(d => d.id === deckId);
+            const deck = statsDecks.find(d => d.id === deckId);
             if (!deck?.cardUUIDs?.length) {
               deckMap.set(deckId, (deckMap.get(deckId) || 0) + 1);
             }
           });
         } else if (card.deckId) {
-          const deck = allDecks.find(d => d.id === card.deckId);
+          const deck = statsDecks.find(d => d.id === card.deckId);
           if (!deck?.cardUUIDs?.length) {
             deckMap.set(card.deckId, (deckMap.get(card.deckId) || 0) + 1);
           }
@@ -1226,7 +1218,7 @@
       
       availableDecks = Array.from(deckMap.entries()).map(([id, count]) => ({
         id,
-        name: getDeckName(id),
+        name: getDeckName(id, statsDecks),
         count
       }));
     }
@@ -1338,14 +1330,86 @@
     return parts[parts.length - 1].replace(/\.md$/i, '');
   }
 
+  const EPUB_VIEW_TYPES = new Set(['weave-epub-reader', 'weave-epub-sidebar']);
+  const IR_VIEW_TYPES = new Set(['weave-ir-calendar-view']);
+  const INTERNAL_WEAVE_VIEW_TYPES = new Set([
+    'weave-view',
+    'weave-study-view',
+    'weave-question-bank-view'
+  ]);
+
+  function getLeafFilePath(leaf?: WorkspaceLeaf | null): string | null {
+    const view = leaf?.view as any;
+    const directPath = view?.file?.path;
+    if (typeof directPath === 'string' && directPath.trim()) {
+      return directPath;
+    }
+
+    const viewState = view?.getState?.();
+    const serializedPath = viewState?.filePath || viewState?.file;
+    if (typeof serializedPath === 'string' && serializedPath.trim()) {
+      return serializedPath;
+    }
+
+    return null;
+  }
+
+  function rememberExternalDocument(path: string | null, kind: 'file' | 'epub' | 'ir'): string | null {
+    if (path) {
+      lastExternalActiveDocument = path;
+      lastExternalDocumentKind = kind;
+    }
+    return path;
+  }
+
+  function resolveCurrentActiveDocument(activeLeaf?: WorkspaceLeaf | null): string | null {
+    const leaf = activeLeaf ?? plugin?.app?.workspace?.activeLeaf;
+    if (!leaf) {
+      return lastExternalActiveDocument;
+    }
+
+    if (currentLeaf && leaf === currentLeaf) {
+      if (lastExternalDocumentKind === 'epub') {
+        return epubActiveDocumentStore.getActiveDocument() ?? lastExternalActiveDocument;
+      }
+      if (lastExternalDocumentKind === 'ir') {
+        return irActiveDocumentStore.getActiveDocument() ?? lastExternalActiveDocument;
+      }
+      return lastExternalActiveDocument;
+    }
+
+    const activeViewType = leaf?.view?.getViewType?.() ?? '';
+    const leafFilePath = getLeafFilePath(leaf);
+
+    if (leafFilePath) {
+      return rememberExternalDocument(leafFilePath, 'file');
+    }
+
+    if (EPUB_VIEW_TYPES.has(activeViewType)) {
+      const epubPath = epubActiveDocumentStore.getActiveDocument() ?? null;
+      return epubPath ? rememberExternalDocument(epubPath, 'epub') : lastExternalActiveDocument;
+    }
+
+    if (IR_VIEW_TYPES.has(activeViewType)) {
+      const irPath = irActiveDocumentStore.getActiveDocument() ?? null;
+      return irPath ? rememberExternalDocument(irPath, 'ir') : lastExternalActiveDocument;
+    }
+
+    if (INTERNAL_WEAVE_VIEW_TYPES.has(activeViewType)) {
+      return lastExternalActiveDocument;
+    }
+
+    const activeFile = plugin?.app?.workspace?.getActiveFile();
+    return rememberExternalDocument(activeFile?.path ?? null, 'file');
+  }
+
   // 监听活动文档变化
   function setupActiveDocumentListener() {
     if (!plugin?.app?.workspace) return;
 
     // 获取当前活动文档
     function updateActiveDocument() {
-      const activeFile = plugin.app.workspace.getActiveFile();
-      currentActiveDocument = activeFile ? activeFile.path : null;
+      currentActiveDocument = resolveCurrentActiveDocument(plugin.app.workspace.activeLeaf);
     }
 
     // 初始化当前活动文档
@@ -1435,13 +1499,11 @@
     // 🆕 延迟初始化侧边栏检测（确保leaf已创建）
     setTimeout(async () => {
       await detectSidebarContext();  // 🚀 使用缓存的动态导入
-      detectToolbarMode();
     }, 200);
     
     // 🆕 监听窗口大小变化
     const handleResize = async () => {
       await detectSidebarContext();  // 🚀 使用缓存的动态导入
-      detectToolbarMode();
     };
     window.addEventListener('resize', handleResize);
     
@@ -1460,7 +1522,6 @@
       if (observeTarget) {
         // ResizeObserver 监听宽度变化
         resizeObserver = new ResizeObserver(() => {
-          detectToolbarMode();
         });
         resizeObserver.observe(observeTarget);
         
@@ -1469,7 +1530,6 @@
         if (workspace) {
           mutationObserver = new MutationObserver(() => {
             // DOM 结构变化时重新检测
-            detectToolbarMode();
           });
           mutationObserver.observe(workspace, {
             childList: true,
@@ -1479,8 +1539,6 @@
           });
         }
         
-        // 🔧 立即执行一次检测，确保初始状态正确
-        detectToolbarMode();
       }
     });
     
@@ -1489,7 +1547,6 @@
       // 延迟执行，等待布局稳定
       setTimeout(async () => {
         await detectSidebarContext();  
-        detectToolbarMode();
       }, 150);
     };
     plugin.app.workspace.on('layout-change', layoutChangeHandler);
@@ -1536,33 +1593,95 @@
       await switchDataSource(source);
     };
     window.addEventListener('Weave:card-data-source-change', handleCardDataSourceChange);
+
+    const handleCardManagementSearchChange = (e: Event) => {
+      const value = (e as CustomEvent<{ value?: string }>).detail?.value ?? '';
+      handleSearch(value);
+    };
+    window.addEventListener('Weave:card-management-search-change', handleCardManagementSearchChange as EventListener);
+
+    const handleIRRealtimeRefresh = async () => {
+      if (dataSource !== 'incremental-reading') return;
+      await loadIRContentCards({ silent: true });
+    };
+    window.addEventListener('Weave:ir-timer-updated', handleIRRealtimeRefresh);
+    window.addEventListener('Weave:ir-data-updated', handleIRRealtimeRefresh);
+
+    const handleCardManagementToolbarAction = (e: Event) => {
+      const detail = (e as CustomEvent<{ action?: string; anchor?: HTMLElement | null }>).detail;
+      const action = detail?.action;
+      const anchor = detail?.anchor ?? null;
+
+      switch (action) {
+        case 'create-card':
+          handleCreateCard();
+          break;
+        case 'toggle-document-filter':
+          if (currentActiveDocument) {
+            toggleDocumentFilter();
+          }
+          break;
+        case 'toggle-card-location-jump':
+          void toggleCardLocationJump();
+          break;
+        case 'table-view-basic':
+          void handleTableViewModeChange('basic');
+          break;
+        case 'table-view-review':
+          void handleTableViewModeChange('review');
+          break;
+        case 'ir-type-md':
+          irTypeFilter = irTypeFilter === 'md' ? 'all' : 'md';
+          void saveViewPreferences();
+          break;
+        case 'ir-type-pdf':
+          irTypeFilter = irTypeFilter === 'pdf' ? 'all' : 'pdf';
+          void saveViewPreferences();
+          break;
+        case 'grid-layout-fixed':
+          void handleLayoutModeChange('fixed');
+          break;
+        case 'grid-layout-masonry':
+          void handleLayoutModeChange('masonry');
+          break;
+        case 'grid-layout-timeline':
+          void handleLayoutModeChange('timeline');
+          break;
+        case 'kanban-layout-compact':
+          void handleKanbanLayoutModeChange('compact');
+          break;
+        case 'kanban-layout-comfortable':
+          void handleKanbanLayoutModeChange('comfortable');
+          break;
+        case 'kanban-layout-spacious':
+          void handleKanbanLayoutModeChange('spacious');
+          break;
+        case 'open-data-management':
+          openDataManagementModal('data');
+          break;
+        case 'open-column-manager':
+          toggleColumnManager(anchor);
+          break;
+        case 'open-kanban-column-settings':
+          window.dispatchEvent(new CustomEvent('Weave:open-kanban-column-settings-menu'));
+          break;
+        case 'open-grid-attribute-menu':
+          openGridAttributeMenu(anchor);
+          break;
+      }
+    };
+    window.addEventListener('Weave:card-management-toolbar-action', handleCardManagementToolbarAction as EventListener);
     
     // 🆕 初始化时通知父组件当前视图状态
     window.dispatchEvent(new CustomEvent('Weave:card-view-change', { detail: currentView }));
     
     // 立即订阅当前活动文档变化
-    // 🆕 优先使用增量阅读的活动文档（支持IR界面的文档关联筛选）
     const updateActiveDocumentNow = () => {
-      // 优先检查增量阅读界面的活动文档
-      const irActiveDocument = irActiveDocumentStore.getActiveDocument();
-      if (irActiveDocument) {
-        currentActiveDocument = irActiveDocument;
-        logger.debug('[卡片管理] 使用增量阅读活动文档:', currentActiveDocument);
-        return;
-      }
-      
-      // 检查EPUB阅读器的活动文档
-      const epubActiveDocument = epubActiveDocumentStore.getActiveDocument();
-      if (epubActiveDocument) {
-        currentActiveDocument = epubActiveDocument;
-        logger.debug('[卡片管理] 使用EPUB阅读器活动文档:', currentActiveDocument);
-        return;
-      }
-      
-      // 回退到Obsidian的活动文件
-      const activeFile = plugin.app.workspace.getActiveFile();
-      currentActiveDocument = activeFile ? activeFile.path : null;
-      logger.debug('[卡片管理] 当前活动文档更新:', currentActiveDocument);
+      const nextActiveDocument = resolveCurrentActiveDocument(plugin.app.workspace.activeLeaf);
+      currentActiveDocument = nextActiveDocument;
+      logger.debug('[卡片管理] 当前活动文档更新:', currentActiveDocument, {
+        activeLeafType: plugin.app.workspace.activeLeaf?.view?.getViewType?.() ?? 'unknown'
+      });
     };
     
     // 调用一次，确保初始化
@@ -1570,22 +1689,26 @@
     
     // 🆕 订阅增量阅读活动文档变化
     const irUnsubscribe = irActiveDocumentStore.subscribe((filePath) => {
-      updateActiveDocumentNow();
+      currentActiveDocument = resolveCurrentActiveDocument(plugin.app.workspace.activeLeaf);
     });
     
     // 订阅EPUB阅读器活动文档变化
     const epubUnsubscribe = epubActiveDocumentStore.subscribe((filePath) => {
-      updateActiveDocumentNow();
+      currentActiveDocument = resolveCurrentActiveDocument(plugin.app.workspace.activeLeaf);
     });
     
     // 监听文档切换事件
     const eventRef = plugin.app.workspace.on('active-leaf-change', (leaf) => {
-      updateActiveDocumentNow();
+      currentActiveDocument = resolveCurrentActiveDocument((leaf as WorkspaceLeaf | null) ?? plugin.app.workspace.activeLeaf);
+    });
+    const fileOpenRef = plugin.app.workspace.on('file-open', () => {
+      currentActiveDocument = resolveCurrentActiveDocument(plugin.app.workspace.activeLeaf);
     });
     
     // 保存清理函数
     documentListenerCleanup = () => {
       plugin.app.workspace.offref(eventRef);
+      plugin.app.workspace.offref(fileOpenRef);
       irUnsubscribe();
       epubUnsubscribe();
     };
@@ -1638,9 +1761,6 @@
     }
 
     isLoading = false;
-
-    // 设置活动文档监听
-    setupActiveDocumentListener();
 
     // 清理函数
     const cleanupResources = () => {
@@ -1723,6 +1843,10 @@
       window.removeEventListener('Weave:filter-by-cards', handleFilterByCards as EventListener);
       window.removeEventListener('Weave:sidebar-view-change', handleSidebarViewChange as EventListener);
       window.removeEventListener('Weave:card-data-source-change', handleCardDataSourceChange);
+      window.removeEventListener('Weave:card-management-search-change', handleCardManagementSearchChange as EventListener);
+      window.removeEventListener('Weave:card-management-toolbar-action', handleCardManagementToolbarAction as EventListener);
+      window.removeEventListener('Weave:ir-timer-updated', handleIRRealtimeRefresh);
+      window.removeEventListener('Weave:ir-data-updated', handleIRRealtimeRefresh);
       if (resizeObserver) resizeObserver.disconnect();
       if (mutationObserver) mutationObserver.disconnect();
     };
@@ -1734,6 +1858,8 @@
   // 🔧 修复：添加onDestroy，确保组件销毁时清理资源
   onDestroy(() => {
     logger.debug('[卡片管理] 🗑️ 组件销毁，清理资源');
+    dataManagementModalInstance?.close();
+    dataManagementModalInstance = null;
     isViewVisible = false;  // 标记视图不可见
     isViewDestroyed = true; // 标记视图已销毁
   });
@@ -1794,10 +1920,14 @@
   }
 
   // 获取牌组名称
-  function getDeckName(deckId: string): string {
-    // 从allDecks数据中获取正确的牌组名称
-    const deck = allDecks.find(d => d.id === deckId);
+  function getDeckName(deckId: string, decksForLookup: Array<{ id: string; name: string }> = getDecksForDataSource()): string {
+    const deck = decksForLookup.find(d => d.id === deckId);
     return deck?.name || deckId;
+  }
+
+  function getIRDeckName(deckId?: string | null, fallback: string = '未分配'): string {
+    if (!deckId) return fallback;
+    return getDeckName(deckId, getDecksForDataSource('incremental-reading')) || fallback;
   }
   
   // 🆕 v2.2: 获取卡片所属的所有牌组名称（Content-Only 架构）
@@ -1809,7 +1939,7 @@
       const ids = (card as any).ir_deck_ids || (card as any).metadata?.deckIds || [];
       if (Array.isArray(ids)) {
         for (const id of ids) {
-          const name = irDecks[id]?.name || String(id);
+          const name = getIRDeckName(id, String(id));
           if (name && !seen.has(name)) {
             seen.add(name);
             names.push(name);
@@ -1827,13 +1957,134 @@
     // 1. content YAML 的 we_decks（牌组名称）← 权威数据源
     // 2. card.referencedByDecks（牌组ID列表）
     // 3. card.deckId（单个牌组ID）
-    const decksForLookup = dataSource === 'questionBank'
-      ? questionBankDecks
-      : dataSource === 'incremental-reading'
-        ? Object.values(irDecks).map(d => ({ id: d.id, name: d.name } as unknown as Deck))
-        : allDecks;
+    const decksForLookup = getDecksForDataSource(dataSource);
     const names = getCardDeckNamesFromYaml(card, decksForLookup, '-');
     return names.join(', ');
+  }
+
+  function buildIRTableFields(params: {
+    title: string;
+    sourceFile: string;
+    deckName?: string;
+    deckIds?: string[];
+    state?: string;
+    priority?: number;
+    tags?: string[];
+    favorite?: boolean;
+    nextReview?: string | null;
+    reviewCount?: number;
+    readingTime?: number;
+    notes?: string;
+    extractedCards?: number;
+    created?: string;
+  }) {
+    return {
+      ir_title: params.title,
+      ir_source_file: params.sourceFile,
+      ir_deck: params.deckName || '未分配',
+      ir_deck_ids: params.deckIds || [],
+      ir_state: params.state,
+      ir_priority: params.priority,
+      ir_tags: params.tags || [],
+      ir_favorite: params.favorite || false,
+      ir_next_review: params.nextReview || null,
+      ir_review_count: params.reviewCount || 0,
+      ir_reading_time: params.readingTime || 0,
+      ir_notes: params.notes || '',
+      ir_extracted_cards: params.extractedCards || 0,
+      ir_created: params.created
+    };
+  }
+
+  function buildIRSessionTotalsByBlockId(sessions: Array<{ blockId?: string; duration?: number }> | undefined | null): Map<string, number> {
+    const totals = new Map<string, number>();
+    for (const session of sessions || []) {
+      const blockId = String(session?.blockId || '');
+      const duration = Number(session?.duration || 0);
+      if (!blockId || duration <= 0) continue;
+      totals.set(blockId, (totals.get(blockId) || 0) + duration);
+    }
+    return totals;
+  }
+
+  function getIRReadingSeconds(
+    id: string,
+    readingSecondsById: Map<string, number>,
+    fallback: number | null | undefined
+  ): number {
+    if (readingSecondsById.has(id)) {
+      return readingSecondsById.get(id) || 0;
+    }
+    return Math.max(0, Number(fallback || 0));
+  }
+
+  function buildIRCardBase(params: {
+    id: string;
+    deckId?: string;
+    templateId: string;
+    type: string;
+    content: string;
+    front: string;
+    back: string;
+    sourceFile: string;
+    sourcePosition?: { startLine: number; endLine: number; contentHash: string };
+    created: string;
+    modified: string;
+    totalReviews?: number;
+    totalTime?: number;
+    averageTime?: number;
+    fsrsState: number;
+    stability?: number;
+    due?: string;
+    lastReview?: string;
+    reps?: number;
+    scheduledDays?: number;
+    tags?: string[];
+    priority?: number;
+    suspended?: boolean;
+    metadata?: Record<string, any>;
+  }): Card & Record<string, any> {
+    return {
+      id: params.id,
+      uuid: params.id,
+      deckId: params.deckId || '',
+      templateId: params.templateId as any,
+      type: params.type as any,
+      content: params.content,
+      fields: {
+        front: params.front,
+        back: params.back
+      },
+      sourceFile: params.sourceFile,
+      sourcePosition: params.sourcePosition || {
+        startLine: 0,
+        endLine: 0,
+        contentHash: ''
+      },
+      created: params.created,
+      modified: params.modified,
+      stats: {
+        totalReviews: params.totalReviews || 0,
+        totalTime: params.totalTime || 0,
+        averageTime: params.averageTime || 0
+      },
+      fsrs: {
+        state: params.fsrsState as any,
+        difficulty: 0.3,
+        stability: params.stability || 0,
+        due: params.due || new Date().toISOString(),
+        lastReview: params.lastReview || undefined,
+        reps: params.reps || 0,
+        lapses: 0,
+        elapsedDays: 0,
+        scheduledDays: params.scheduledDays || 0,
+        retrievability: 1
+      },
+      tags: params.tags || [],
+      priority: params.priority || 2,
+      suspended: params.suspended || false,
+      metadata: params.metadata || {}
+    };
   }
 
   // 将 Card 转换为表格显示格式
@@ -1954,20 +2205,6 @@
       // 🆕 获取题库统计数据
       const testStats = questionBankStats.get(card.uuid);
       
-      // 🆕 获取关联记忆卡片信息
-      const sourceCardId = card.metadata?.sourceCardId as string | undefined;
-      let sourceCardInfo = '-';
-      if (sourceCardId && typeof sourceCardId === 'string') {
-        // 从记忆学习卡片列表中查找源卡片
-        const sourceCard = cards.find(c => c.uuid === sourceCardId);
-        if (sourceCard) {
-          const sourceFront = getCardContentBySide(sourceCard, 'front', [], " / ");
-          sourceCardInfo = sourceFront.length > 30 ? sourceFront.substring(0, 30) + '...' : sourceFront;
-        } else {
-          sourceCardInfo = `[已删除] ${sourceCardId.substring(0, 8)}...`;
-        }
-      }
-      
       // 🚀 性能优化：使用缓存避免重复解析
       const cacheKey = `${card.uuid}_${card.modified || ''}`;
       
@@ -2041,13 +2278,12 @@
         difficulty: difficulty,
         review_count: reviewCount,
         // 🆕 添加题库专用数据
-        question_type: formatQuestionType(card),
+        question_type: getQuestionTypeLabelFromCard(card, 'emoji', '❓ 未知'),
         accuracy: formatAccuracy(card),
         accuracy_class: getAccuracyColorClass(card),
         test_attempts: testStats?.totalAttempts ?? 0,
         last_test: testStats?.lastTestDate ? formatRelativeTime(testStats.lastTestDate) : '-',
         error_level: formatErrorLevel(card),
-        source_card: sourceCardInfo, // 🆕 关联记忆卡片
       };
     });
   }
@@ -2135,10 +2371,8 @@
       
       let filePath: string | undefined;
       let blockId: string | undefined;
-      const filePathCandidates: string[] = [];
 
       if (card.content) {
-        const { parseYAMLFromContent } = await import('../../utils/yaml-utils');
         const yaml = parseYAMLFromContent(card.content);
         const sourceValue = Array.isArray((yaml as any).we_source) ? (yaml as any).we_source[0] : (yaml as any).we_source;
         if (typeof sourceValue === 'string') {
@@ -2164,13 +2398,17 @@
                   new Notice(parsed?.cfi ? '已跳转到EPUB源位置' : '已打开EPUB源文档');
                   return;
                 }
-                await plugin.app.workspace.openLinkText(linkText, contextPath, false);
-                if (linkText.includes('#^')) {
-                  new Notice('已跳转到源文档块');
-                } else {
-                  new Notice('已打开源文档');
+
+                // Canvas 文件需要走后面的专用定位分支
+                if (!pathOnly.toLowerCase().endsWith('.canvas')) {
+                  await plugin.app.workspace.openLinkText(linkText, contextPath, false);
+                  if (linkText.includes('#^')) {
+                    new Notice('已跳转到源文档块');
+                  } else {
+                    new Notice('已打开源文档');
+                  }
+                  return;
                 }
-                return;
               }
             }
           }
@@ -2179,12 +2417,10 @@
       
       // 🔧 v2.1.3: 优先从 card.content YAML 解析源文件信息（与卡片详情模态窗保持一致）
       if (card.content) {
-        const { parseSourceInfo } = await import('../../utils/yaml-utils');
         const sourceInfo = parseSourceInfo(card.content);
         if (sourceInfo.sourceFile) {
           filePath = sourceInfo.sourceFile;
           blockId = sourceInfo.sourceBlock?.replace(/^\^/, ''); // 移除^前缀
-          filePathCandidates.push(filePath);
         }
       }
       
@@ -2193,25 +2429,15 @@
         filePath = card.sourceFile;
         blockId = card.sourceBlock?.replace(/^\^/, '');
       }
-      if (card.sourceFile && !filePathCandidates.includes(card.sourceFile)) {
-        filePathCandidates.push(card.sourceFile);
-      }
       
       // 向后兼容：customFields
       if (!filePath && card.customFields?.obsidianFilePath) {
         filePath = card.customFields.obsidianFilePath as string;
         blockId = card.customFields.blockId as string;
       }
-      if (card.customFields?.obsidianFilePath && typeof card.customFields.obsidianFilePath === 'string') {
-        const p = card.customFields.obsidianFilePath as string;
-        if (!filePathCandidates.includes(p)) {
-          filePathCandidates.push(p);
-        }
-      }
       
       if (!filePath) {
         new Notice('此卡片没有关联的源文档');
-        isNavigatingToSource = false;
         return;
       }
       
@@ -2245,6 +2471,38 @@
         new Notice(epubCfi ? '已跳转到EPUB源位置' : '已打开EPUB源文档');
         return;
       }
+
+      // Canvas 文件：使用专门的节点定位服务，而不是仅打开文件
+      if (filePath.toLowerCase().endsWith('.canvas')) {
+        const normalizedBlockId = blockId?.replace(/^canvas:/, '').replace(/^\^/, '').split('?')[0];
+        const sourceNavigationService = new SourceNavigationService(plugin.app);
+        const targetRect = getCanvasSourceNodeRect(card);
+        const textCandidates = getCanvasTextCandidates(card);
+
+        const openedLeaf = await sourceNavigationService.openCanvasAndLocate(
+          filePath,
+          textCandidates,
+          normalizedBlockId,
+          {
+            label: '定位到溯源位置',
+            icon: 'map-pinned',
+            focus: true,
+            openInNewTab: true,
+            delayMs: 500,
+            nodeRect: targetRect ?? undefined
+          }
+        );
+
+        if (!openedLeaf) {
+          new Notice('源 Canvas 不存在');
+          return;
+        }
+
+        new Notice(normalizedBlockId || textCandidates.length > 0 || targetRect
+          ? '已定位到 Canvas 溯源节点'
+          : '已打开源 Canvas');
+        return;
+      }
       
       // Markdown文件：使用Obsidian原生跳转
       const docName = filePath.replace(/\.md$/, '');
@@ -2263,6 +2521,56 @@
       // 确保导航状态被重置
       isNavigatingToSource = false;
     }
+  }
+
+  function getCanvasSourceNodeRect(card: Card): { x: number; y: number; width?: number; height?: number } | null {
+    const content = card?.content;
+    if (!content) return null;
+
+    const yaml = parseYAMLFromContent(content);
+    const weSource = Array.isArray(yaml.we_source) ? yaml.we_source[0] : yaml.we_source;
+    if (typeof weSource !== 'string') return null;
+
+    const queryIndex = weSource.indexOf('?');
+    if (queryIndex === -1) return null;
+
+    const queryEnd = weSource.lastIndexOf(']]');
+    const query = weSource.slice(queryIndex + 1, queryEnd > queryIndex ? queryEnd : undefined);
+    const params = new URLSearchParams(query);
+    const x = Number(params.get('x'));
+    const y = Number(params.get('y'));
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+    const width = Number(params.get('w'));
+    const height = Number(params.get('h'));
+
+    return {
+      x,
+      y,
+      width: Number.isFinite(width) ? width : undefined,
+      height: Number.isFinite(height) ? height : undefined
+    };
+  }
+
+  function getCanvasTextCandidates(card: Card): string[] {
+    const body = extractBodyContent(card?.content || '');
+    if (!body) return [];
+
+    const lines = body
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^>\s?/, '').trim())
+      .filter((line) => line.length >= 12);
+
+    const uniqueCandidates = new Set<string>();
+    for (const line of lines) {
+      const normalized = line.replace(/\s+/g, ' ').trim();
+      if (normalized.length >= 12) {
+        uniqueCandidates.add(normalized.slice(0, 120));
+      }
+      if (uniqueCandidates.size >= 3) break;
+    }
+
+    return Array.from(uniqueCandidates);
   }
 
   // 🆕 清除所有全局筛选
@@ -2387,14 +2695,45 @@
   function handleNavigate(pageId: string) {
     // 触发页面切换事件
     window.dispatchEvent(new CustomEvent('Weave:navigate', { 
-      detail: { pageId } 
+      detail: pageId 
     }));
   }
   
-  // 🆕 视图切换回调函数（用于 SidebarNavHeader）
-  function handleViewChange(view: CardViewType) {
-    switchView(view);
+  function emitToolbarState() {
+    window.dispatchEvent(new CustomEvent('Weave:card-management-toolbar-state', {
+      detail: {
+        tableViewMode,
+        gridLayout,
+        kanbanLayoutMode,
+        irTypeFilter,
+        searchQuery,
+        documentFilterMode,
+        currentActiveDocument,
+        enableCardLocationJump,
+        dataSource,
+        availableDecks: searchAvailableDecks,
+        availableTags: searchAvailableTags,
+        availablePriorities: searchAvailablePriorities,
+        availableQuestionTypes: searchAvailableQuestionTypes,
+        availableSources: searchAvailableSources,
+        availableStatuses: searchAvailableStatuses,
+        availableStates: searchAvailableIRStates,
+        availableAccuracies: searchAvailableAccuracies,
+        availableAttemptThresholds: searchAvailableAttemptThresholds,
+        availableErrorLevels: searchAvailableErrorLevels,
+        availableYamlKeys: searchAvailableYamlKeys,
+        matchCount: searchQuery ? totalFilteredItems : -1,
+        totalCount: searchSourceCards.length,
+        sortField: sortConfig.field,
+        sortDirection: sortConfig.direction
+      }
+    }));
   }
+
+  $effect(() => {
+    if (!isMounted) return;
+    emitToolbarState();
+  });
 
   // 筛选功能
   function handleFilterChange(data: { type: string; value: string; checked: boolean }) {
@@ -2615,6 +2954,7 @@
   function handleBatchChangeDeck(event?: MouseEvent) {
     const selectedCardIds = Array.from(selectedCards);
     logger.debug("更换牌组:", selectedCardIds);
+    const memoryDecks = getDecksForDataSource('memory');
 
     if (selectedCardIds.length === 0) {
       new Notice("请先选择要更换牌组的卡片");
@@ -2638,7 +2978,7 @@
       const submenu = (item as any).setSubmenu();
 
       const selectedSet = new Set(selectedCardIds);
-      allDecks.forEach((deck) => {
+      memoryDecks.forEach((deck) => {
         const deckCardUUIDs = new Set(deck.cardUUIDs || []);
         let anyInDeck = false;
         let allInDeck = true;
@@ -2659,33 +2999,49 @@
       });
     });
 
-    // 考试牌组子菜单
-    menu.addItem((item) => {
-      item.setTitle('考试牌组').setIcon('clipboard-list');
-      const submenu = (item as any).setSubmenu();
+    if (premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.QUESTION_BANK)) {
+      menu.addItem((item) => {
+        const questionBankLocked = premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.QUESTION_BANK);
+        item
+          .setTitle(questionBankLocked ? '考试牌组 (高级)' : '考试牌组')
+          .setIcon('clipboard-list');
+        const submenu = (item as any).setSubmenu();
 
-      if (questionBankStorage && plugin.questionBankService) {
-        const banks = plugin.questionBankService.getAllQuestionBanks();
-        if (banks.length > 0) {
-          banks.forEach((bank) => {
-            submenu.addItem((subItem: any) => {
-              subItem.setTitle(bank.name).setIcon('edit-3');
-              subItem.onClick(async () => {
-                await handleBatchAddToExamDeck(bank.id, selectedCardIds);
+        if (questionBankLocked) {
+          submenu.addItem((subItem: any) => {
+            subItem
+              .setTitle('激活后使用')
+              .setIcon('lock')
+              .onClick(() => {
+                promptPremiumFeature(PREMIUM_FEATURES.QUESTION_BANK);
+              });
+          });
+          return;
+        }
+
+        if (questionBankStorage && plugin.questionBankService) {
+          const banks = plugin.questionBankService.getAllQuestionBanks();
+          if (banks.length > 0) {
+            banks.forEach((bank) => {
+              submenu.addItem((subItem: any) => {
+                subItem.setTitle(bank.name).setIcon('edit-3');
+                subItem.onClick(async () => {
+                  await handleBatchAddToExamDeck(bank.id, selectedCardIds);
+                });
               });
             });
-          });
+          } else {
+            submenu.addItem((subItem: any) => {
+              subItem.setTitle('暂无考试牌组').setDisabled(true);
+            });
+          }
         } else {
           submenu.addItem((subItem: any) => {
-            subItem.setTitle('暂无考试牌组').setDisabled(true);
+            subItem.setTitle('考试牌组服务未初始化').setDisabled(true);
           });
         }
-      } else {
-        submenu.addItem((subItem: any) => {
-          subItem.setTitle('考试牌组服务未初始化').setDisabled(true);
-        });
-      }
-    });
+      });
+    }
 
     menu.showAtPosition(lastBatchDeckMenuPosition!);
   }
@@ -2693,13 +3049,18 @@
   // 批量将选择题卡片添加到考试牌组
   async function handleBatchAddToExamDeck(bankId: string, selectedCardIds: string[]) {
     try {
+      if (premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.QUESTION_BANK)) {
+        promptPremiumFeature(PREMIUM_FEATURES.QUESTION_BANK);
+        return;
+      }
+
       if (!plugin.questionBankService) {
         showNotification('考试牌组服务未初始化', 'error');
         return;
       }
 
       // 从选中的卡片中筛选出选择题类型
-      const sourceCards = dataSource === 'questionBank' ? questionBankCards : cards;
+      const sourceCards = currentSourceCards;
       const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
       const choiceCards = selectedCardData.filter(c => {
         const questionType = detectCardQuestionType(c);
@@ -2761,7 +3122,8 @@
 
     const selectedSet = new Set(selectedCardIds);
 
-    allDecks.forEach((deck) => {
+    const memoryDecks = getDecksForDataSource('memory');
+    memoryDecks.forEach((deck) => {
       const deckCardUUIDs = new Set(deck.cardUUIDs || []);
 
       let anyInDeck = false;
@@ -2881,11 +3243,6 @@
     }
   }
 
-  function handleBatchChangeTemplate() {
-    // 批量更换模板功能已删除（基于弃用的字段模板系统）
-    showNotification("此功能已移除：新系统使用MD编辑+动态解析，无需模板更换", "info");
-  }
-
   function handleBatchCopy() {
     const selectedCardIds = Array.from(selectedCards);
     logger.debug("批量复制:", selectedCardIds);
@@ -2901,8 +3258,8 @@
     // 创建复制的文本内容
     // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取牌组ID
     const copyText = selectedCardData.map(card => {
-      const { primaryDeckId } = getCardDeckIds(card);
-      const deck = allDecks.find(d => d.id === (primaryDeckId || card.deckId));
+      const { primaryDeckId } = getCardDeckIds(card, currentDataSourceDecks);
+      const deck = currentDataSourceDecks.find(d => d.id === (primaryDeckId || card.deckId));
       return `正面: ${card.fields?.front || card.fields?.question || ''}
 背面: ${card.fields?.back || card.fields?.answer || ''}
 标签: ${card.tags?.join(', ') || '无'}
@@ -2921,78 +3278,6 @@
   // 导出笔记（MD + CSV，支持多种分组方式）
   type ExportFormat = 'md' | 'csv';
   type ExportMode = 'single' | 'bySource' | 'byMonth' | 'byDeck';
-
-  function handleExportToMd(event?: MouseEvent) {
-    const selectedCardIds = Array.from(selectedCards);
-    if (selectedCardIds.length === 0) {
-      new Notice(t('cardManagement.batchToolbar.exportNoCards'));
-      return;
-    }
-
-    const selectedCardData = filteredAndSortedCards.filter(card => selectedCardIds.includes(card.uuid));
-    if (selectedCardData.length === 0) {
-      new Notice(t('cardManagement.batchToolbar.exportNoCards'));
-      return;
-    }
-
-    const menu = new Menu();
-
-    // --- Markdown 导出 ---
-    menu.addItem(item => { item.setTitle('Markdown'); item.setIsLabel(true); });
-    menu.addItem(item => {
-      item.setTitle('导出为一个文件');
-      item.setIcon('file-text');
-      item.onClick(() => showExportFolderPicker('single', 'md', selectedCardData));
-    });
-    menu.addItem(item => {
-      item.setTitle('按来源分别导出');
-      item.setIcon('files');
-      item.onClick(() => showExportFolderPicker('bySource', 'md', selectedCardData));
-    });
-    menu.addItem(item => {
-      item.setTitle('按月份分别导出');
-      item.setIcon('calendar');
-      item.onClick(() => showExportFolderPicker('byMonth', 'md', selectedCardData));
-    });
-    menu.addItem(item => {
-      item.setTitle('按牌组分别导出');
-      item.setIcon('folder');
-      item.onClick(() => showExportFolderPicker('byDeck', 'md', selectedCardData));
-    });
-
-    menu.addSeparator();
-
-    // --- CSV 导出 ---
-    menu.addItem(item => { item.setTitle('CSV'); item.setIsLabel(true); });
-    menu.addItem(item => {
-      item.setTitle('导出为一个文件');
-      item.setIcon('file-spreadsheet');
-      item.onClick(() => showExportFolderPicker('single', 'csv', selectedCardData));
-    });
-    menu.addItem(item => {
-      item.setTitle('按来源分别导出');
-      item.setIcon('files');
-      item.onClick(() => showExportFolderPicker('bySource', 'csv', selectedCardData));
-    });
-    menu.addItem(item => {
-      item.setTitle('按月份分别导出');
-      item.setIcon('calendar');
-      item.onClick(() => showExportFolderPicker('byMonth', 'csv', selectedCardData));
-    });
-    menu.addItem(item => {
-      item.setTitle('按牌组分别导出');
-      item.setIcon('folder');
-      item.onClick(() => showExportFolderPicker('byDeck', 'csv', selectedCardData));
-    });
-
-    if (event) {
-      const el = (event.currentTarget as HTMLElement) || (event.target as HTMLElement);
-      const rect = el.getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.top - 8 });
-    } else {
-      menu.showAtPosition({ x: window.innerWidth / 2, y: window.innerHeight - 100 });
-    }
-  }
 
   // 显示文件夹选择器
   function showExportFolderPicker(mode: ExportMode, format: ExportFormat, cardsToExport: Card[]) {
@@ -3041,7 +3326,7 @@
       const timestamp = new Date().toISOString().slice(0, 10);
       const fileName = `Weave Export ${timestamp}.csv`;
       const filePath = folderPath ? `${folderPath}/${fileName}` : fileName;
-      const csvContent = cardsToCSV(cardsToExport, allDecks);
+      const csvContent = cardsToCSV(cardsToExport, currentDataSourceDecks);
       const finalPath = await getUniqueFilePath(filePath);
       await plugin.app.vault.create(finalPath, csvContent);
       new Notice(`已导出 ${cardsToExport.length} 张卡片到 ${finalPath}`);
@@ -3054,7 +3339,7 @@
           ? `Weave Export - Ungrouped`
           : `Weave Export - ${groupKey}`);
         const filePath = folderPath ? `${folderPath}/${baseName}.csv` : `${baseName}.csv`;
-        const csvContent = cardsToCSV(groupCards, allDecks);
+        const csvContent = cardsToCSV(groupCards, currentDataSourceDecks);
         const finalPath = await getUniqueFilePath(filePath);
         await plugin.app.vault.create(finalPath, csvContent);
         totalExported += groupCards.length;
@@ -3069,7 +3354,7 @@
     switch (mode) {
       case 'bySource': return groupCardsBySource(cardsToExport);
       case 'byMonth': return groupCardsByMonth(cardsToExport);
-      case 'byDeck': return groupCardsByDeck(cardsToExport, allDecks);
+      case 'byDeck': return groupCardsByDeck(cardsToExport, currentDataSourceDecks);
       default: {
         const m = new Map<string, Card[]>();
         m.set('all', cardsToExport);
@@ -3237,135 +3522,6 @@
     return candidate;
   }
 
-  function handleBatchAddTagsClick(event?: MouseEvent) {
-    const selectedCardIds = Array.from(selectedCards);
-    logger.debug("添加标签:", selectedCardIds);
-
-    if (selectedCardIds.length === 0) {
-      new Notice("请先选择要添加标签的卡片");
-      return;
-    }
-
-    // 使用 Obsidian Menu API 显示标签选择列表
-    const menu = new Menu();
-    (menu as any).app = plugin.app;
-
-    // 添加标题
-    menu.addItem((item) => {
-      item.setTitle(`为 ${selectedCardIds.length} 张卡片添加标签`);
-      item.setDisabled(true);
-    });
-
-    // 收集选中卡片已有的标签（用于排除）
-    const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
-    const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
-    const existingTagsInSelection = new Set<string>();
-    selectedCardData.forEach(card => {
-      card.tags?.forEach(tag => existingTagsInSelection.add(tag));
-    });
-
-    // 显示可添加的标签（排除选中卡片已有的标签）
-    const tagsToShow = availableTags
-      .filter(t => !existingTagsInSelection.has(t.name))
-      .slice(0, 20);
-
-    if (tagsToShow.length > 0) {
-      tagsToShow.forEach((tag) => {
-        menu.addItem((item) => {
-          item.setTitle(tag.name);
-          item.setIcon('tag');
-          item.onClick(() => {
-            handleBatchAddTags([tag.name]);
-          });
-        });
-      });
-    } else {
-      menu.addItem((item) => {
-        item.setTitle('没有可添加的标签');
-        item.setDisabled(true);
-      });
-    }
-
-    // 显示菜单 - 在按钮上方显示
-    if (event) {
-      const rect = (event.target as HTMLElement).getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.top - 8 });
-    } else {
-      menu.showAtPosition({ x: window.innerWidth / 2, y: window.innerHeight - 100 });
-    }
-  }
-
-  function handleBatchRemoveTags(event?: MouseEvent) {
-    const selectedCardIds = Array.from(selectedCards);
-    logger.debug("删除标签:", selectedCardIds);
-
-    if (selectedCardIds.length === 0) {
-      new Notice("请先选择要删除标签的卡片");
-      return;
-    }
-
-    // 收集选中卡片的所有标签
-    const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
-    const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
-    const tagCounts = new Map<string, number>();
-    selectedCardData.forEach(card => {
-      card.tags?.forEach(tag => {
-        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-      });
-    });
-
-    if (tagCounts.size === 0) {
-      new Notice("选中的卡片没有标签");
-      return;
-    }
-
-    // 使用 Obsidian Menu API 显示标签选择列表
-    const menu = new Menu();
-    (menu as any).app = plugin.app;
-
-    // 添加标题
-    menu.addItem((item) => {
-      item.setTitle(`从 ${selectedCardIds.length} 张卡片中删除标签`);
-      item.setDisabled(true);
-    });
-
-    menu.addSeparator();
-
-    // 按标签数量排序
-    const sortedTags = Array.from(tagCounts.entries()).sort((a, b) => b[1] - a[1]);
-
-    // 添加标签选项
-    sortedTags.forEach(([tag, count]) => {
-      menu.addItem((item) => {
-        item.setTitle(`${tag} (${count})`);
-        item.setIcon('tag');
-        item.onClick(() => {
-          handleBatchRemoveTagsConfirm([tag]);
-        });
-      });
-    });
-
-    // 添加全部删除选项
-    if (sortedTags.length > 1) {
-      menu.addSeparator();
-      menu.addItem((item) => {
-        item.setTitle(`删除全部 ${sortedTags.length} 个标签`);
-        item.setIcon('trash-2');
-        item.onClick(() => {
-          handleBatchRemoveTagsConfirm(sortedTags.map(([tag]) => tag));
-        });
-      });
-    }
-
-    // 显示菜单 - 在按钮上方显示
-    if (event) {
-      const rect = (event.target as HTMLElement).getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.top - 8 });
-    } else {
-      menu.showAtPosition({ x: window.innerWidth / 2, y: window.innerHeight - 100 });
-    }
-  }
-
   // 🆕 标签操作菜单（合并增加标签和移除标签）
   function handleBatchTagsMenu(event?: MouseEvent) {
     const selectedCardIds = Array.from(selectedCards);
@@ -3382,7 +3538,7 @@
       item.setTitle('增加标签').setIcon('plus');
       const submenu = (item as any).setSubmenu();
 
-      const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+      const sourceCards = currentSourceCards;
       const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
       const existingTagsInSelection = new Set<string>();
       selectedCardData.forEach(card => {
@@ -3412,7 +3568,7 @@
       item.setTitle('移除标签').setIcon('minus');
       const submenu = (item as any).setSubmenu();
 
-      const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+      const sourceCards = currentSourceCards;
       const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
       const tagCounts = new Map<string, number>();
       selectedCardData.forEach(card => {
@@ -3559,8 +3715,8 @@
               logger.debug(`成功删除IR chunk: ${id}`);
             } else {
               // 旧版 blocks.json 数据：从牌组移除引用 + 删除 block
-              const allDecks = await irStorageService.getAllDecks();
-              for (const deck of Object.values(allDecks)) {
+              const irDeckMap = await irStorageService.getAllDecks();
+              for (const deck of Object.values(irDeckMap)) {
                 if (deck.blockIds?.includes(id)) {
                   await irStorageService.removeBlocksFromDeck(deck.id, [id]);
                 }
@@ -3644,7 +3800,7 @@
           }
           
           // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取题库ID
-          const { primaryDeckId } = getCardDeckIds(card);
+          const { primaryDeckId } = getCardDeckIds(card, questionBankDecks);
           const bankId = primaryDeckId || card.deckId || '';
           if (!cardsByBank.has(bankId)) {
             cardsByBank.set(bankId, []);
@@ -3807,6 +3963,12 @@
     // 如果已经是当前数据源，不做处理
     if (dataSource === newSource) return;
     
+    if (newSource === 'questionBank' && premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.QUESTION_BANK)) {
+      promptFeatureId = PREMIUM_FEATURES.QUESTION_BANK;
+      showActivationPrompt = true;
+      return;
+    }
+
     // 增量阅读高级功能门控
     if (newSource === 'incremental-reading' && premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.INCREMENTAL_READING)) {
       new Notice('增量阅读是高级功能，请激活许可证后使用');
@@ -3845,15 +4007,8 @@
     showNotification(`切换到${sourceNames[newSource]}数据`, 'success');
   }
   
-  // 🆕 切换数据源（旧函数，保留用于兼容）
-  async function toggleDataSource(): Promise<void> {
-    const newSource = dataSource === 'memory' ? 'questionBank' : 'memory';
-    await switchDataSource(newSource);
-  }
-
-  // 🆕 v2.0 加载增量阅读内容块数据
-  // v5.3: 同时支持旧版 IRBlock (blocks.json) 和新版 IRChunkFileData (chunks.json)
-  async function loadIRContentCards(): Promise<void> {
+  // 加载增量阅读卡片，同时兼容旧版 blocks.json 与新版 chunks.json
+  async function loadIRContentCards(options?: { silent?: boolean }): Promise<void> {
     if (isLoadingIR) return;
     
     isLoadingIR = true;
@@ -3864,7 +4019,7 @@
         await irStorageService.initialize();
       }
       
-      // v5.5: 先执行数据完整性检查，清理无效数据（文件不存在的块）
+      // 先执行数据完整性检查，清理已失效的块数据
       const { resolveIRImportFolder } = await import('../../config/paths');
       const scanRoot = resolveIRImportFolder(
         plugin.settings?.incrementalReading?.importFolder,
@@ -3878,23 +4033,22 @@
       // 加载IR数据
       irBlocks = await irStorageService.getAllBlocks();
       irDecks = await irStorageService.getAllDecks();
+      const history = await irStorageService.getHistory();
+      const readingSecondsById = buildIRSessionTotalsByBlockId(history.sessions);
       
-      // v5.5: 加载新版文件化块数据（带 YAML deck_tag 同步）
+      // 加载文件化 chunk 数据与来源信息
       const chunkData = await irStorageService.getAllChunkData();
       const sourcesData = await irStorageService.getAllSources();
       
-      // v5.3: 调试日志
       logger.info(`[IR] 加载数据: blocks=${Object.keys(irBlocks).length}, decks=${Object.keys(irDecks).length}, chunks=${Object.keys(chunkData).length}, sources=${Object.keys(sourcesData).length}`);
       
       const convertedCards: Card[] = [];
       
-      // v5.6: 收集 chunks.json 中的 ID，用于去重
-      // 如果同一内容在 blocks.json 和 chunks.json 中都存在，优先使用 chunks.json
+      // 同一内容如果同时存在于 blocks/chunks，优先使用 chunks
       const chunkIds = new Set(Object.keys(chunkData));
       
-      // === 1. 转换旧版 IRBlock (blocks.json) ===
+      // 1. 转换旧版 IRBlock (blocks.json)
       for (const block of Object.values(irBlocks)) {
-        // v5.6: 跳过已存在于 chunks.json 中的块，避免重复
         if (chunkIds.has(block.id)) {
           continue;
         }
@@ -3911,73 +4065,68 @@
         const headingPath = Array.isArray(block.headingPath) ? block.headingPath : [];
         const displayContent = `# ${block.headingText || '无标题'}\n\n${headingPath.length > 1 ? `${headingPath.join(' > ')}\n\n` : ''}来源: ${block.filePath}`;
         
+        const readingSeconds = getIRReadingSeconds(block.id, readingSecondsById, block.totalReadingTime);
+
         const card: Card & Record<string, any> = {
-          id: block.id,
-          uuid: block.id,
-          deckId: deckIds[0] || '',
-          templateId: CardType.IRBlock,
-          type: CardType.IRBlock,
-          content: displayContent,
-          fields: {
+          ...buildIRCardBase({
+            id: block.id,
+            deckId: deckIds[0] || '',
+            templateId: CardType.IRBlock,
+            type: CardType.IRBlock,
+            content: displayContent,
             front: block.headingText || '无标题',
-            back: headingPath.join(' > ')
-          },
-          sourceFile: block.filePath,
-          sourcePosition: {
-            startLine: block.startLine,
-            endLine: block.startLine,
-            contentHash: ''
-          },
-          created: block.createdAt,
-          modified: block.updatedAt,
-          stats: {
+            back: headingPath.join(' > '),
+            sourceFile: block.filePath,
+            sourcePosition: {
+              startLine: block.startLine,
+              endLine: block.startLine,
+              contentHash: ''
+            },
+            created: block.createdAt,
+            modified: block.updatedAt,
             totalReviews: block.reviewCount || 0,
-            totalTime: block.totalReadingTime || 0,
-            averageTime: block.reviewCount ? Math.floor((block.totalReadingTime || 0) / block.reviewCount) : 0
-          },
-          fsrs: {
-            state: block.state === 'new' ? 0 : block.state === 'learning' ? 1 : 2,
-            difficulty: 0.3,
+            totalTime: readingSeconds,
+            averageTime: block.reviewCount ? Math.floor(readingSeconds / block.reviewCount) : 0,
+            fsrsState: block.state === 'new' ? 0 : block.state === 'learning' ? 1 : 2,
             stability: block.interval,
             due: block.nextReview || new Date().toISOString(),
             lastReview: block.lastReview || undefined,
             reps: block.reviewCount,
-            lapses: 0,
-            elapsedDays: 0,
             scheduledDays: block.interval || 0,
-            retrievability: 1
-          },
-          tags: block.tags || [],
-          priority: block.priority || 2,
-          suspended: block.state === 'suspended',
-          metadata: {
-            irBlock: true,
-            headingLevel: block.headingLevel,
-            headingPath: block.headingPath,
-            totalReadingTime: block.totalReadingTime,
+            tags: block.tags || [],
+            priority: block.priority || 2,
+            suspended: block.state === 'suspended',
+            metadata: {
+              irBlock: true,
+              headingLevel: block.headingLevel,
+              headingPath: block.headingPath,
+              totalReadingTime: readingSeconds,
+              favorite: block.favorite,
+              extractedCards: block.extractedCards,
+              deckIds: deckIds
+            }
+          }),
+          ...buildIRTableFields({
+            title: headingPath.join(' > ') || block.headingText || '无标题',
+            sourceFile: block.filePath,
+            deckName: deckIds.length > 0 ? getIRDeckName(deckIds[0]) : '未分配',
+            deckIds,
+            state: block.state,
+            priority: block.priority,
+            tags: block.tags || [],
             favorite: block.favorite,
-            extractedCards: block.extractedCards,
-            deckIds: deckIds
-          },
-          // IR专用字段（用于表格显示）
-          ir_title: headingPath.join(' > ') || block.headingText || '无标题',
-          ir_source_file: block.filePath,
-          ir_deck: deckIds.length > 0 ? Object.values(irDecks).find(d => d.id === deckIds[0])?.name || '未分配' : '未分配',  // v5.4
-          ir_state: block.state,
-          ir_priority: block.priority,
-          ir_tags: block.tags || [],
-          ir_favorite: block.favorite,
-          ir_next_review: block.nextReview,
-          ir_review_count: block.reviewCount,
-          ir_reading_time: block.totalReadingTime,
-          ir_notes: block.notes || '',
-          ir_extracted_cards: block.extractedCards?.length || 0,
-          ir_created: block.createdAt,
+            nextReview: block.nextReview,
+            reviewCount: block.reviewCount,
+            readingTime: readingSeconds,
+            notes: block.notes || '',
+            extractedCards: block.extractedCards?.length || 0,
+            created: block.createdAt
+          }),
         };
         convertedCards.push(card);
       }
       
-      // === 2. 转换新版 IRChunkFileData (chunks.json) ===
+      // 2. 转换新版 IRChunkFileData (chunks.json)
       for (const chunk of Object.values(chunkData)) {
         // 从文件路径提取标题
         const fileName = chunk.filePath.replace(/^.*\//, '').replace(/\.md$/, '');
@@ -4031,72 +4180,66 @@
         // 转换为Card格式
         const displayContent = `# ${title}\n\n来源: ${sourceTitle}\n文件: ${chunk.filePath}`;
         
+        const readingSeconds = getIRReadingSeconds(chunk.chunkId, readingSecondsById, chunk.stats?.totalReadingTimeSec);
+
         const card: Card & Record<string, any> = {
-          id: chunk.chunkId,
-          uuid: chunk.chunkId,
-          deckId: '',
-          templateId: CardType.IRChunk,
-          type: CardType.IRChunk,
-          content: displayContent,
-          fields: {
+          ...buildIRCardBase({
+            id: chunk.chunkId,
+            deckId: '',
+            templateId: CardType.IRChunk,
+            type: CardType.IRChunk,
+            content: displayContent,
             front: title,
-            back: sourceTitle
-          },
-          sourceFile: chunk.filePath,
-          sourcePosition: {
-            startLine: 0,
-            endLine: 0,
-            contentHash: ''
-          },
-          created: typeof chunk.createdAt === 'number' ? new Date(chunk.createdAt).toISOString() : chunk.createdAt,
-          modified: typeof chunk.updatedAt === 'number' ? new Date(chunk.updatedAt).toISOString() : chunk.updatedAt,
-          stats: {
+            back: sourceTitle,
+            sourceFile: chunk.filePath,
+            sourcePosition: {
+              startLine: 0,
+              endLine: 0,
+              contentHash: ''
+            },
+            created: typeof chunk.createdAt === 'number' ? new Date(chunk.createdAt).toISOString() : chunk.createdAt,
+            modified: typeof chunk.updatedAt === 'number' ? new Date(chunk.updatedAt).toISOString() : chunk.updatedAt,
             totalReviews: chunk.stats?.impressions || 0,
-            totalTime: 0,
-            averageTime: 0
-          },
-          fsrs: {
-            state: chunk.scheduleStatus === 'new' ? 0 : chunk.scheduleStatus === 'active' ? 1 : 2,
-            difficulty: 0.3,
+            totalTime: readingSeconds,
+            averageTime: chunk.stats?.impressions ? Math.floor(readingSeconds / chunk.stats.impressions) : 0,
+            fsrsState: chunk.scheduleStatus === 'new' ? 0 : chunk.scheduleStatus === 'active' ? 1 : 2,
             stability: chunk.intervalDays,
             due: chunk.nextRepDate ? new Date(chunk.nextRepDate).toISOString() : new Date().toISOString(),
             lastReview: undefined,
             reps: chunk.stats?.impressions || 0,
-            lapses: 0,
-            elapsedDays: 0,
             scheduledDays: chunk.intervalDays || 0,
-            retrievability: 1
-          },
-          tags: tags,
-          priority: chunk.priorityEff <= 3 ? 1 : chunk.priorityEff <= 7 ? 2 : 3,
-          suspended: chunk.scheduleStatus === 'suspended',
-          metadata: {
-            irChunk: true,
-            sourceId: chunk.sourceId,
-            sourceTitle: sourceTitle,
-            deckTag: chunk.deckTag,  // v5.4: 兼容
-            deckIds: chunk.deckIds || []  // v5.5: 多牌组ID列表
-          },
-          // IR专用字段（用于表格显示）
-          ir_title: title,
-          ir_source_file: chunk.filePath,
-          ir_deck: chunk.deckTag ? chunk.deckTag.replace('#IR_deck_', '') : '未分配',  // v5.4: 兼容单牌组
-          ir_deck_ids: chunk.deckIds || [],  // v5.5: 多牌组ID列表
-          ir_state: chunk.scheduleStatus,
-          ir_priority: chunk.priorityEff <= 3 ? 1 : chunk.priorityEff <= 7 ? 2 : 3,
-          ir_tags: tags,
-          ir_favorite: false,
-          ir_next_review: chunk.nextRepDate ? new Date(chunk.nextRepDate).toISOString() : null,
-          ir_review_count: chunk.stats?.impressions || 0,
-          ir_reading_time: chunk.stats?.totalReadingTimeSec || 0,
-          ir_notes: '',
-          ir_extracted_cards: extractedCardsCount,
-          ir_created: typeof chunk.createdAt === 'number' ? new Date(chunk.createdAt).toISOString() : chunk.createdAt,
+            tags,
+            priority: chunk.priorityEff <= 3 ? 1 : chunk.priorityEff <= 7 ? 2 : 3,
+            suspended: chunk.scheduleStatus === 'suspended',
+            metadata: {
+              irChunk: true,
+              sourceId: chunk.sourceId,
+              sourceTitle: sourceTitle,
+              deckTag: chunk.deckTag,
+              deckIds: chunk.deckIds || []
+            }
+          }),
+          ...buildIRTableFields({
+            title,
+            sourceFile: chunk.filePath,
+            deckName: chunk.deckIds?.length ? getIRDeckName(chunk.deckIds[0]) : (chunk.deckTag ? chunk.deckTag.replace('#IR_deck_', '') : '未分配'),
+            deckIds: chunk.deckIds || [],
+            state: chunk.scheduleStatus,
+            priority: chunk.priorityEff <= 3 ? 1 : chunk.priorityEff <= 7 ? 2 : 3,
+            tags,
+            favorite: false,
+            nextReview: chunk.nextRepDate ? new Date(chunk.nextRepDate).toISOString() : null,
+            reviewCount: chunk.stats?.impressions || 0,
+            readingTime: readingSeconds,
+            notes: '',
+            extractedCards: extractedCardsCount,
+            created: typeof chunk.createdAt === 'number' ? new Date(chunk.createdAt).toISOString() : chunk.createdAt,
+          }),
         };
         convertedCards.push(card);
       }
       
-      // === 3. 转换 PDF 书签任务 (pdf-bookmark-tasks.json) ===
+      // 3. 转换 PDF 书签任务 (pdf-bookmark-tasks.json)
       let pdfTaskCount = 0;
       try {
         const pdfService = new IRPdfBookmarkTaskService(plugin.app);
@@ -4108,71 +4251,64 @@
           if (task.status === 'done' || task.status === 'removed') continue;
           
           // 查找所属牌组名称
-          const deck = Object.values(irDecks).find(d => d.id === task.deckId);
-          const deckName = deck?.name || '未分配';
+          const deckName = getIRDeckName(task.deckId);
           
           const displayContent = `# ${task.title}\n\nPDF: ${task.pdfPath}\n链接: ${task.link}`;
           
           // 将 priorityEff(1-10) 映射为显示用的 1(高)/2(中)/3(低)
           const displayPriority = task.priorityEff <= 3 ? 1 : task.priorityEff <= 7 ? 2 : 3;
           
+          const readingSeconds = getIRReadingSeconds(task.id, readingSecondsById, task.stats?.totalReadingTimeSec);
+
           const card: Card & Record<string, any> = {
-            id: task.id,
-            uuid: task.id,
-            deckId: task.deckId || '',
-            templateId: CardType.IRChunk,
-            type: CardType.IRChunk,
-            content: displayContent,
-            fields: {
+            ...buildIRCardBase({
+              id: task.id,
+              deckId: task.deckId || '',
+              templateId: CardType.IRChunk,
+              type: CardType.IRChunk,
+              content: displayContent,
               front: task.title,
-              back: task.pdfPath
-            },
-            sourceFile: task.pdfPath,
-            sourcePosition: { startLine: 0, endLine: 0, contentHash: '' },
-            created: new Date(task.createdAt).toISOString(),
-            modified: new Date(task.updatedAt).toISOString(),
-            stats: {
+              back: task.pdfPath,
+              sourceFile: task.pdfPath,
+              sourcePosition: { startLine: 0, endLine: 0, contentHash: '' },
+              created: new Date(task.createdAt).toISOString(),
+              modified: new Date(task.updatedAt).toISOString(),
               totalReviews: task.stats?.impressions || 0,
-              totalTime: task.stats?.totalReadingTimeSec || 0,
-              averageTime: 0
-            },
-            fsrs: {
-              state: task.status === 'new' ? 0 : task.status === 'active' || task.status === 'queued' ? 1 : 2,
-              difficulty: 0.3,
+              totalTime: readingSeconds,
+              averageTime: task.stats?.impressions ? Math.floor(readingSeconds / task.stats.impressions) : 0,
+              fsrsState: task.status === 'new' ? 0 : task.status === 'active' || task.status === 'queued' ? 1 : 2,
               stability: task.intervalDays,
               due: task.nextRepDate ? new Date(task.nextRepDate).toISOString() : new Date().toISOString(),
               lastReview: undefined,
               reps: task.stats?.impressions || 0,
-              lapses: 0,
-              elapsedDays: 0,
               scheduledDays: task.intervalDays || 0,
-              retrievability: 1
-            },
-            tags: task.tags || [],
-            priority: displayPriority,
-            suspended: task.status === 'suspended',
-            metadata: {
-              irPdfBookmark: true,
-              pdfPath: task.pdfPath,
-              link: task.link,
-              annotationId: task.annotationId,
-              deckIds: [task.deckId]
-            },
-            // IR专用字段
-            ir_title: task.title,
-            ir_source_file: task.pdfPath,
-            ir_deck: deckName,
-            ir_deck_ids: task.deckId ? [task.deckId] : [],
-            ir_state: task.status,
-            ir_priority: displayPriority,
-            ir_tags: task.tags || [],
-            ir_favorite: false,
-            ir_next_review: task.nextRepDate ? new Date(task.nextRepDate).toISOString() : null,
-            ir_review_count: task.stats?.impressions || 0,
-            ir_reading_time: task.stats?.totalReadingTimeSec || 0,
-            ir_notes: '',
-            ir_extracted_cards: task.stats?.cardsCreated || 0,
-            ir_created: new Date(task.createdAt).toISOString(),
+              tags: task.tags || [],
+              priority: displayPriority,
+              suspended: task.status === 'suspended',
+              metadata: {
+                irPdfBookmark: true,
+                pdfPath: task.pdfPath,
+                link: task.link,
+                annotationId: task.annotationId,
+                deckIds: [task.deckId]
+              }
+            }),
+            ...buildIRTableFields({
+              title: task.title,
+              sourceFile: task.pdfPath,
+              deckName,
+              deckIds: task.deckId ? [task.deckId] : [],
+              state: task.status,
+              priority: displayPriority,
+              tags: task.tags || [],
+              favorite: false,
+              nextReview: task.nextRepDate ? new Date(task.nextRepDate).toISOString() : null,
+              reviewCount: task.stats?.impressions || 0,
+              readingTime: readingSeconds,
+              notes: '',
+              extractedCards: task.stats?.cardsCreated || 0,
+              created: new Date(task.createdAt).toISOString(),
+            }),
           };
           convertedCards.push(card);
           pdfTaskCount++;
@@ -4189,7 +4325,9 @@
       const legacyCount = Object.keys(irBlocks).length;
       const chunkCount = Object.keys(chunkData).length;
       logger.debug(`[IR] 加载了 ${irContentCards.length} 个内容块 (旧版: ${legacyCount}, 新版: ${chunkCount}, PDF书签: ${pdfTaskCount})`);
-      showNotification(`已加载 ${irContentCards.length} 个增量阅读内容块`, 'success');
+      if (!options?.silent) {
+        showNotification(`已加载 ${irContentCards.length} 个增量阅读内容块`, 'success');
+      }
       
     } catch (error) {
       logger.error('[IR] 加载失败:', error);
@@ -4197,12 +4335,6 @@
     } finally {
       isLoadingIR = false;
     }
-  }
-
-  // 🆕 v2.0 切换到增量阅读数据源（已重构使用 switchDataSource）
-  async function toggleIRDataSource(): Promise<void> {
-    const newSource = dataSource === 'incremental-reading' ? 'memory' : 'incremental-reading';
-    await switchDataSource(newSource);
   }
 
   // 🆕 v2.0 IR批量操作：组建增量牌组
@@ -4262,59 +4394,6 @@
       logger.error('[IR] 切换收藏失败:', error);
       showNotification('切换收藏失败', 'error');
     }
-  }
-
-  // 🆕 v2.0 IR批量操作：修改优先级
-  function handleIRBatchChangePriority(event: MouseEvent): void {
-    const selectedIds = Array.from(selectedCards);
-    if (selectedIds.length === 0) {
-      showNotification('请先选择内容块', 'warning');
-      return;
-    }
-    
-    const menu = new Menu();
-    
-    const priorities = [
-      { value: 1, label: '🔴 高优先级', color: 'red' },
-      { value: 2, label: '🟡 中优先级', color: 'yellow' },
-      { value: 3, label: '🟢 低优先级', color: 'green' }
-    ];
-    
-    for (const p of priorities) {
-      menu.addItem((item) => {
-        item.setTitle(p.label);
-        item.onClick(async () => {
-          try {
-            if (!irStorageService) {
-              irStorageService = new IRStorageService(plugin.app);
-              await irStorageService.initialize();
-            }
-            
-            // 获取最新的块数据（避免使用闭包中的旧数据）
-            const latestBlocks = await irStorageService.getAllBlocks();
-            
-            let updatedCount = 0;
-            for (const id of selectedIds) {
-              const block = latestBlocks[id];
-              if (block) {
-                const updatedBlock = { ...block, priority: p.value as 1 | 2 | 3 };
-                await irStorageService.saveBlock(updatedBlock);
-                updatedCount++;
-              }
-            }
-            
-            await loadIRContentCards();
-            showNotification(`已将 ${updatedCount} 个内容块设为${p.label}`, 'success');
-            
-          } catch (error) {
-            logger.error('[IR] 修改优先级失败:', error);
-            showNotification('修改优先级失败', 'error');
-          }
-        });
-      });
-    }
-    
-    menu.showAtMouseEvent(event);
   }
 
   // 🆕 v5.5 IR批量操作：更换牌组（使用正式牌组列表，支持多牌组）
@@ -4445,18 +4524,6 @@
     menu.showAtMouseEvent(event);
   }
 
-  // 🆕 格式化题型显示
-  function formatQuestionType(card: Card): string {
-    const type = card.metadata?.questionMetadata?.type;
-    const typeMap = {
-      'single_choice': '📝 单选',
-      'multiple_choice': '☑️ 多选',
-      'cloze': '📋 填空',
-      'short_answer': '✍️ 问答'
-    };
-    return typeMap[type as keyof typeof typeMap] || '❓ 未知';
-  }
-  
   // 🆕 格式化正确率显示
   function formatAccuracy(card: Card): string {
     const stats = questionBankStats.get(card.uuid);
@@ -4521,7 +4588,7 @@
     logger.debug('[WeaveCardManagement] 删除单个卡片:', cardUuid, '数据源:', dataSource);
     
     // 🎯 根据数据源选择正确的卡片数据
-    const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+    const sourceCards = currentSourceCards;
     const cardToDelete = sourceCards.find(c => c.uuid === cardUuid);
     if (!cardToDelete) {
       logger.error('[WeaveCardManagement] 未找到要删除的卡片:', cardUuid, '数据源:', dataSource);
@@ -4634,7 +4701,7 @@
     }
 
     // 🎯 根据数据源选择正确的卡片数据
-    const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+    const sourceCards = currentSourceCards;
     const cardToEdit = sourceCards.find(c => c.uuid === cardId);
     
     if (cardToEdit) {
@@ -4656,7 +4723,7 @@
           return;
         }
         
-        // 新版 IRChunk：打开 chunk 对应的 md 文件
+        // 新版 IRChunk：直接打开 chunk 对应的 md 文件
         if (cardToEdit.metadata?.irChunk && cardToEdit.sourceFile) {
           const file = plugin.app.vault.getAbstractFileByPath(cardToEdit.sourceFile);
           if (file && file instanceof TFile) {
@@ -4705,11 +4772,6 @@
     }
   }
 
-  // 关闭临时文件编辑器 - 全局方法已自动处理，保留函数以兼容旧代码
-  function handleCloseTempFileEditor() {
-    logger.debug('[WeaveCardManagementPage] 编辑器关闭（全局方法已处理）');
-  }
-
   // 临时文件编辑保存完成
   async function handleTempFileEditSave(_updatedCard: Card) {
     try {
@@ -4739,13 +4801,13 @@
     logger.debug('[WeaveCardManagement] 查看卡片:', cardId, '数据源:', dataSource);
     
     // 🎯 根据数据源选择正确的卡片数据
-    const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+    const sourceCards = currentSourceCards;
     const cardToView = sourceCards.find(c => c.uuid === cardId);
     
     if (cardToView) {
       // ✅ 使用全局模态窗，支持在其他标签页上方显示
       plugin.openViewCardModal(cardToView, {
-        allDecks: allDecks
+        allDecks: currentDataSourceDecks
       });
     } else {
       logger.error('[WeaveCardManagement] 未找到要查看的卡片:', cardId, '数据源:', dataSource);
@@ -4757,7 +4819,7 @@
     logger.debug('[WeaveCardManagement] 更新卡片标签:', cardId, tags, '数据源:', dataSource);
     
     // 🎯 根据数据源选择正确的卡片数据
-    const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+    const sourceCards = currentSourceCards;
     const cardToUpdate = sourceCards.find(c => c.uuid === cardId);
     
     if (!cardToUpdate) {
@@ -4887,7 +4949,7 @@
     logger.debug('[WeaveCardManagement] 更新卡片优先级:', cardId, priority, '数据源:', dataSource);
     
     // 🎯 根据数据源选择正确的卡片数据
-    const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+    const sourceCards = currentSourceCards;
     const cardToUpdate = sourceCards.find(c => c.uuid === cardId);
     
     if (!cardToUpdate) {
@@ -4986,10 +5048,7 @@
     // 通过plugin关闭当前的查看卡片模态窗
     if ((plugin as any).currentViewCardModal) {
       const modal = (plugin as any).currentViewCardModal;
-      if (modal.container) {
-        modal.container.remove();
-      }
-      (plugin as any).currentViewCardModal = null;
+      modal.close?.();
     }
   }
 
@@ -5014,135 +5073,6 @@
   // handleBatchTemplateChangeConfirm 已删除（基于弃用的字段模板系统）
 
 
-  // 🆕 v2.0: 处理批量更换牌组确认（完全引用式架构）
-  async function handleBatchDeckChangeConfirm(targetDeckId: string, operationType: 'move' | 'copy' = 'move') {
-    const selectedCardIds = Array.from(selectedCards);
-
-    try {
-      logger.debug('🔄 开始批量更换牌组 (引用式架构):', {
-        targetDeckId,
-        operationType,
-        cardCount: selectedCardIds.length
-      });
-
-      // 获取 ReferenceDeckService
-      const referenceDeckService = plugin.referenceDeckService;
-      if (!referenceDeckService) {
-        throw new Error('ReferenceDeckService 未初始化');
-      }
-
-      // 获取要更新的卡片
-      const cardsToUpdate = cards.filter(c => selectedCardIds.includes(c.uuid));
-      const cardUUIDs = cardsToUpdate.map(c => c.uuid);
-
-      let operationResult: { success: number; failed: number; errors: any[] };
-
-      if (operationType === 'copy') {
-        // ✅ 复制操作：创建新卡片副本并添加到目标牌组
-        logger.debug('📋 执行复制操作');
-        
-        let success = 0, failed = 0;
-        const errors: any[] = [];
-        const newCardUUIDs: string[] = [];
-        
-        for (const card of cardsToUpdate) {
-          try {
-            // 创建新卡片（不设置 deckId，使用引用式架构）
-            // 🆕 v2.2: referencedByDecks 由 addCardsToDeck() 统一维护
-            const newCard = {
-              ...card,
-              uuid: generateUUID(),
-              deckId: '', // 🆕 v2.0: 不使用 deckId
-              referencedByDecks: [], // 由 addCardsToDeck() 填充
-              created: new Date().toISOString(),
-              modified: new Date().toISOString()
-            };
-            await dataStorage.saveCard(newCard);
-            newCardUUIDs.push(newCard.uuid);
-            success++;
-          } catch (error) {
-            failed++;
-            errors.push({ card, error });
-          }
-        }
-        
-        // 将新卡片添加到目标牌组的 cardUUIDs
-        if (newCardUUIDs.length > 0) {
-          await referenceDeckService.addCardsToDeck(targetDeckId, newCardUUIDs);
-        }
-        
-        operationResult = { success, failed, errors };
-      } else {
-        // ✅ 移动操作：使用引用式架构（更新 deck.cardUUIDs 和 card.referencedByDecks）
-        logger.debug('➡️ 执行移动操作 (引用式架构)');
-        
-        let success = 0, failed = 0;
-        const errors: any[] = [];
-        
-        // 1. 找出每张卡片当前所属的牌组（通过 deck.cardUUIDs 查找）
-        const sourceDeckIds = new Set<string>();
-        for (const card of cardsToUpdate) {
-          for (const deck of allDecks) {
-            if (deck.cardUUIDs?.includes(card.uuid)) {
-              sourceDeckIds.add(deck.id);
-            }
-          }
-        }
-        
-        // 2. 从所有源牌组移除卡片引用
-        for (const sourceDeckId of sourceDeckIds) {
-          if (sourceDeckId !== targetDeckId) {
-            try {
-              await referenceDeckService.removeCardsFromDeck(sourceDeckId, cardUUIDs);
-              logger.debug(`✅ 已从牌组 ${sourceDeckId} 移除卡片引用`);
-            } catch (error) {
-              logger.error(`从牌组 ${sourceDeckId} 移除卡片引用失败:`, error);
-            }
-          }
-        }
-        
-        // 3. 添加卡片到目标牌组
-        const addResult = await referenceDeckService.addCardsToDeck(targetDeckId, cardUUIDs);
-        if (addResult.success) {
-          success = addResult.addedCount + addResult.skippedCount;
-          logger.debug(`✅ 已添加 ${addResult.addedCount} 张卡片到目标牌组，跳过 ${addResult.skippedCount} 张`);
-        } else {
-          failed = cardUUIDs.length;
-          errors.push({ error: addResult.error });
-        }
-        
-        operationResult = { success, failed, errors };
-      }
-
-      // 清除选择
-      handleClearSelection();
-
-      // 显示结果通知
-      const actionText = operationType === 'copy' ? '复制' : '移动';
-      if (operationResult.failed === 0) {
-        showNotification(
-          `✅ 成功将 ${operationResult.success} 张卡片${actionText}到新牌组`,
-          "success"
-        );
-      } else {
-        showNotification(
-          `⚠️ ${actionText}完成：成功 ${operationResult.success} 张，失败 ${operationResult.failed} 张`,
-          "warning"
-        );
-        logger.error(`[Batch${operationType === 'copy' ? 'Copy' : 'Move'}] 失败详情:`, operationResult.errors);
-      }
-
-      // 刷新数据
-      await loadCards();
-      // 刷新牌组数据
-      allDecks = await dataStorage.getDecks();
-
-    } catch (error) {
-      logger.error('批量更换牌组失败:', error);
-      showNotification("❌ 批量更换牌组失败", "error");
-    }
-  }
-
   // handleBatchDeckChangeCancel 已移除（改用 Obsidian Menu API）
 
   // 处理批量添加标签确认
@@ -5157,7 +5087,7 @@
       });
 
       // 根据数据源获取要更新的卡片
-      const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+      const sourceCards = currentSourceCards;
       const cardsToUpdate = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
 
       if (dataSource === 'incremental-reading') {
@@ -5203,7 +5133,7 @@
         // 按题库分组
         // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取题库ID
         for (const card of cardsToUpdate) {
-          const { primaryDeckId } = getCardDeckIds(card);
+          const { primaryDeckId } = getCardDeckIds(card, questionBankDecks);
           const bankId = primaryDeckId || card.deckId || '';
           if (!cardsByBank.has(bankId)) {
             cardsByBank.set(bankId, []);
@@ -5304,7 +5234,7 @@
       });
 
       // 🎯 根据数据源获取要更新的卡片
-      const sourceCards = dataSource === 'questionBank' ? questionBankCards : dataSource === 'incremental-reading' ? irContentCards : cards;
+      const sourceCards = currentSourceCards;
       const cardsToUpdate = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
 
       if (dataSource === 'incremental-reading') {
@@ -5350,7 +5280,7 @@
         // 按题库分组
         // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取题库ID
         for (const card of cardsToUpdate) {
-          const { primaryDeckId } = getCardDeckIds(card);
+          const { primaryDeckId } = getCardDeckIds(card, questionBankDecks);
           const bankId = primaryDeckId || card.deckId || '';
           if (!cardsByBank.has(bankId)) {
             cardsByBank.set(bankId, []);
@@ -5439,8 +5369,87 @@
 
   // handleBatchRemoveTagsCancel 已移除（改用 Obsidian Menu API）
 
+  function openDataManagementModal(tab: 'data' | 'quality' = 'data') {
+    dataManagementModalInstance?.close();
+
+    showDataManagementModal = true;
+    dataManagementModalInstance = new DataManagementModalObsidian(plugin.app, {
+      plugin,
+      cards: filteredCards,
+      allCards: cards,
+      initialTab: tab,
+      onClose: () => {
+        showDataManagementModal = false;
+        dataManagementModalInstance = null;
+      }
+    });
+    dataManagementModalInstance.open();
+  }
+
+  function closeColumnManager() {
+    showColumnManager = false;
+  }
+
+  async function positionColumnManagerPopover() {
+    if (!showColumnManager || isMobile) return;
+
+    await tick();
+
+    if (!columnManagerPanelEl) return;
+
+    const panelWidth = Math.min(columnManagerPanelEl.offsetWidth || 560, window.innerWidth - 24);
+    const panelHeight = Math.min(columnManagerPanelEl.offsetHeight || 520, window.innerHeight - 24);
+    const margin = 12;
+    const gap = 10;
+
+    if (!columnManagerAnchorEl) {
+      columnManagerPopoverLeft = Math.max(margin, Math.round((window.innerWidth - panelWidth) / 2));
+      columnManagerPopoverTop = Math.max(72, Math.round((window.innerHeight - panelHeight) / 2));
+      columnManagerPopoverPlacement = 'bottom';
+      return;
+    }
+
+    const rect = columnManagerAnchorEl.getBoundingClientRect();
+    const fitsBelow = rect.bottom + gap + panelHeight <= window.innerHeight - margin;
+
+    columnManagerPopoverPlacement = fitsBelow ? 'bottom' : 'top';
+    columnManagerPopoverTop = Math.round(
+      fitsBelow
+        ? rect.bottom + gap
+        : Math.max(margin, rect.top - panelHeight - gap)
+    );
+
+    const preferredLeft = rect.right - panelWidth;
+    columnManagerPopoverLeft = Math.round(
+      Math.min(
+        Math.max(margin, preferredLeft),
+        window.innerWidth - panelWidth - margin
+      )
+    );
+  }
+
+  function toggleColumnManager(anchor?: HTMLElement | null) {
+    if (showColumnManager) {
+      closeColumnManager();
+      return;
+    }
+
+    void openColumnManager(anchor);
+  }
+
+  async function openColumnManager(anchor?: HTMLElement | null) {
+    columnManagerAnchorEl = anchor ?? null;
+    showColumnManager = true;
+    await positionColumnManagerPopover();
+    columnManagerPanelEl?.focus();
+  }
+
   // 视图切换
   async function switchView(view: 'table' | 'grid' | 'kanban') {
+    if (currentView === view) {
+      return;
+    }
+
     // 检查高级功能权限
     if (view === 'grid' && !premiumGuard.canUseFeature(PREMIUM_FEATURES.GRID_VIEW)) {
       promptFeatureId = PREMIUM_FEATURES.GRID_VIEW;
@@ -5486,25 +5495,57 @@
     showActivationPrompt = false;
   }
 
-  // 🆕 更多菜单控制函数
-  function toggleMoreMenu() {
-    showMoreMenu = !showMoreMenu;
-  }
-  
-  function closeMoreMenu() {
-    showMoreMenu = false;
-  }
-
   const modalActive = $derived(
     showBuildDeckModal ||
         showBuildIRDeckModal ||
       showDataManagementModal ||
-      showColumnManager ||
       showActivationPrompt
   );
 
+  $effect(() => {
+    if (!showColumnManager) return;
+
+    void positionColumnManagerPopover();
+
+    const handleViewportChange = () => {
+      void positionColumnManagerPopover();
+    };
+
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (columnManagerPanelEl?.contains(target)) return;
+      if (columnManagerAnchorEl?.contains(target)) return;
+      closeColumnManager();
+    };
+
+    const handleEscapeKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeColumnManager();
+      }
+    };
+
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('scroll', handleViewportChange, true);
+    window.addEventListener('pointerdown', handleOutsidePointerDown, true);
+    window.addEventListener('keydown', handleEscapeKey);
+
+    return () => {
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, true);
+      window.removeEventListener('pointerdown', handleOutsidePointerDown, true);
+      window.removeEventListener('keydown', handleEscapeKey);
+    };
+  });
+
+  $effect(() => {
+    if (showColumnManager && currentView !== 'table') {
+      closeColumnManager();
+    }
+  });
+
   // 布局切换处理
-  async function handleLayoutModeChange(layout: "fixed" | "masonry") {
+  async function handleLayoutModeChange(layout: GridLayoutMode) {
     gridLayout = layout;
     await saveViewPreferences(); // 保存视图偏好
   }
@@ -5574,25 +5615,31 @@
           });
       });
       
-      submenu.addItem((subItem: any) => {
-        subItem
-          .setTitle('增量阅读')
-          .setIcon('book-open')
-          .setChecked(dataSource === 'incremental-reading')
-          .onClick(async () => {
-            await switchDataSource('incremental-reading');
-          });
-      });
+      if (premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.INCREMENTAL_READING)) {
+        submenu.addItem((subItem: any) => {
+          const irLocked = premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.INCREMENTAL_READING);
+          subItem
+            .setTitle(irLocked ? '增量阅读 (高级)' : '增量阅读')
+            .setIcon('book-open')
+            .setChecked(dataSource === 'incremental-reading')
+            .onClick(async () => {
+              await switchDataSource('incremental-reading');
+            });
+        });
+      }
       
-      submenu.addItem((subItem: any) => {
-        subItem
-          .setTitle('考试牌组')
-          .setIcon('edit-3')
-          .setChecked(dataSource === 'questionBank')
-          .onClick(async () => {
-            await switchDataSource('questionBank');
-          });
-      });
+      if (premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.QUESTION_BANK)) {
+        submenu.addItem((subItem: any) => {
+          const questionBankLocked = premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.QUESTION_BANK);
+          subItem
+            .setTitle(questionBankLocked ? '考试牌组 (高级)' : '考试牌组')
+            .setIcon('edit-3')
+            .setChecked(dataSource === 'questionBank')
+            .onClick(async () => {
+              await switchDataSource('questionBank');
+            });
+        });
+      }
     });
     
     // 🆕 IR类型筛选子菜单（仅增量阅读数据源时显示）
@@ -5664,7 +5711,7 @@
           .setTitle('字段管理')
           .setIcon('columns')
           .onClick(() => {
-            showColumnManager = true;
+            openColumnManager();
           });
       });
     }
@@ -5688,8 +5735,17 @@
           .setIcon('layout-grid')
           .setChecked(gridLayout === 'masonry')
           .onClick(async () => {
-            gridLayout = 'masonry';
-            await saveViewPreferences();
+            await handleLayoutModeChange('masonry');
+          });
+      });
+
+      menu.addItem((item) => {
+        item
+          .setTitle('时间线布局')
+          .setIcon('history')
+          .setChecked(gridLayout === 'timeline')
+          .onClick(async () => {
+            await handleLayoutModeChange('timeline');
           });
       });
       
@@ -5884,8 +5940,7 @@
         .setTitle('数据管理')
         .setIcon('database')
         .onClick(() => {
-          dataManagementInitialTab = 'data';
-          showDataManagementModal = true;
+          openDataManagementModal('data');
         });
     });
     
@@ -5894,8 +5949,7 @@
         .setTitle('质量扫描')
         .setIcon('search')
         .onClick(() => {
-          dataManagementInitialTab = 'quality';
-          showDataManagementModal = true;
+          openDataManagementModal('quality');
         });
     });
     
@@ -5960,16 +6014,81 @@
       showNotification('❌ 已禁用定位跳转模式\n恢复单击选中、双击编辑功能', 'info');
     }
   }
-  
-  // 🆕 切换网格卡片属性显示
-  function toggleGridAttributeMenu() {
-    showGridAttributeMenu = !showGridAttributeMenu;
+
+  function openGridAttributeMenu(anchor?: HTMLElement | null) {
+    const menu = new Menu();
+
+    menu.addItem((item) => {
+      item
+        .setTitle('不显示')
+        .setIcon('eye-off')
+        .setChecked(gridCardAttribute === 'none')
+        .onClick(() => {
+          void setGridCardAttribute('none');
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('UUID')
+        .setIcon('hash')
+        .setChecked(gridCardAttribute === 'uuid')
+        .onClick(() => {
+          void setGridCardAttribute('uuid');
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('来源')
+        .setIcon('file-text')
+        .setChecked(gridCardAttribute === 'source')
+        .onClick(() => {
+          void setGridCardAttribute('source');
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('优先级')
+        .setIcon('flag')
+        .setChecked(gridCardAttribute === 'priority')
+        .onClick(() => {
+          void setGridCardAttribute('priority');
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('记忆率')
+        .setIcon('activity')
+        .setChecked(gridCardAttribute === 'retention')
+        .onClick(() => {
+          void setGridCardAttribute('retention');
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('修改时间')
+        .setIcon('clock')
+        .setChecked(gridCardAttribute === 'modified')
+        .onClick(() => {
+          void setGridCardAttribute('modified');
+        });
+    });
+
+    if (anchor) {
+      const rect = anchor.getBoundingClientRect();
+      menu.showAtPosition({ x: rect.left, y: rect.bottom + 4 });
+      return;
+    }
+
+    menu.showAtPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 });
   }
   
-  // 🆕 设置网格卡片属性
   async function setGridCardAttribute(attr: GridCardAttributeType) {
     gridCardAttribute = attr;
-    showGridAttributeMenu = false;
     await saveViewPreferences(); // 保存视图偏好
   }
   
@@ -6003,9 +6122,12 @@
   async function handleKanbanCardUpdate(updatedCard: Card) {
     try {
       // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取牌组ID
-      const existingCard = cards.find(c => c.uuid === updatedCard.uuid);
-      const { primaryDeckId: existingDeckId } = existingCard ? getCardDeckIds(existingCard) : { primaryDeckId: undefined };
-      const { primaryDeckId: updatedDeckId } = getCardDeckIds(updatedCard);
+      const currentDecks = getDecksForDataSource(dataSource);
+      const existingCard = currentSourceCards.find(c => c.uuid === updatedCard.uuid);
+      const { primaryDeckId: existingDeckId } = existingCard
+        ? getCardDeckIds(existingCard, currentDecks)
+        : { primaryDeckId: undefined };
+      const { primaryDeckId: updatedDeckId } = getCardDeckIds(updatedCard, currentDecks);
       const oldDeckId = existingDeckId || existingCard?.deckId;
       const newDeckId = updatedDeckId || updatedCard.deckId;
       const isMove = existingCard && oldDeckId !== newDeckId;
@@ -6106,7 +6228,7 @@
 
 </script>
 
-<div class="weave-card-management-page">
+<div class="weave-card-management-page" class:is-table-view={currentView === 'table'}>
   
   <!-- 加载动画 - 全屏显示 -->
   {#if isLoading || isViewSwitching}
@@ -6115,7 +6237,7 @@
         message={isLoading 
           ? "正在加载卡片数据..." 
           : currentView === 'grid' 
-            ? '正在加载网格视图...' 
+            ? (gridLayout === 'timeline' ? '正在加载时间线视图...' : '正在加载网格视图...') 
             : currentView === 'kanban' 
               ? '正在加载看板视图...' 
               : '正在加载表格视图...'
@@ -6128,7 +6250,7 @@
       {currentView}
       onMenuClick={showMobileCardManagementMenu}
       onSearchClick={handleMobileSearchClick}
-      onViewChange={handleViewChange}
+      onViewChange={switchView}
     />
     
     <!-- 📱 移动端导航菜单已改用 Obsidian Menu API，不再使用 MobileCardManagementMenu 组件 -->
@@ -6157,7 +6279,6 @@
           availableAccuracies={searchAvailableAccuracies}
           availableAttemptThresholds={searchAvailableAttemptThresholds}
           availableErrorLevels={searchAvailableErrorLevels}
-          availableSourceCards={searchAvailableSourceCards}
           availableYamlKeys={searchAvailableYamlKeys}
           matchCount={searchQuery ? totalFilteredItems : -1}
           totalCount={searchSourceCards.length}
@@ -6167,543 +6288,6 @@
       </div>
     {/if}
     
-    <!-- 🔧 桌面端彩色圆点视图切换栏已移除 - 现在由 WeaveApp 中的 SidebarNavHeader 统一处理 -->
-    <!-- 侧边栏和主内容区都使用 SidebarNavHeader 提供的视图切换功能 -->
-    
-    <!-- 🆕 响应式页面工具栏（桌面端显示） -->
-    <header class="page-header hide-on-mobile" class:modal-active={modalActive} bind:this={toolbarContainerRef}>
-      <div class="header-actions" class:sidebar-mode={toolbarMode === 'sidebar'}>
-        {#if toolbarMode === 'sidebar'}
-          <!-- ============================================
-               侧边栏模式：紧凑布局
-               ============================================ -->
-          
-          <!-- 更多菜单按钮 -->
-          <div class="more-menu-container">
-            <div
-              bind:this={moreButtonElement}
-              class="more-menu-button"
-              role="button"
-              tabindex="0"
-              onclick={toggleMoreMenu}
-              onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleMoreMenu(); }}
-              aria-label="更多"
-              title={t('cardManagement.more')}
-            >
-              <EnhancedIcon name="ellipsis-h" size={16} />
-            </div>
-          </div>
-          
-          <!-- 文档筛选（侧边栏模式） -->
-          <div
-            class="toolbar-button"
-            class:active={documentFilterMode === 'current'}
-            class:disabled={!currentActiveDocument}
-            role="button"
-            tabindex="0"
-            onclick={(e) => { if (currentActiveDocument) toggleDocumentFilter(); }}
-            onkeydown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && currentActiveDocument) toggleDocumentFilter(); }}
-            aria-label="文档筛选"
-            title={
-              !currentActiveDocument 
-                ? '请先打开一个文档' 
-                : documentFilterMode === 'current'
-                  ? `仅显示: ${getFileName(currentActiveDocument)}`
-                  : '显示全部文档'
-            }
-          >
-            <EnhancedIcon name={documentFilterMode === 'current' ? 'file-text' : 'file'} size={16} />
-          </div>
-          
-          <!-- 卡片定位跳转按钮（侧边栏模式） -->
-          <div
-          class="toolbar-button"
-          class:active={enableCardLocationJump}
-          role="button"
-          tabindex="0"
-          onclick={toggleCardLocationJump}
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') toggleCardLocationJump(); }}
-          aria-label="卡片定位跳转"
-          title={enableCardLocationJump ? '点击关闭定位跳转（恢复卡片选中功能）' : '点击启用定位跳转（点击卡片将跳转到源文档）'}
-        >
-          <EnhancedIcon name="bullseye" size={16} />
-        </div>
-        
-        <!-- 🆕 侧边栏模式搜索框（使用 CardSearchInput 支持下拉建议） -->
-        <div class="sidebar-search-wrapper">
-          <CardSearchInput
-            bind:value={searchQuery}
-            placeholder="搜索卡片..."
-            onSearch={handleSearch}
-            onClear={handleClearSearch}
-            onSort={handleSort}
-            app={plugin.app}
-            dataSource={dataSource}
-            availableDecks={searchAvailableDecks}
-            availableTags={searchAvailableTags}
-            availablePriorities={searchAvailablePriorities}
-            availableQuestionTypes={searchAvailableQuestionTypes}
-            availableSources={searchAvailableSources}
-            availableStatuses={searchAvailableStatuses}
-            availableStates={searchAvailableIRStates}
-            availableAccuracies={searchAvailableAccuracies}
-            availableAttemptThresholds={searchAvailableAttemptThresholds}
-            availableErrorLevels={searchAvailableErrorLevels}
-            availableSourceCards={searchAvailableSourceCards}
-            availableYamlKeys={searchAvailableYamlKeys}
-            matchCount={searchQuery ? totalFilteredItems : -1}
-            totalCount={searchSourceCards.length}
-            sortField={sortConfig.field}
-            sortDirection={sortConfig.direction}
-          />
-        </div>
-
-      {:else}
-        <!-- ============================================
-             完整模式：展开所有功能
-             ============================================ -->
-        
-        <!-- 视图切换按钮组（桌面端已由 SidebarNavHeader 彩色圆点切换，隐藏） -->
-        <div class="btn-group view-toggle" style="display: none;">
-        <EnhancedButton
-          variant={currentView === "table" ? "primary" : "secondary"}
-          size="sm"
-          onclick={() => switchView("table")}
-          tooltip="表格视图"
-        >
-            <EnhancedIcon name="list" size={16} />
-        </EnhancedButton>
-        {#if showPremiumFeatures}
-        <EnhancedButton
-          variant={currentView === "grid" ? "primary" : "secondary"}
-          size="sm"
-          onclick={() => switchView("grid")}
-          tooltip={isPremium ? "网格视图" : "网格视图（需激活）"}
-        >
-            <EnhancedIcon name="th" size={16} />
-            {#if !isPremium}
-              <PremiumBadge variant="lock" size="small" />
-            {/if}
-        </EnhancedButton>
-        <EnhancedButton
-          variant={currentView === "kanban" ? "primary" : "secondary"}
-          size="sm"
-          onclick={() => switchView("kanban")}
-          tooltip={isPremium ? "看板视图" : "看板视图（需激活）"}
-        >
-          <EnhancedIcon name="columns" size={16} />
-          {#if !isPremium}
-            <PremiumBadge variant="lock" size="small" />
-          {/if}
-        </EnhancedButton>
-        {/if}
-      </div>
-
-      <!-- 🆕 数据源切换按钮组 -->
-      <div class="btn-group data-source-toggle">
-        <EnhancedButton
-          variant={dataSource === "memory" ? "primary" : "secondary"}
-          size="sm"
-          onclick={() => switchDataSource("memory")}
-          tooltip="记忆牌组"
-        >
-          <EnhancedIcon name="graduation-cap" size={16} />
-        </EnhancedButton>
-        <EnhancedButton
-          variant={dataSource === "questionBank" ? "primary" : "secondary"}
-          size="sm"
-          onclick={() => switchDataSource("questionBank")}
-          tooltip="考试牌组"
-        >
-          <EnhancedIcon name="clipboard-list" size={16} />
-        </EnhancedButton>
-        <EnhancedButton
-          variant={dataSource === "incremental-reading" ? "primary" : "secondary"}
-          size="sm"
-          onclick={() => switchDataSource("incremental-reading")}
-          tooltip="增量阅读"
-        >
-          <EnhancedIcon name="bookmark" size={16} />
-        </EnhancedButton>
-      </div>
-      
-      <!-- 动态布局模式切换器 -->
-      {#if currentView === "table"}
-        <!-- 表格视图模式切换器 -->
-        <div class="btn-group layout-mode-toggle">
-          {#if dataSource === 'memory'}
-            <!-- 记忆牌组数据源：显示基础信息和复习历史模式 -->
-            <EnhancedButton
-              variant={tableViewMode === "basic" ? "primary" : "secondary"}
-              size="sm"
-              onclick={() => handleTableViewModeChange("basic")}
-              tooltip="基础信息模式"
-            >
-              <EnhancedIcon name="table" size={16} />
-            </EnhancedButton>
-            <EnhancedButton
-              variant={tableViewMode === "review" ? "primary" : "secondary"}
-              size="sm"
-              onclick={() => handleTableViewModeChange("review")}
-              tooltip="复习历史模式"
-            >
-              <EnhancedIcon name="bar-chart-2" size={16} />
-            </EnhancedButton>
-          {:else if dataSource === 'incremental-reading'}
-            <!-- 增量阅读数据源：MD/PDF类型筛选（点击已选中项取消筛选） -->
-            <EnhancedButton
-              variant={irTypeFilter === "md" ? "primary" : "secondary"}
-              size="sm"
-              onclick={() => { irTypeFilter = irTypeFilter === 'md' ? 'all' : 'md'; }}
-              tooltip="MD文件"
-            >
-              <EnhancedIcon name="file-text" size={16} />
-            </EnhancedButton>
-            <EnhancedButton
-              variant={irTypeFilter === "pdf" ? "primary" : "secondary"}
-              size="sm"
-              onclick={() => { irTypeFilter = irTypeFilter === 'pdf' ? 'all' : 'pdf'; }}
-              tooltip="PDF书签"
-            >
-              <EnhancedIcon name="file" size={16} />
-            </EnhancedButton>
-          {/if}
-        </div>
-      {:else if currentView === "grid"}
-          <div class="btn-group layout-mode-toggle">
-          <EnhancedButton
-            variant={gridLayout === "fixed" ? "primary" : "secondary"}
-            size="sm"
-            onclick={() => handleLayoutModeChange("fixed")}
-            tooltip="固定高度"
-          >
-              <EnhancedIcon name="th" size={16} />
-          </EnhancedButton>
-          <EnhancedButton
-            variant={gridLayout === "masonry" ? "primary" : "secondary"}
-            size="sm"
-            onclick={() => handleLayoutModeChange("masonry")}
-            tooltip="瀑布流"
-          >
-              <EnhancedIcon name="th-large" size={16} />
-          </EnhancedButton>
-        </div>
-      {:else if currentView === "kanban"}
-          <div class="btn-group layout-mode-toggle">
-          <EnhancedButton
-            variant={kanbanLayoutMode === "compact" ? "primary" : "secondary"}
-            size="sm"
-            onclick={() => handleKanbanLayoutModeChange("compact")}
-            tooltip="紧凑布局"
-          >
-              <EnhancedIcon name="compress" size={16} />
-          </EnhancedButton>
-          <EnhancedButton
-            variant={kanbanLayoutMode === "comfortable" ? "primary" : "secondary"}
-            size="sm"
-            onclick={() => handleKanbanLayoutModeChange("comfortable")}
-            tooltip="舒适布局"
-          >
-            <EnhancedIcon name="square" size={16} />
-          </EnhancedButton>
-          <EnhancedButton
-            variant={kanbanLayoutMode === "spacious" ? "primary" : "secondary"}
-            size="sm"
-            onclick={() => handleKanbanLayoutModeChange("spacious")}
-            tooltip="宽敞布局"
-          >
-              <EnhancedIcon name="expand" size={16} />
-          </EnhancedButton>
-        </div>
-      {/if}
-
-      <!-- 工具操作按钮组 -->
-        <div class="btn-group utility-actions">
-        <!-- 🆕 v2.2 数据管理按钮（含质量扫描） -->
-        <EnhancedButton
-          variant="secondary"
-          size="sm"
-          onclick={() => showDataManagementModal = true}
-          tooltip="数据管理与质量扫描"
-        >
-            <EnhancedIcon name="database" size={16} />
-        </EnhancedButton>
-
-          {#if currentView === 'table'}
-          <EnhancedButton
-            variant="secondary"
-            size="sm"
-              onclick={() => {
-                logger.debug('[字段管理] 完整模式按钮点击，当前状态:', showColumnManager);
-                showColumnManager = !showColumnManager;
-                logger.debug('[字段管理] 新状态:', showColumnManager);
-              }}
-            tooltip="字段管理"
-          >
-              <EnhancedIcon name="columns" size={16} />
-          </EnhancedButton>
-          {:else if currentView === 'kanban'}
-            <!-- 看板视图：显示列设置和属性选择两个按钮 -->
-            <EnhancedButton
-              variant="secondary"
-              size="sm"
-              onclick={() => {
-                // 触发看板视图的列设置
-                const kanbanView = document.querySelector('.weave-kanban-view');
-                if (kanbanView) {
-                  const columnButton = kanbanView.querySelector('[title="列设置"]') as HTMLButtonElement;
-                  if (columnButton) {
-                    columnButton.click();
-                  }
-                }
-              }}
-              tooltip="看板列设置"
-            >
-              <EnhancedIcon name="sliders" size={16} />
-            </EnhancedButton>
-            <div bind:this={gridAttributeButtonElement}>
-              <EnhancedButton
-                variant="secondary"
-                size="sm"
-                onclick={toggleGridAttributeMenu}
-                tooltip={t('cardManagement.gridAttributeSelector.tooltip')}
-              >
-                <EnhancedIcon name="tag" size={16} />
-              </EnhancedButton>
-            </div>
-          {:else if currentView === 'grid'}
-            <!-- 网格视图：只显示属性选择按钮 -->
-            <div bind:this={gridAttributeButtonElement}>
-              <EnhancedButton
-                variant="secondary"
-                size="sm"
-                onclick={toggleGridAttributeMenu}
-                tooltip={t('cardManagement.gridAttributeSelector.tooltip')}
-              >
-                <EnhancedIcon name="tag" size={16} />
-              </EnhancedButton>
-            </div>
-          {/if}
-
-      <EnhancedButton
-            variant={enableCardLocationJump ? "primary" : "secondary"}
-            size="sm"
-            onclick={toggleCardLocationJump}
-            tooltip={enableCardLocationJump ? '关闭定位跳转（恢复卡片选中功能）' : '启用定位跳转（点击卡片将跳转到源文档）'}
-          >
-            <EnhancedIcon name="bullseye" size={16} />
-      </EnhancedButton>
-      
-    </div>
-        
-        <!-- 新增卡片（完整按钮） -->
-        <!-- 🆕 卡片搜索框（完整模式 - 移到右侧） -->
-        <div class="header-right-actions">
-          <div class="card-search-wrapper">
-            <CardSearchInput
-              bind:value={searchQuery}
-              placeholder="搜索卡片..."
-              onSearch={handleSearch}
-              onClear={handleClearSearch}
-              onSort={handleSort}
-              app={plugin.app}
-              dataSource={dataSource}
-              availableDecks={searchAvailableDecks}
-              availableTags={searchAvailableTags}
-              availablePriorities={searchAvailablePriorities}
-              availableQuestionTypes={searchAvailableQuestionTypes}
-              availableSources={searchAvailableSources}
-              availableStatuses={searchAvailableStatuses}
-              availableStates={searchAvailableIRStates}
-              availableAccuracies={searchAvailableAccuracies}
-              availableAttemptThresholds={searchAvailableAttemptThresholds}
-              availableErrorLevels={searchAvailableErrorLevels}
-              availableSourceCards={searchAvailableSourceCards}
-              availableYamlKeys={searchAvailableYamlKeys}
-              matchCount={searchQuery ? totalFilteredItems : -1}
-              totalCount={searchSourceCards.length}
-              sortField={sortConfig.field}
-              sortDirection={sortConfig.direction}
-            />
-          </div>
-
-          <EnhancedButton
-            variant="ghost"
-            size="md"
-            onclick={handleCreateCard}
-          >
-            <EnhancedIcon name="plus" size={16} />
-            新增卡片
-          </EnhancedButton>
-        </div>
-      {/if}
-    </div>
-    </header>
-
-    <!-- 🆕 网格属性选择菜单 -->
-    {#if showGridAttributeMenu}
-    <FloatingMenu
-      bind:show={showGridAttributeMenu}
-      anchor={gridAttributeButtonElement}
-      placement="bottom-start"
-      offset={4}
-      onClose={() => showGridAttributeMenu = false}
-    >
-      <div class="grid-attribute-menu">
-        <div class="menu-section-title">{t('cardManagement.gridAttributeSelector.title')}</div>
-        <button 
-          class="menu-item" 
-          class:active={gridCardAttribute === 'none'} 
-          onclick={() => setGridCardAttribute('none')}
-        >
-          <EnhancedIcon name={gridCardAttribute === 'none' ? 'check-circle' : 'circle'} size={14} />
-          <span>{t('cardManagement.gridAttributeSelector.none')}</span>
-        </button>
-        <button 
-          class="menu-item" 
-          class:active={gridCardAttribute === 'uuid'} 
-          onclick={() => setGridCardAttribute('uuid')}
-        >
-          <EnhancedIcon name={gridCardAttribute === 'uuid' ? 'check-circle' : 'circle'} size={14} />
-          <span>{t('cardManagement.gridAttributeSelector.uuid')}</span>
-        </button>
-        <button 
-          class="menu-item" 
-          class:active={gridCardAttribute === 'source'} 
-          onclick={() => setGridCardAttribute('source')}
-        >
-          <EnhancedIcon name={gridCardAttribute === 'source' ? 'check-circle' : 'circle'} size={14} />
-          <span>{t('cardManagement.gridAttributeSelector.source')}</span>
-        </button>
-        <button 
-          class="menu-item" 
-          class:active={gridCardAttribute === 'priority'} 
-          onclick={() => setGridCardAttribute('priority')}
-        >
-          <EnhancedIcon name={gridCardAttribute === 'priority' ? 'check-circle' : 'circle'} size={14} />
-          <span>{t('cardManagement.gridAttributeSelector.priority')}</span>
-        </button>
-        <button 
-          class="menu-item" 
-          class:active={gridCardAttribute === 'retention'} 
-          onclick={() => setGridCardAttribute('retention')}
-        >
-          <EnhancedIcon name={gridCardAttribute === 'retention' ? 'check-circle' : 'circle'} size={14} />
-          <span>{t('cardManagement.gridAttributeSelector.retention')}</span>
-        </button>
-        <button 
-          class="menu-item" 
-          class:active={gridCardAttribute === 'modified'} 
-          onclick={() => setGridCardAttribute('modified')}
-        >
-          <EnhancedIcon name={gridCardAttribute === 'modified' ? 'check-circle' : 'circle'} size={14} />
-          <span>{t('cardManagement.gridAttributeSelector.modified')}</span>
-        </button>
-      </div>
-    </FloatingMenu>
-    {/if}
-
-    <!-- 更多菜单（使用FloatingMenu） -->
-  <FloatingMenu
-    show={showMoreMenu}
-    anchor={moreButtonElement}
-    placement="bottom-end"
-    offset={4}
-    onClose={closeMoreMenu}
-  >
-    <div class="more-menu">
-      <!-- 网格布局选项 -->
-      {#if currentView === 'grid'}
-        <div class="menu-section">
-          <div class="menu-section-title">{t('cardManagement.layout.title')}</div>
-          <button class="menu-item" class:active={gridLayout === 'fixed'} onclick={() => { handleLayoutModeChange('fixed'); closeMoreMenu(); }}>
-            <EnhancedIcon name="th" size={14} />
-            <span>{t('cardManagement.layout.fixed')}</span>
-            {#if gridLayout === 'fixed'}
-              <EnhancedIcon name="check" size={12} />
-            {/if}
-          </button>
-          <button class="menu-item" class:active={gridLayout === 'masonry'} onclick={() => { handleLayoutModeChange('masonry'); closeMoreMenu(); }}>
-            <EnhancedIcon name="th-large" size={14} />
-            <span>{t('cardManagement.layout.waterfall')}</span>
-            {#if gridLayout === 'masonry'}
-              <EnhancedIcon name="check" size={12} />
-            {/if}
-          </button>
-        </div>
-        
-        <!-- 🆕 网格卡片属性显示选项 -->
-        <div class="menu-section">
-          <div class="menu-section-title">{t('cardManagement.gridAttributeSelector.title')}</div>
-          <button class="menu-item" class:active={gridCardAttribute === 'none'} onclick={() => { setGridCardAttribute('none'); closeMoreMenu(); }}>
-            <EnhancedIcon name={gridCardAttribute === 'none' ? 'check-circle' : 'circle'} size={14} />
-            <span>{t('cardManagement.gridAttributeSelector.none')}</span>
-          </button>
-          <button class="menu-item" class:active={gridCardAttribute === 'uuid'} onclick={() => { setGridCardAttribute('uuid'); closeMoreMenu(); }}>
-            <EnhancedIcon name={gridCardAttribute === 'uuid' ? 'check-circle' : 'circle'} size={14} />
-            <span>{t('cardManagement.gridAttributeSelector.uuid')}</span>
-          </button>
-          <button class="menu-item" class:active={gridCardAttribute === 'source'} onclick={() => { setGridCardAttribute('source'); closeMoreMenu(); }}>
-            <EnhancedIcon name={gridCardAttribute === 'source' ? 'check-circle' : 'circle'} size={14} />
-            <span>{t('cardManagement.gridAttributeSelector.source')}</span>
-          </button>
-          <button class="menu-item" class:active={gridCardAttribute === 'priority'} onclick={() => { setGridCardAttribute('priority'); closeMoreMenu(); }}>
-            <EnhancedIcon name={gridCardAttribute === 'priority' ? 'check-circle' : 'circle'} size={14} />
-            <span>{t('cardManagement.gridAttributeSelector.priority')}</span>
-          </button>
-          <button class="menu-item" class:active={gridCardAttribute === 'retention'} onclick={() => { setGridCardAttribute('retention'); closeMoreMenu(); }}>
-            <EnhancedIcon name={gridCardAttribute === 'retention' ? 'check-circle' : 'circle'} size={14} />
-            <span>{t('cardManagement.gridAttributeSelector.retention')}</span>
-          </button>
-          <button class="menu-item" class:active={gridCardAttribute === 'modified'} onclick={() => { setGridCardAttribute('modified'); closeMoreMenu(); }}>
-            <EnhancedIcon name={gridCardAttribute === 'modified' ? 'check-circle' : 'circle'} size={14} />
-            <span>{t('cardManagement.gridAttributeSelector.modified')}</span>
-          </button>
-        </div>
-      {/if}
-
-      <!-- 看板密度选项 -->
-      {#if currentView === 'kanban'}
-        <div class="menu-section">
-          <div class="menu-section-title">密度</div>
-          <button class="menu-item" class:active={kanbanLayoutMode === 'compact'} onclick={() => { handleKanbanLayoutModeChange('compact'); closeMoreMenu(); }}>
-            <EnhancedIcon name={kanbanLayoutMode === 'compact' ? 'check-circle' : 'circle'} size={14} />
-            <span>紧凑</span>
-          </button>
-          <button class="menu-item" class:active={kanbanLayoutMode === 'comfortable'} onclick={() => { handleKanbanLayoutModeChange('comfortable'); closeMoreMenu(); }}>
-            <EnhancedIcon name={kanbanLayoutMode === 'comfortable' ? 'check-circle' : 'circle'} size={14} />
-            <span>舒适</span>
-          </button>
-          <button class="menu-item" class:active={kanbanLayoutMode === 'spacious'} onclick={() => { handleKanbanLayoutModeChange('spacious'); closeMoreMenu(); }}>
-            <EnhancedIcon name={kanbanLayoutMode === 'spacious' ? 'check-circle' : 'circle'} size={14} />
-            <span>宽敞</span>
-          </button>
-        </div>
-      {/if}
-
-      <!-- 工具 -->
-      {#if currentView === 'grid' || currentView === 'kanban'}
-        <div class="menu-divider"></div>
-      {/if}
-      <div class="menu-section">
-        <div class="menu-section-title">工具</div>
-        <button class="menu-item" onclick={() => { showDataManagementModal = true; closeMoreMenu(); }}>
-          <EnhancedIcon name="database" size={14} />
-          <span>数据管理</span>
-        </button>
-        <button class="menu-item" onclick={() => { 
-          logger.debug('[字段管理] 按钮点击，当前状态:', showColumnManager);
-          showColumnManager = !showColumnManager; 
-          logger.debug('[字段管理] 新状态:', showColumnManager);
-          closeMoreMenu(); 
-        }}>
-          <EnhancedIcon name="columns" size={14} />
-          <span>字段管理</span>
-        </button>
-      </div>
-    </div>
-  </FloatingMenu>
-
   <!-- 批量操作工具栏 -->
   <WeaveBatchToolbar
     selectedCount={selectedCards.size}
@@ -6827,9 +6411,7 @@
             fieldTemplates={[]}
             availableTags={availableTags.map(t => t.name)}
             {plugin}
-            decks={dataSource === 'incremental-reading' 
-              ? Object.values(irDecks).map(d => ({ id: d.id, name: d.name })) 
-              : allDecks}
+            decks={currentDataSourceDecks}
             isVisible={isViewVisible}
           />
           
@@ -6852,6 +6434,23 @@
             {plugin}
             attributeType={gridCardAttribute}
             {isMobile}
+            onCardClick={handleGridCardClick}
+            onCardEdit={handleGridCardEdit}
+            onCardDelete={handleGridCardDelete}
+            onCardView={handleGridCardView}
+            onSourceJump={jumpToSourceDocument}
+            onCardLongPress={handleGridCardLongPress}
+            loading={isLoading}
+          />
+        {:else if gridLayout === "timeline"}
+          <GridTimelineView
+            cards={filteredAndSortedCards}
+            {selectedCards}
+            {plugin}
+            attributeType={gridCardAttribute}
+            {isMobile}
+            documentFilterMode={documentFilterMode}
+            activeDocumentName={currentActiveDocument ? getFileName(currentActiveDocument) : null}
             onCardClick={handleGridCardClick}
             onCardEdit={handleGridCardEdit}
             onCardDelete={handleGridCardDelete}
@@ -6883,7 +6482,7 @@
           cards={filteredAndSortedCards}
           {dataStorage}
           {plugin}
-          decks={allDecks}
+          decks={currentDataSourceDecks}
           {isMobile}
           onCardSelect={handleKanbanCardSelect}
           onCardUpdate={handleKanbanCardUpdate}
@@ -6900,13 +6499,6 @@
     </div>
   {/if}
 </div>
-
-  <!-- 编辑卡片模态窗 - 已改为全局方法，不再需要局部组件 -->
-
-  <!-- 新建卡片模态窗已移除，等待重新实现 -->
-
-  <!-- 批量更换模板功能已删除（基于弃用的字段模板系统） -->
-  <!-- 批量更换牌组、删除标签、添加标签已改用 Obsidian Menu API -->
 
   <!-- v2.0 组建牌组模态窗 -->
   {#if showBuildDeckModal}
@@ -6930,40 +6522,38 @@
       onCreated={handleBuildIRDeckCreated}
     />
   {/if}
-
-
-  <!-- 查看卡片模态窗 - 改用全局方法 plugin.openViewCardModal() -->
-  
-  
   <!-- 字段管理器（全局，支持侧边栏和完整模式） -->
   {#if showColumnManager}
-    <div 
-      class="column-manager-overlay"
-      role="dialog"
-      aria-label="字段管理器"
-      tabindex="-1"
-      onclick={(e) => {
-        // 点击遮罩层关闭
-        if (e.target === e.currentTarget) {
-          logger.debug('[字段管理] 点击遮罩层关闭');
-          showColumnManager = false;
-        }
-      }}
-      onkeydown={(e) => {
-      }}
+    <div
+      class="column-manager-popover-root"
+      class:is-mobile-sheet={isMobile || !columnManagerAnchorEl}
+      aria-hidden="true"
     >
-      <div class="column-manager-wrapper">
+      <div
+        bind:this={columnManagerPanelEl}
+        class="column-manager-wrapper"
+        class:is-mobile-sheet={isMobile || !columnManagerAnchorEl}
+        class:placement-top={columnManagerPopoverPlacement === 'top'}
+        role="dialog"
+        aria-label="字段管理器"
+        tabindex="-1"
+        style={isMobile || !columnManagerAnchorEl ? '' : `top: ${columnManagerPopoverTop}px; left: ${columnManagerPopoverLeft}px;`}
+      >
         <ColumnManager
           visibility={columnVisibility}
           columnOrder={columnOrder}
           onVisibilityChange={handleVisibilityChange}
           onOrderChange={handleOrderChange}
+          quickPresets={getColumnManagerPresets()}
+          activePresetId={resolveCurrentColumnManagerPreset()}
+          onApplyPreset={(presetId) => applyColumnManagerPreset(presetId as ColumnManagerPresetId)}
+          onResetToDefaults={resetColumnManagerConfig}
         />
         <button 
           class="column-manager-close"
           onclick={() => {
             logger.debug('[字段管理] 点击关闭按钮');
-            showColumnManager = false;
+            closeColumnManager();
           }}
           aria-label="关闭"
         >
@@ -6980,35 +6570,23 @@
     onClose={handleActivationPromptClose}
   />
   
-  <!-- v2.2 数据管理模态窗（含质量扫描标签页） -->
-  <DataManagementModal
-    bind:open={showDataManagementModal}
-    onClose={() => {
-      showDataManagementModal = false;
-    }}
-    {plugin}
-    cards={filteredCards}
-    allCards={cards}
-    initialTab={dataManagementInitialTab}
-  />
-
-  <!-- 编辑卡片模态窗 - 已改为全局方法，不再需要局部组件 -->
-
-<!-- 新建卡片模态窗已移除，等待重新实现 -->
-
-<!-- 批量更换模板功能已删除（基于弃用的字段模板系统） -->
-<!-- 批量更换牌组、删除标签、添加标签已改用 Obsidian Menu API -->
-
 <style>
   .weave-card-management-page {
+    --weave-card-management-page-bg: var(--background-primary);
+    --weave-card-management-surface-bg: var(--background-secondary);
     flex: 1;
     display: flex;
     flex-direction: column;
-    background: var(--background-primary);
+    background: var(--weave-card-management-page-bg);
     overflow: hidden;
     position: relative;
     height: 100%;
     min-height: 0;
+  }
+
+  .weave-card-management-page.is-table-view {
+    --weave-card-management-page-bg: var(--weave-surface-background, var(--weave-surface, var(--background-primary)));
+    --weave-card-management-surface-bg: var(--weave-elevated-background, var(--weave-surface-secondary, var(--background-secondary)));
   }
 
   /* 🔧 桌面端彩色圆点视图切换栏样式已移除 - 现在由 WeaveApp 中的 SidebarNavHeader 统一处理 */
@@ -7020,7 +6598,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: var(--background-primary);
+    background: var(--weave-card-management-page-bg);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -7036,349 +6614,6 @@
       opacity: 1;
     }
   }
-
-  /* ============================================
-     🆕 响应式工具栏样式
-     ============================================ */
-
-  .page-header {
-    position: sticky;
-    top: 0;
-    z-index: var(--weave-z-float);
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    padding: 8px 16px;
-    background: var(--background-primary);
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  .page-header.modal-active {
-    z-index: 0;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    flex-wrap: nowrap;
-    transition: gap 0.3s ease;
-  }
-
-  /* 侧边栏模式：紧凑间距 */
-  .header-actions.sidebar-mode {
-    gap: 8px;
-  }
-
-  .header-right-actions {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-left: auto;
-    flex-shrink: 0;
-  }
-
-  /* ============================================
-     按钮组样式
-     ============================================ */
-
-  .btn-group {
-    display: inline-flex;
-    border-radius: 8px;
-    overflow: visible;
-    background: transparent;
-    flex-shrink: 0;
-  }
-
-  .btn-group :global(.weave-btn) {
-    border-radius: 4px;
-    border: none;
-    background: transparent;
-    box-shadow: none;
-    position: relative;
-  }
-
-  .btn-group :global(.weave-btn:hover) {
-    background: var(--background-modifier-hover);
-  }
-
-  .btn-group :global(.weave-btn:last-child) {
-    border-right: none;
-  }
-
-  .btn-group :global(.weave-btn--primary) {
-    background: transparent;
-    color: var(--text-accent);
-    border-color: transparent;
-  }
-
-  .btn-group :global(.weave-btn--primary::after) {
-    content: '';
-    position: absolute;
-    bottom: 1px;
-    left: 50%;
-    transform: translateX(-50%);
-    width: 14px;
-    height: 3px;
-    border-radius: 2px;
-    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899);
-    opacity: 1;
-    transition: width 0.2s ease, opacity 0.2s ease;
-  }
-
-  .btn-group :global(.weave-btn--primary:hover) {
-    background: var(--background-modifier-hover);
-  }
-
-  /* ============================================
-     特定按钮组样式
-     ============================================ */
-
-  .view-toggle,
-  .data-source-toggle,
-  .layout-mode-toggle {
-    flex-shrink: 0;
-  }
-
-  .utility-actions {
-    flex-shrink: 0;
-    position: relative;
-  }
-  
-  
-
-  /* ============================================
-     工具栏按钮（统一样式）
-     ============================================ */
-
-  .toolbar-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: var(--text-normal);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    box-shadow: none;
-    outline: none;
-  }
-
-  .toolbar-button:hover:not(.disabled) {
-    background: var(--background-modifier-hover);
-  }
-
-  .toolbar-button:active:not(.disabled) {
-    transform: scale(0.95);
-  }
-
-  .toolbar-button.disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    pointer-events: none;
-  }
-
-  .toolbar-button.active {
-    background: var(--interactive-accent);
-    border-color: var(--interactive-accent);
-    color: var(--text-on-accent);
-  }
-
-  /* ============================================
-     更多菜单容器
-     ============================================ */
-
-  .more-menu-container {
-    display: inline-flex;
-    align-items: center;
-  }
-
-  .more-menu-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    background: none;
-    border: none;
-    border-radius: 6px;
-    color: var(--text-normal);
-    cursor: pointer;
-    transition: color 0.2s ease, background-color 0.2s ease;
-    box-shadow: none;
-    outline: none;
-    -webkit-appearance: none;
-    appearance: none;
-    padding: 0;
-    margin: 0;
-  }
-
-  .more-menu-button:hover {
-    background: var(--background-modifier-hover);
-  }
-
-  .more-menu-button:active {
-    transform: scale(0.95);
-  }
-
-  /* 更多菜单内容 */
-  .more-menu {
-    padding: 8px;
-    min-width: 180px;
-  }
-
-  .menu-section {
-    margin-bottom: 4px;
-  }
-
-  .menu-section:last-child {
-    margin-bottom: 0;
-  }
-
-  .menu-section-title {
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    padding: 6px 8px 4px;
-    user-select: none;
-  }
-
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 6px 8px;
-    background: transparent;
-    border: none;
-    border-radius: 3px;
-    color: var(--text-normal);
-    font-size: 13px;
-    text-align: left;
-    cursor: pointer;
-    transition: background-color 0.1s ease;
-  }
-
-  .menu-item:hover:not(.disabled) {
-    background: var(--background-modifier-hover);
-  }
-
-  .menu-item.active {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-  }
-
-  .menu-item span {
-    flex: 1;
-  }
-
-  .menu-divider {
-    height: 1px;
-    background: var(--background-modifier-border);
-    margin: 6px 0;
-  }
-
-  /* ============================================
-     搜索框样式（完整模式）
-     ============================================ */
-
-  /* 🆕 卡片搜索包装器 */
-  .card-search-wrapper {
-    flex: 0 1 auto;
-    min-width: 280px;
-    max-width: 400px;
-  }
-
-  /* 字段管理器遮罩层 */
-  .column-manager-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.3);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: var(--layer-modal);
-    animation: fadeIn 0.2s ease-out;
-  }
-
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-    }
-    to {
-      opacity: 1;
-    }
-  }
-
-  /* ============================================
-     动画效果
-     ============================================ */
-
-  .header-actions > :global(*) {
-    animation: fadeIn 0.2s ease;
-  }
-
-  @keyframes fadeInUp {
-    from { 
-      opacity: 0; 
-      transform: translateY(4px);
-    }
-    to { 
-      opacity: 1; 
-      transform: translateY(0);
-    }
-  }
-
-  /* ============================================
-     响应式适配
-     ============================================ */
-
-  /* 侧边栏模式优化 */
-  @media (max-width: 600px) {
-    .page-header {
-      padding: 6px 12px; /* 🎯 缩小上下间距 */
-    }
-    
-    .header-actions {
-      gap: 6px;
-    }
-    
-    .btn-group {
-      gap: 0;
-    }
-  }
-
-  /* 中等屏幕隐藏按钮文字 - 如果想始终显示文字，注释掉这个块 */
-  /* @media (max-width: 768px) {
-    .btn-text {
-      display: none;
-    }
-  } */
-
-  /* 极窄屏幕 */
-  @media (max-width: 400px) {
-    .page-header {
-      padding: 4px 8px; /* 🎯 缩小上下间距 */
-    }
-    
-    .header-actions {
-      gap: 4px;
-    }
-  }
-
-  /* ============================================
-     旧样式保留（向后兼容）
-     ============================================ */
 
   /* 内容区域全高度布局 */
   .content-container {
@@ -7396,63 +6631,109 @@
     min-height: 0;
   }
 
-  .view-toggle,
-  .data-source-toggle,
-  .layout-mode-toggle,
-  .utility-actions {
+  .column-manager-popover-root {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: var(--weave-z-overlay);
+    animation: fadeIn 0.18s ease;
+  }
+
+  .column-manager-popover-root.is-mobile-sheet {
     display: flex;
-    gap: 0.25rem;
-    padding: 0;
-    background: transparent;
-    border-radius: 0.5rem;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
   }
 
   /* 字段管理器包装器 */
   .column-manager-wrapper {
-    position: relative;
+    position: fixed;
+    pointer-events: auto;
     background: var(--background-primary);
-    border-radius: 12px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
-    width: 100%;
-    max-width: 600px;
-    max-height: 85vh;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 16px;
+    box-shadow:
+      0 24px 48px rgba(15, 23, 42, 0.18),
+      0 8px 20px rgba(15, 23, 42, 0.12);
+    width: min(640px, calc(100vw - 24px));
+    max-height: min(76vh, 720px);
     overflow: auto;
-    padding: 16px;
+    padding: 18px 18px 16px;
+  }
+
+  .column-manager-wrapper::before {
+    content: '';
+    position: absolute;
+    top: -6px;
+    right: 28px;
+    width: 12px;
+    height: 12px;
+    background: var(--background-primary);
+    border-top: 1px solid var(--background-modifier-border);
+    border-left: 1px solid var(--background-modifier-border);
+    transform: rotate(45deg);
+  }
+
+  .column-manager-wrapper.placement-top::before {
+    top: auto;
+    bottom: -6px;
+    border-top: none;
+    border-left: none;
+    border-right: 1px solid var(--background-modifier-border);
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  .column-manager-wrapper.is-mobile-sheet {
+    position: relative;
+    width: min(680px, 100%);
+    max-height: min(82vh, 720px);
+    border-radius: 18px;
+    padding: 18px 16px 16px;
+  }
+
+  .column-manager-wrapper.is-mobile-sheet::before {
+    display: none;
   }
   
   /* 📱 移动端字段管理器适配 */
   @media (max-width: 600px) {
+    .column-manager-popover-root {
+      align-items: flex-end;
+      padding: 12px;
+      padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
+    }
+
     .column-manager-wrapper {
-      max-width: calc(100vw - 2rem);
-      max-height: 80vh;
-      margin: 1rem;
-      border-radius: 12px;
+      width: calc(100vw - 24px);
+      max-height: 82vh;
     }
   }
 
   /* 字段管理器关闭按钮 */
   .column-manager-close {
     position: absolute;
-    top: 12px;
-    right: 12px;
-    width: 32px;
-    height: 32px;
+    top: 14px;
+    right: 14px;
+    width: 30px;
+    height: 30px;
     padding: 0;
-    background: var(--background-secondary);
-    border: 1px solid var(--background-modifier-border);
+    background: transparent;
+    border: none;
     border-radius: 6px;
-    color: var(--text-normal);
+    color: var(--text-muted);
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.2s ease;
+    transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
     z-index: calc(var(--weave-z-overlay) + 1);
   }
 
   .column-manager-close:hover {
     background: var(--background-modifier-hover);
-    border-color: var(--background-modifier-border-hover);
+    color: var(--text-normal);
   }
 
   .column-manager-close:active {
@@ -7619,17 +6900,13 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    background: var(--weave-card-management-page-bg);
   }
 
   /* ============================================
      🆕 移动端样式
      ============================================ */
   
-  /* 移动端隐藏桌面端头部 */
-  :global(body.is-mobile) .page-header.hide-on-mobile {
-    display: none !important;
-  }
-
   /* 移动端搜索容器 */
   .mobile-search-container {
     display: none;
@@ -7648,4 +6925,5 @@
   }
 
 </style>
+
 

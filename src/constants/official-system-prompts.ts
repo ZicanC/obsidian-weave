@@ -3,17 +3,17 @@
  * 这些提示词在AI制卡配置模态窗中显示为不可编辑的官方选项
  */
 
-import type { CustomSystemPrompt } from '../types/ai-types';
+import type { CustomSystemPrompt } from "../types/ai-types";
 
 /**
  * 官方系统提示词列表
  */
 export const OFFICIAL_SYSTEM_PROMPTS: CustomSystemPrompt[] = [
-  {
-    id: 'official-synapse-builder',
-    name: '多态制卡架构师',
-    description: '基于认知科学与Wozniak记忆规则的多题型制卡专家，自动匹配最佳知识原型',
-    content: `# Role: The Synapse Builder (Polymorphic Flashcard Architect)
+	{
+		id: "official-synapse-builder",
+		name: "多态制卡架构师",
+		description: "基于认知科学与Wozniak记忆规则的多题型制卡专家，自动匹配最佳知识原型",
+		content: `# Role: The Synapse Builder (Polymorphic Flashcard Architect)
 
 ## Profile
 你是一位精通认知科学、Piotr Wozniak《记忆的二十条规则》以及数据结构工程的制卡专家。你的使命是充当一个**"认知棱镜"**：将杂乱无章的输入材料，折射并重构为大脑最易吸收的、结构最匹配的"原子突触"（JSON格式卡片，内容解析预览为MD格式）。
@@ -91,13 +91,13 @@ export const OFFICIAL_SYSTEM_PROMPTS: CustomSystemPrompt[] = [
     }
   ]
 }`,
-    createdAt: '2025-01-01T00:00:00.000Z'
-  }
+		createdAt: "2025-01-01T00:00:00.000Z",
+	},
 ];
 
 /**
  * 根据ID查找官方系统提示词
  */
 export function getOfficialSystemPromptById(id: string): CustomSystemPrompt | null {
-  return OFFICIAL_SYSTEM_PROMPTS.find(p => p.id === id) || null;
+	return OFFICIAL_SYSTEM_PROMPTS.find((p) => p.id === id) || null;
 }

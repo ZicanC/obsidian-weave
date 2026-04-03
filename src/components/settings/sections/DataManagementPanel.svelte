@@ -37,6 +37,7 @@
   import { DirectoryUtils } from '../../../utils/directory-utils';
   import { DataManagementService } from '../../../services/data-management-service';
   import { BackupManagementService } from '../../../services/backup-management-service';
+  import { UnifiedDataMigrationService } from '../../../services/data-migration/UnifiedDataMigrationService';
   
   interface Props {
     plugin: any;
@@ -320,8 +321,6 @@
       dataManagementService = new DataManagementService(plugin.dataStorage, plugin);
 
       await loadInitialData();
-      
-      //  v1.0.0: 文件夹路径配置已移除
     } catch (error) {
       logger.error('初始化数据管理服务失败:', error);
       lastError = `${t('dataManagement.initFailed')}: ${error instanceof Error ? error.message : String(error)}`;
@@ -385,79 +384,12 @@
   }
 
   async function applyweaveParentFolder(newParentFolder: string): Promise<void> {
-    const vault = plugin.app.vault;
-    const adapter = vault.adapter;
-
-    const oldParentFolder = normalizeWeaveParentFolder(plugin.settings?.weaveParentFolder);
-    const normalizedNewParent = normalizeWeaveParentFolder(newParentFolder);
-
-    const oldRootFromSetting = getReadableWeaveRoot(oldParentFolder);
-    const newRoot = getReadableWeaveRoot(normalizedNewParent);
-    const legacyRoot = getReadableWeaveRoot(undefined);
-
-    const rewriteRoots = new Set<string>();
-    if (oldRootFromSetting) rewriteRoots.add(oldRootFromSetting);
-    if (legacyRoot) rewriteRoots.add(legacyRoot);
-
-    const migrateRoots = new Set<string>();
-    if (oldRootFromSetting !== newRoot && (await adapter.exists(oldRootFromSetting))) {
-      migrateRoots.add(oldRootFromSetting);
-    }
-    if (legacyRoot !== newRoot && legacyRoot !== oldRootFromSetting && (await adapter.exists(legacyRoot))) {
-      migrateRoots.add(legacyRoot);
-    }
-
-    if (normalizedNewParent) {
-      await DirectoryUtils.ensureDirRecursive(adapter, normalizedNewParent);
-    }
-
-    const newExistsInitially = await adapter.exists(newRoot);
-    if (!newExistsInitially && migrateRoots.size === 1) {
-      const onlyRoot = Array.from(migrateRoots)[0];
-      const oldObj = vault.getAbstractFileByPath(onlyRoot);
-      if (!oldObj || !(oldObj instanceof TFolder)) {
-        throw new Error(`旧路径不是文件夹: ${onlyRoot}`);
-      }
-      await vault.rename(oldObj, newRoot);
-      await tryRemoveEmptyFolder(onlyRoot);
-    } else {
-      if (!newExistsInitially) {
-        await vault.createFolder(newRoot);
-      }
-      for (const root of migrateRoots) {
-        if (root === newRoot) continue;
-        const oldObj = vault.getAbstractFileByPath(root);
-        if (!oldObj || !(oldObj instanceof TFolder)) {
-          throw new Error(`旧路径不是文件夹: ${root}`);
-        }
-        await mergeFolderContents(root, newRoot);
-        await tryRemoveEmptyFolder(root);
-      }
-    }
-
-    if (migrateRoots.size === 0 && !newExistsInitially && !(await adapter.exists(newRoot))) {
-      await vault.createFolder(newRoot);
-    }
-
-    await rewriteIRStorageFilePaths(rewriteRoots, newRoot);
-
-    plugin.settings.weaveParentFolder = normalizedNewParent;
-
-    const importFolder = plugin.settings?.incrementalReading?.importFolder;
-    if (typeof importFolder === 'string' && importFolder.trim()) {
-      for (const root of rewriteRoots) {
-        if (root === newRoot) continue;
-        if (importFolder === root) {
-          plugin.settings.incrementalReading.importFolder = newRoot;
-          break;
-        }
-        if (importFolder.startsWith(`${root}/`)) {
-          plugin.settings.incrementalReading.importFolder = `${newRoot}/${importFolder.slice(root.length + 1)}`;
-          break;
-        }
-      }
-    }
-
+    const migrationService = new UnifiedDataMigrationService(plugin.app, plugin.settings);
+    const plan = await migrationService.planDataMigration({
+      requestedParentFolder: newParentFolder,
+      reason: 'change-parent-folder',
+    });
+    await migrationService.executeDataMigration(plan);
     await plugin.saveSettings();
     await loadInitialData();
   }
@@ -1080,7 +1012,8 @@
                 </td>
                 <td class="action-cell">
                   <button
-                    class="menu-button"
+                    class="menu-button clickable-icon"
+                    type="button"
                     onclick={(e) => showBackupMenu(e, backup)}
                     title="更多操作"
                     aria-label="更多操作"
@@ -1109,7 +1042,7 @@
   <!-- 自动备份配置 -->
   <AutoBackupConfig {plugin} />
 
-  <!-- 🆕 父文件夹路径配置 -->
+  <!-- 父文件夹路径配置 -->
   <div class="weave-settings settings-group folder-path-config">
     <div class="group-title-with-toggle">
       <h4 class="group-title with-accent-bar accent-cyan">Weave 文件夹位置</h4>
@@ -1141,9 +1074,6 @@
       onClose={() => showweaveParentFolderModal = false}
     />
   {/if}
-
-  <!--  v1.0.0: 文件夹路径配置已移除，使用统一路径 weave/ -->
-  <!--  v2.0: 引用式牌组数据一致性检查已移至卡片管理界面的数据管理模态框 -->
 
   <!-- 操作工具栏 -->
   <DataOperationToolbar 
@@ -1428,15 +1358,11 @@
   }
 
   .menu-button {
-    width: 2rem;
-    height: 2rem;
+    width: var(--clickable-icon-size, 32px);
+    height: var(--clickable-icon-size, 32px);
     padding: 0;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
+    border-radius: var(--clickable-icon-radius, 4px);
     color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.2s ease;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1468,12 +1394,12 @@
     font-size: 0.875rem;
   }
 
-  /* 🆕 父文件夹路径配置样式 */
+  /* 父文件夹路径配置样式 */
   .folder-path-config {
     margin-top: 1rem;
   }
 
-  /* 🆕 数据文件夹可见性开关样式 */
+  /* 数据文件夹可见性开关样式 */
   .group-title-with-toggle {
     display: flex;
     align-items: center;
@@ -1489,86 +1415,13 @@
     align-items: flex-end;
   }
 
-  .data-folder-visibility-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-
-  .toggle-text {
-    font-size: 0.875rem;
-    color: var(--text-normal);
-    font-weight: 500;
-  }
-
-  /* Obsidian标准开关样式 */
-  .modern-switch {
-    position: relative;
-    display: inline-block;
-    width: 42px;
-    height: 24px;
-  }
-
-  .modern-switch input {
-    opacity: 0;
-    width: 0;
-    height: 0;
-  }
-
-  .modern-switch .switch-slider {
-    position: absolute;
-    cursor: pointer;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background-color: var(--background-modifier-border);
-    transition: 0.3s;
-    border-radius: 24px;
-  }
-
-  .modern-switch .switch-slider:before {
-    position: absolute;
-    content: "";
-    height: 18px;
-    width: 18px;
-    left: 3px;
-    bottom: 3px;
-    background-color: white;
-    transition: 0.3s;
-    border-radius: 50%;
-  }
-
-  .modern-switch input:checked + .switch-slider {
-    background-color: var(--interactive-accent);
-  }
-
-  .modern-switch input:checked + .switch-slider:before {
-    transform: translateX(18px);
-  }
-
-  .toggle-description {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    line-height: 1.4;
-    text-align: right;
-  }
-
-  .toggle-description code {
-    font-family: var(--font-monospace);
-    background: var(--background-modifier-border);
-    padding: 0.125rem 0.375rem;
-    border-radius: 3px;
-    font-size: 0.75rem;
-  }
-
   /* 响应式设计 */
   @media (max-width: 768px) {
     .data-management-panel {
       gap: 0.75rem;
     }
 
-    /* 🆕 移动端开关样式调整 */
+    /* 移动端开关样式调整 */
     .group-title-with-toggle {
       flex-direction: column;
       align-items: flex-start;
@@ -1579,15 +1432,6 @@
       width: 100%;
       align-items: flex-start;
     }
-
-    .data-folder-visibility-toggle {
-      width: 100%;
-    }
-
-    .toggle-description {
-      text-align: left;
-    }
   }
 
-  /*  v2.0: 引用式牌组数据一致性检查样式已移至 DataManagementModal */
 </style>

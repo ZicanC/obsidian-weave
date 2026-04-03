@@ -61,8 +61,8 @@
   });
 
   // 处理背景点击
-  function handleBackdropClick() {
-    if (closeOnBackdrop) {
+  function handleBackdropClick(event: MouseEvent) {
+    if (closeOnBackdrop && event.target === event.currentTarget) {
       onClose();
     }
   }
@@ -124,11 +124,6 @@
     return '';
   }
 
-  // 阻止事件冒泡
-  function stopPropagation(event: Event) {
-    event.stopPropagation();
-  }
-
   onMount(() => {
   });
 
@@ -150,7 +145,6 @@
       class:open={isAnimating}
       class:dragging={isDragging}
       style="{getHeightStyle()} {getTransformStyle()}"
-      onclick={stopPropagation}
       ontouchstart={handleDragStart}
       ontouchmove={handleDragMove}
       ontouchend={handleDragEnd}

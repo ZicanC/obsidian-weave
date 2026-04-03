@@ -11,8 +11,6 @@
  * @module services/__tests__/BottomSheetModal.property.test
  * @version 1.0.0
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 
 // ===== 常量定义 =====

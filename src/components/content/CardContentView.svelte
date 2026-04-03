@@ -2,11 +2,13 @@
   import ObsidianRenderer from '../atoms/ObsidianRenderer.svelte';
   import ChoiceQuestionPreview from '../preview/ChoiceQuestionPreview.svelte';
   import ChoiceOptionRenderer from '../atoms/ChoiceOptionRenderer.svelte';
+  import { resolveClozeModeForRender } from '../../utils/cloze-mode';
 
   import type { WeavePlugin } from '../../main';
   import type { Card } from '../../data/types';
 
   import { parseCardContent } from '../../parsing/card-content-parser';
+  import { stripHintBlock } from '../../utils/hint-block-utils';
 
   interface Props {
     content: string;
@@ -48,7 +50,9 @@
     onMultipleToggle
   }: Props = $props();
 
-  const parsed = $derived(parseCardContent(content));
+  const sanitizedContent = $derived(stripHintBlock(content || ''));
+  const parsed = $derived(parseCardContent(sanitizedContent));
+  const clozeMode = $derived.by(() => resolveClozeModeForRender(card?.content, content));
 </script>
 
 {#if parsed.kind === 'choice'}
@@ -59,6 +63,7 @@
       sourcePath={sourcePath}
       enableClozeProcessing={true}
       showClozeAnswers={showAnswer}
+      clozeMode={clozeMode}
     />
   {:else if section === 'explanation'}
     {#if parsed.choice.explanation}
@@ -68,6 +73,7 @@
         sourcePath={sourcePath}
         enableClozeProcessing={true}
         showClozeAnswers={showAnswer}
+        clozeMode={clozeMode}
       />
     {/if}
   {:else if section === 'options'}
@@ -133,5 +139,6 @@
     sourcePath={sourcePath}
     enableClozeProcessing={true}
     showClozeAnswers={showAnswer}
+    clozeMode={clozeMode}
   />
 {/if}

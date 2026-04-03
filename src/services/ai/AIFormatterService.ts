@@ -1,228 +1,74 @@
-import { logger } from '../../utils/logger';
 /**
  * AI驱动的卡片格式化服务
  * 使用真实AI模型进行智能格式规范化
  */
 
-import type { AIProvider, CustomFormatAction, FormatPreviewResult } from '../../types/ai-types';
-import type { Card } from '../../data/types';
-import type { ParseTemplate } from '../../types/newCardParsingTypes';
-import type { Deck } from '../../data/types';
-import type { WeavePlugin } from '../../main';
-import { AIServiceFactory } from './AIServiceFactory';
-import { PromptVariableResolver } from './PromptVariableResolver';
+import type { Card, Deck } from "../../data/types";
+import type { WeavePlugin } from "../../main";
+import type { AIProvider, CustomFormatAction, FormatPreviewResult } from "../../types/ai-types";
+import type { ParseTemplate } from "../../types/newCardParsingTypes";
+import type { AIConfig } from "../../types/plugin-settings";
+import { logger } from "../../utils/logger";
+import { AIServiceFactory } from "./AIServiceFactory";
+import { PromptVariableResolver } from "./PromptVariableResolver";
 
 export interface FormatRequest {
-  content: string;
-  formatType: 'choice';
+	content: string;
+	formatType: "choice";
 }
 
 export interface FormatResponse {
-  success: boolean;
-  formattedContent?: string;
-  error?: string;
-  provider?: AIProvider;
-  model?: string;
+	success: boolean;
+	formattedContent?: string;
+	error?: string;
+	provider?: AIProvider;
+	model?: string;
 }
 
-export class AIFormatterService {
-  private static variableResolver = new PromptVariableResolver();
-  
-  /**
-   * 使用自定义功能格式化卡片
-   * @param action 自定义格式化功能配置
-   * @param card 要格式化的卡片
-   * @param context 上下文信息（模板、牌组）
-   * @param plugin 插件实例
-   * @returns 格式化预览结果
-   */
-  static async formatWithCustomAction(
-    action: CustomFormatAction,
-    card: Card,
-    context: { template?: ParseTemplate; deck?: Deck },
-    plugin: WeavePlugin
-  ): Promise<FormatPreviewResult> {
-    try {
-      const aiConfig = plugin.settings.aiConfig;
-      
-      if (!aiConfig?.formatting?.enabled) {
-        return {
-          success: false,
-          originalContent: card.content || '',
-          error: 'AI格式化功能未启用'
-        };
-      }
-      
-      //  统一的provider选择逻辑：action.provider > defaultProvider
-      // 注意：由AIActionExecutor统一处理，这里action.provider已经被设置
-      const provider = action.provider || aiConfig.defaultProvider;
-      
-      if (!provider) {
-        return {
-          success: false,
-          originalContent: card.content || '',
-          error: '未设置AI提供商'
-        };
-      }
-      
-      // 检查API密钥
-      const apiKeys = aiConfig.apiKeys as Partial<Record<AIProvider, any>>;
-      const providerConfig = apiKeys[provider];
-      if (!providerConfig || !providerConfig.apiKey) {
-        return {
-          success: false,
-          originalContent: card.content || '',
-          error: `AI提供商"${provider}"未配置API密钥，请前往 [插件设置 > AI服务] 进行配置`
-        };
-      }
-      
-      // 解析模板变量
-      const systemPrompt = this.variableResolver.resolve(action.systemPrompt, card, context);
-      const userPrompt = this.variableResolver.resolve(action.userPromptTemplate, card, context);
-      
-      // 获取AI服务
-      const aiService = AIServiceFactory.createService(provider, plugin, action.model);
-      
-      // 调用AI服务
-      const response = await aiService.chat({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: action.temperature ?? 0.1,
-        maxTokens: action.maxTokens ?? 2000
-      });
-      
-      if (!response.success || !response.content) {
-        return {
-          success: false,
-          originalContent: card.content || '',
-          error: response.error || 'AI格式化失败'
-        };
-      }
-      
-      // 清理AI响应
-      const formattedContent = this.cleanAIResponse(response.content);
-      
-      return {
-        success: true,
-        originalContent: card.content || '',
-        formattedContent,
-        provider,
-        model: response.model
-      };
-      
-    } catch (error) {
-      logger.error('[AIFormatterService] Error:', error);
-      return {
-        success: false,
-        originalContent: card.content || '',
-        error: error instanceof Error ? error.message : '未知错误'
-      };
-    }
-  }
-  
-  /**
-   * 格式化选择题内容
-   */
-  static async formatChoiceQuestion(
-    request: FormatRequest,
-    plugin: WeavePlugin
-  ): Promise<FormatResponse> {
-    try {
-      const aiConfig = plugin.settings.aiConfig;
-      
-      // 检查AI格式化是否启用
-      if (!aiConfig?.formatting?.enabled) {
-        return {
-          success: false,
-          error: 'AI格式化功能未启用，请在设置中开启'
-        };
-      }
-      
-      // 确定使用的提供商：优先使用formattingProvider，否则使用defaultProvider
-      const provider = ((aiConfig as any).formattingProvider || aiConfig.defaultProvider) as AIProvider | undefined;
-      
-      if (!provider) {
-        return {
-          success: false,
-          error: '未设置AI提供商，请在设置中配置'
-        };
-      }
-      
-      const apiKeys = aiConfig.apiKeys as Partial<Record<AIProvider, any>>;
-      const providerConfig = apiKeys[provider];
-      
-      if (!providerConfig || !providerConfig.apiKey) {
-        return {
-          success: false,
-          error: `格式化AI提供商"${provider}"未配置API密钥，请在设置中配置`
-        };
-      }
-      
-      // 直接使用提供商的模型配置
-      const model = providerConfig.model;
-      
-      // 获取AI服务
-      const aiService = AIServiceFactory.createService(provider, plugin);
-      
-      // 构建提示词
-      const systemPrompt = this.buildSystemPrompt();
-      const userPrompt = this.buildUserPrompt(request.content);
-      
-      // 调用AI服务
-      const response = await aiService.chat({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt }
-        ],
-        temperature: 0.1,
-        maxTokens: 2000
-      });
-      
-      if (!response.success || !response.content) {
-        logger.error('[AIFormatterService] AI调用失败:', response.error);
-        return {
-          success: false,
-          error: response.error || 'AI格式化失败'
-        };
-      }
-      
-      // 清理AI响应内容（移除可能的代码块包裹）
-      const formattedContent = this.cleanAIResponse(response.content);
-      
-      // 基础验证：检查是否符合选择题格式
-      const validation = this.validateChoiceFormat(formattedContent);
-      
-      if (!validation.isValid) {
-        logger.error('[AIFormatterService] 格式验证失败:', validation.reason);
-        return {
-          success: false,
-          error: `格式化结果不符合规范：${validation.reason}`
-        };
-      }
-      
-      return {
-        success: true,
-        formattedContent,
-        provider,
-        model: response.model
-      };
-      
-    } catch (error) {
-      logger.error('[AIFormatterService] Error:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '未知错误'
-      };
-    }
-  }
-  
-  /**
-   * 构建系统提示词
-   */
-  private static buildSystemPrompt(): string {
-    return `你是一个选择题格式规范化助手。
+interface AIProviderConfig {
+	apiKey: string;
+	model?: string;
+	baseUrl?: string;
+	verified?: boolean;
+	lastVerified?: string;
+}
+
+type AIConfigWithFormattingProvider = AIConfig & {
+	apiKeys?: Partial<Record<AIProvider, AIProviderConfig>>;
+	formattingProvider?: string;
+};
+
+type FormatContext = { template?: ParseTemplate; deck?: Deck };
+
+const AI_PROVIDERS: AIProvider[] = [
+	"openai",
+	"gemini",
+	"anthropic",
+	"deepseek",
+	"zhipu",
+	"siliconflow",
+	"xai",
+];
+
+const variableResolver = new PromptVariableResolver();
+
+function isAIProvider(value?: string): value is AIProvider {
+	return value !== undefined && AI_PROVIDERS.includes(value as AIProvider);
+}
+
+function getAIConfig(plugin: WeavePlugin): AIConfigWithFormattingProvider | undefined {
+	return plugin.settings.aiConfig as AIConfigWithFormattingProvider | undefined;
+}
+
+function getProviderConfig(
+	aiConfig: AIConfigWithFormattingProvider,
+	provider: AIProvider
+): AIProviderConfig | undefined {
+	return aiConfig.apiKeys?.[provider];
+}
+
+function buildSystemPrompt(): string {
+	return `你是一个选择题格式规范化助手。
 
 ## 核心原则
 1. **不修改内容** - 保持所有文本完全一致
@@ -275,68 +121,210 @@ B. 选项B
 ---div---
 
 解析内容`;
-  }
-  
-  /**
-   * 构建用户提示词
-   */
-  private static buildUserPrompt(content: string): string {
-    return `请规范化以下选择题：
-
-${content}`;
-  }
-  
-  /**
-   * 清理AI响应内容
-   * 移除可能存在的markdown代码块包裹和多余空白
-   */
-  private static cleanAIResponse(content: string): string {
-    if (!content) return '';
-    
-    let cleaned = content.trim();
-    
-    // 检测并移除外层markdown代码块包裹
-    // 匹配模式：```可选语言标识\n内容\n```
-    const codeBlockRegex = /^```(?:markdown|md|text|)?\s*\n?([\s\S]*?)\n?```$/;
-    const match = cleaned.match(codeBlockRegex);
-    
-    if (match) {
-      // 提取代码块内的内容
-      cleaned = match[1].trim();
-    }
-    
-    // 清理多余的空白行（保留必要的分隔）
-    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
-    
-    return cleaned;
-  }
-  
-  /**
-   * 验证是否符合选择题格式
-   */
-  private static validateChoiceFormat(content: string): {
-    isValid: boolean;
-    reason?: string;
-  } {
-    // 1. 检查是否有问题
-    if (!content.includes('Q:') && !content.includes('q:')) {
-      return { isValid: false, reason: '缺少问题部分（Q:）' };
-    }
-    
-    // 2. 检查是否有选项
-    const optionsMatch = content.match(/^[A-Z][\)\.．、）]\s*/gm);
-    if (!optionsMatch || optionsMatch.length < 2) {
-      return { isValid: false, reason: '选项数量不足（至少需要2个）' };
-    }
-    
-    // 3. 检查是否有正确答案标记
-    const hasLegacyCorrectMarker = content.includes('{✓}') || content.toLowerCase().includes('{correct}') || content.includes('{*}');
-    const hasTrailingAnswerParens = /^(?:Q:|q:|问题：)\s*.*[（(]\s*[A-Z](?:\s*[,，、]\s*[A-Z])*\s*[）)]\s*$/m.test(content);
-    if (!hasLegacyCorrectMarker && !hasTrailingAnswerParens) {
-      return { isValid: false, reason: '缺少正确答案信息（题干末尾（A,C）或旧格式{✓}）' };
-    }
-    
-    return { isValid: true };
-  }
 }
 
+function buildUserPrompt(content: string): string {
+	return `请规范化以下选择题：
+
+${content}`;
+}
+
+function cleanAIResponse(content: string): string {
+	if (!content) {
+		return "";
+	}
+
+	let cleaned = content.trim();
+	const codeBlockRegex = /^```(?:markdown|md|text|)?\s*\n?([\s\S]*?)\n?```$/;
+	const match = cleaned.match(codeBlockRegex);
+
+	if (match) {
+		cleaned = match[1].trim();
+	}
+
+	return cleaned.replace(/\n{3,}/g, "\n\n");
+}
+
+function validateChoiceFormat(content: string): {
+	isValid: boolean;
+	reason?: string;
+} {
+	if (!content.includes("Q:") && !content.includes("q:")) {
+		return { isValid: false, reason: "缺少问题部分（Q:）" };
+	}
+
+	const optionsMatch = content.match(/^[A-Z][\)\.．、）]\s*/gm);
+	if (!optionsMatch || optionsMatch.length < 2) {
+		return { isValid: false, reason: "选项数量不足（至少需要2个）" };
+	}
+
+	const hasLegacyCorrectMarker =
+		content.includes("{✓}") ||
+		content.toLowerCase().includes("{correct}") ||
+		content.includes("{*}");
+	const hasTrailingAnswerParens =
+		/^(?:Q:|q:|问题：)\s*.*[（(]\s*[A-Z](?:\s*[,，、]\s*[A-Z])*\s*[）)]\s*$/m.test(content);
+
+	if (!hasLegacyCorrectMarker && !hasTrailingAnswerParens) {
+		return { isValid: false, reason: "缺少正确答案信息（题干末尾（A,C）或旧格式{✓}）" };
+	}
+
+	return { isValid: true };
+}
+
+async function formatWithCustomAction(
+	action: CustomFormatAction,
+	card: Card,
+	context: FormatContext,
+	plugin: WeavePlugin
+): Promise<FormatPreviewResult> {
+	try {
+		const aiConfig = getAIConfig(plugin);
+
+		if (!aiConfig?.formatting?.enabled) {
+			return {
+				success: false,
+				originalContent: card.content || "",
+				error: "AI格式化功能未启用",
+			};
+		}
+
+		const provider =
+			action.provider ||
+			(isAIProvider(aiConfig.defaultProvider) ? aiConfig.defaultProvider : undefined);
+
+		if (!provider) {
+			return {
+				success: false,
+				originalContent: card.content || "",
+				error: "未设置AI提供商",
+			};
+		}
+
+		const providerConfig = getProviderConfig(aiConfig, provider);
+		if (!providerConfig?.apiKey) {
+			return {
+				success: false,
+				originalContent: card.content || "",
+				error: `AI提供商"${provider}"未配置API密钥，请前往 [插件设置 > AI服务] 进行配置`,
+			};
+		}
+
+		const systemPrompt = variableResolver.resolve(action.systemPrompt, card, context);
+		const userPrompt = variableResolver.resolve(action.userPromptTemplate, card, context);
+		const aiService = AIServiceFactory.createService(provider, plugin, action.model);
+		const response = await aiService.chat({
+			messages: [
+				{ role: "system", content: systemPrompt },
+				{ role: "user", content: userPrompt },
+			],
+			temperature: action.temperature ?? 0.1,
+			maxTokens: action.maxTokens ?? 2000,
+		});
+
+		if (!response.success || !response.content) {
+			return {
+				success: false,
+				originalContent: card.content || "",
+				error: response.error || "AI格式化失败",
+			};
+		}
+
+		return {
+			success: true,
+			originalContent: card.content || "",
+			formattedContent: cleanAIResponse(response.content),
+			provider,
+			model: response.model,
+		};
+	} catch (error) {
+		logger.error("[AIFormatterService] Error:", error);
+		return {
+			success: false,
+			originalContent: card.content || "",
+			error: error instanceof Error ? error.message : "未知错误",
+		};
+	}
+}
+
+async function formatChoiceQuestion(
+	request: FormatRequest,
+	plugin: WeavePlugin
+): Promise<FormatResponse> {
+	try {
+		const aiConfig = getAIConfig(plugin);
+
+		if (!aiConfig?.formatting?.enabled) {
+			return {
+				success: false,
+				error: "AI格式化功能未启用，请在设置中开启",
+			};
+		}
+
+		const provider =
+			(isAIProvider(aiConfig.formattingProvider) ? aiConfig.formattingProvider : undefined) ||
+			(isAIProvider(aiConfig.defaultProvider) ? aiConfig.defaultProvider : undefined);
+
+		if (!provider) {
+			return {
+				success: false,
+				error: "未设置AI提供商，请在设置中配置",
+			};
+		}
+
+		const providerConfig = getProviderConfig(aiConfig, provider);
+		if (!providerConfig?.apiKey) {
+			return {
+				success: false,
+				error: `格式化AI提供商"${provider}"未配置API密钥，请在设置中配置`,
+			};
+		}
+
+		const aiService = AIServiceFactory.createService(provider, plugin, providerConfig.model);
+		const response = await aiService.chat({
+			messages: [
+				{ role: "system", content: buildSystemPrompt() },
+				{ role: "user", content: buildUserPrompt(request.content) },
+			],
+			temperature: 0.1,
+			maxTokens: 2000,
+		});
+
+		if (!response.success || !response.content) {
+			logger.error("[AIFormatterService] AI调用失败:", response.error);
+			return {
+				success: false,
+				error: response.error || "AI格式化失败",
+			};
+		}
+
+		const formattedContent = cleanAIResponse(response.content);
+		const validation = validateChoiceFormat(formattedContent);
+
+		if (!validation.isValid) {
+			logger.error("[AIFormatterService] 格式验证失败:", validation.reason);
+			return {
+				success: false,
+				error: `格式化结果不符合规范：${validation.reason}`,
+			};
+		}
+
+		return {
+			success: true,
+			formattedContent,
+			provider,
+			model: response.model,
+		};
+	} catch (error) {
+		logger.error("[AIFormatterService] Error:", error);
+		return {
+			success: false,
+			error: error instanceof Error ? error.message : "未知错误",
+		};
+	}
+}
+
+export const AIFormatterService = {
+	formatWithCustomAction,
+	formatChoiceQuestion,
+};

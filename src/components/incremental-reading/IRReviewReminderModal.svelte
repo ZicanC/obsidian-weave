@@ -5,11 +5,12 @@
     initialDate: string;
     initialTime: string;
     position?: { x: number; y: number };
+    useObsidianModal?: boolean;
     onCancel: () => void;
     onConfirm: (date: string, time: string) => void;
   }
 
-  let { initialDate, initialTime, position, onCancel, onConfirm }: Props = $props();
+  let { initialDate, initialTime, position, useObsidianModal = false, onCancel, onConfirm }: Props = $props();
 
   let reviewDate = $state(initialDate);
   let reviewTime = $state(initialTime);
@@ -23,6 +24,7 @@
   }
 
   async function updatePosition() {
+    if (useObsidianModal) return;
     await tick();
     if (!modalEl) return;
 
@@ -39,6 +41,10 @@
   }
 
   onMount(() => {
+    if (useObsidianModal) {
+      return;
+    }
+
     void updatePosition();
 
     const onKeydown = (_e: KeyboardEvent) => {
@@ -65,10 +71,11 @@
 
 <div
   class="reminder-popover"
+  class:reminder-popover--obsidian={useObsidianModal}
   role="dialog"
-  aria-modal="false"
+  aria-modal={useObsidianModal}
   bind:this={modalEl}
-  style={`left: ${left}px; top: ${top}px;`}
+  style={!useObsidianModal ? `left: ${left}px; top: ${top}px;` : undefined}
 >
   <div class="modal-header">
     <h3>设置复习提醒</h3>
@@ -107,6 +114,17 @@
     min-width: 350px;
     max-height: 80vh;
     overflow: hidden;
+  }
+
+  .reminder-popover--obsidian {
+    position: static;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    max-height: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
   }
 
   .modal-header {

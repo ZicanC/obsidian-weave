@@ -10,8 +10,8 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
 
-  import { onMount, onDestroy } from 'svelte';
-  import { computePosition, flip, shift, offset, type Placement } from '@floating-ui/dom';
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { autoUpdate, computePosition, flip, shift, offset, type Placement } from '@floating-ui/dom';
 
   interface Props {
     /** 是否显示菜单 */
@@ -45,6 +45,8 @@
 
   // 计算后的位置
   let position = $state({ top: 0, left: 0 });
+  let cleanupAutoUpdate: (() => void) | null = null;
+  let positionRunId = 0;
 
   /**
    * 更新菜单位置
@@ -75,6 +77,37 @@
     }
   }
 
+  function mountToBody() {
+    if (!menuElement || typeof document === 'undefined') return;
+    if (menuElement.parentNode === document.body) return;
+    document.body.appendChild(menuElement);
+  }
+
+  function stopAutoPositioning() {
+    if (!cleanupAutoUpdate) return;
+    cleanupAutoUpdate();
+    cleanupAutoUpdate = null;
+  }
+
+  async function setupPositioning(runId: number) {
+    await tick();
+
+    if (runId !== positionRunId || !show || !anchor || !menuElement) return;
+
+    mountToBody();
+    await updatePosition();
+
+    requestAnimationFrame(() => {
+      if (runId !== positionRunId) return;
+      void updatePosition();
+    });
+
+    stopAutoPositioning();
+    cleanupAutoUpdate = autoUpdate(anchor, menuElement, () => {
+      void updatePosition();
+    });
+  }
+
   /**
    * 处理点击外部关闭
    * 排除 Obsidian 原生 Menu（ObsidianDropdown 使用），其 DOM 渲染在 body 下而非 FloatingMenu 内部
@@ -101,27 +134,25 @@
 
   // 监听 show 和 anchor 变化，更新位置
   $effect(() => {
-    if (show && anchor) {
-      //  修复：确保DOM完全渲染后再计算位置
-      // 1. 使用 requestAnimationFrame 等待浏览器渲染
-      requestAnimationFrame(() => {
-        updatePosition();
-        
-        // 2. 二次校验：DOM布局完成后再次更新，确保准确定位
-        requestAnimationFrame(() => {
-          updatePosition();
-        });
-      });
+    const isVisible = show;
+    const anchorElement = anchor;
+    const currentMenuElement = menuElement;
+    positionRunId += 1;
+    const runId = positionRunId;
 
-      // 窗口大小变化时重新计算
-      window.addEventListener('resize', updatePosition);
-      window.addEventListener('scroll', updatePosition, true);
+    stopAutoPositioning();
 
-      return () => {
-        window.removeEventListener('resize', updatePosition);
-        window.removeEventListener('scroll', updatePosition, true);
-      };
+    if (!isVisible || !anchorElement || !currentMenuElement) {
+      return;
     }
+
+    void setupPositioning(runId);
+
+    return () => {
+      if (positionRunId === runId) {
+        stopAutoPositioning();
+      }
+    };
   });
 
   // 监听点击外部和键盘事件
@@ -135,6 +166,7 @@
     // 清理事件监听
     document.removeEventListener('mousedown', handleClickOutside);
     document.removeEventListener('keydown', handleKeydown);
+    stopAutoPositioning();
   });
 </script>
 
@@ -156,6 +188,7 @@
     background: var(--background-primary);
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
     border-radius: 12px;
+    overflow: hidden;
     box-shadow: 
       0 8px 24px rgba(0, 0, 0, 0.12),
       0 2px 8px rgba(0, 0, 0, 0.08);

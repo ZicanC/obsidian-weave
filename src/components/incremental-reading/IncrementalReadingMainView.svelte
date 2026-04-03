@@ -351,7 +351,10 @@
                 {#each selectedDateMaterials as material}
                   <div 
                     class="date-material-item"
-                    onclick={() => handleMaterialClick(material)}
+                    onclick={(event) => {
+                      if ((event.target as HTMLElement).closest('.action-btn')) return;
+                      handleMaterialClick(material);
+                    }}
                     onkeydown={(e) => e.key === 'Enter' && handleMaterialClick(material)}
                     role="button"
                     tabindex="0"
@@ -370,12 +373,12 @@
                       <span class="progress-text">{material.progress.percentage}%</span>
                     </div>
                     <div class="date-material-actions">
-                      <button class="action-btn primary" title="开始阅读" onclick={(e) => { e.stopPropagation(); handleMaterialClick(material); }}>
+                      <button class="action-btn primary" title="开始阅读" onclick={(e) => { e.preventDefault(); handleMaterialClick(material); }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                           <polygon points="5 3 19 12 5 21 5 3"/>
                         </svg>
                       </button>
-                      <button class="action-btn" title="调整日期" onclick={(e) => { e.stopPropagation(); openReschedule(material); }}>
+                      <button class="action-btn" title="调整日期" onclick={(e) => { e.preventDefault(); openReschedule(material); }}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                           <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
                           <line x1="16" y1="2" x2="16" y2="6"/>

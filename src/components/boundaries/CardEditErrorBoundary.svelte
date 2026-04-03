@@ -51,11 +51,17 @@
   
   // 清理函数
   let cleanup: (() => void)[] = [];
+  const ERROR_SOURCE = 'card-edit-error-boundary';
 
   /**
    * 处理错误
    */
-  function handleError(error: Error, context: string = 'Unknown', recoverable: boolean = true): void {
+  function handleError(
+    error: Error,
+    context: string = 'Unknown',
+    recoverable: boolean = true,
+    emitEvent: boolean = true
+  ): void {
     logger.error('[CardEditErrorBoundary] Error caught:', error, 'Context:', context);
     
     errorCount++;
@@ -80,12 +86,14 @@
       }
     }
     
-    // 发射错误事件
-    cardEditEventBus.emitSync('error:occurred', {
-      error,
-      context,
-      recoverable
-    });
+    if (emitEvent) {
+      cardEditEventBus.emitSync('error:occurred', {
+        error,
+        context,
+        recoverable,
+        source: ERROR_SOURCE
+      });
+    }
     
     // 如果可恢复，尝试自动恢复
     if (recoverable && errorInfo.recoveryAttempts < 3) {
@@ -152,7 +160,8 @@
       cardEditEventBus.emitSync('error:occurred', {
         error: recoveryError as Error,
         context: 'Error recovery process',
-        recoverable: false
+        recoverable: false,
+        source: ERROR_SOURCE
       });
     }
   }
@@ -285,8 +294,11 @@
   // 组件挂载时设置错误监听
   onMount(() => {
     // 监听全局错误事件
-    const unsubscribeError = cardEditEventBus.on('error:occurred', ({ error, context, recoverable }) => {
-      handleError(error, context, recoverable);
+    const unsubscribeError = cardEditEventBus.on('error:occurred', ({ error, context, recoverable, source }) => {
+      if (source === ERROR_SOURCE) {
+        return;
+      }
+      handleError(error, context, recoverable, false);
     });
     
     cleanup.push(unsubscribeError);
@@ -297,7 +309,7 @@
     };
     
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      handleError(new Error(event.reason), 'Unhandled promise rejection', true);
+      handleError(new Error(String(event.reason)), 'Unhandled promise rejection', true);
     };
     
     window.addEventListener('error', handleGlobalError);

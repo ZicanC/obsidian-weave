@@ -8,7 +8,6 @@
   import type { TableHeaderProps, ColumnKey, TableViewMode } from "../types/table-types";
 
   let { 
-    columnVisibility, 
     columnOrder,
     tableViewMode = 'basic',
     sortConfig, 
@@ -36,7 +35,7 @@
       questionBank: {
         core: ['front', 'back'],
         basic: ['deck', 'tags', 'priority'],
-        test: ['question_type', 'accuracy', 'test_attempts', 'last_test', 'error_level', 'source_card'],
+        test: ['question_type', 'accuracy', 'test_attempts', 'last_test', 'error_level'],
         meta: ['created'],
       },
       irContent: {
@@ -111,6 +110,7 @@
         <th 
           class="weave-sortable-column weave-resizable-column {getColumnGroupClass(columnKey, tableViewMode)}" 
           class:sorting-disabled={isSorting}
+          class:sorted={columnKey === sortConfig.field}
           style="width: {columnWidths[columnKey]}px;" 
           onclick={() => {
             if (!isSorting) {
@@ -170,29 +170,30 @@
     top: 0;
     z-index: 10;
     /* 增强：更深的背景色 */
-    background: var(--background-tertiary);
+    background: color-mix(in srgb, var(--weave-table-page-bg, var(--background-primary)) 90%, var(--weave-table-surface-bg, var(--background-secondary)));
     /* 增强：更粗的边框 */
-    border-bottom: 2px solid var(--background-modifier-border);
+    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
     /* 增强：更明显的阴影 */
-    box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+    backdrop-filter: blur(10px);
   }
 
   .weave-table-header th {
     /* 增强：增加内边距 */
-    padding: 12px 16px;
+    padding: 11px 16px;
     text-align: left;
     /* 增强：更粗的字重 */
     font-weight: 600;
-    color: var(--text-normal);
+    color: color-mix(in srgb, var(--text-muted) 82%, var(--text-normal));
     /* 增强：略小的字号 */
     font-size: 11px;
     /* 增强：大写文本 */
-    text-transform: uppercase;
+    text-transform: none;
     /* 增强：增加字母间距 */
-    letter-spacing: 0.5px;
-    border-right: 1px solid var(--background-modifier-border);
+    letter-spacing: 0.04em;
+    border-right: 1px solid color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
     /* 增强：增加高度 */
-    height: 44px;
+    height: 42px;
     vertical-align: middle;
     /* 平滑过渡 */
     transition: background-color 0.15s ease, color 0.15s ease;
@@ -210,12 +211,17 @@
   }
 
   .weave-sortable-column:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-accent);
+    background: color-mix(in srgb, var(--background-modifier-hover) 68%, transparent);
+    color: var(--text-normal);
   }
 
   .weave-sortable-column:active {
     background: var(--background-modifier-active-hover);
+  }
+
+  .weave-sortable-column.sorted {
+    background: color-mix(in srgb, var(--interactive-accent) 7%, transparent);
+    color: var(--text-normal);
   }
 
   /* 排序禁用状态 */
@@ -253,28 +259,33 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    opacity: 0.6;
-    transition: opacity 0.15s ease;
+    opacity: 0.45;
+    transition: opacity 0.15s ease, transform 0.15s ease;
   }
 
   .weave-sortable-column:hover .weave-sort-icon {
     opacity: 1;
   }
 
-  /* 复选框列 -  修复：使用更高优先级选择器覆盖 .weave-table-header th 的 text-align: left */
+  .weave-sortable-column.sorted .weave-sort-icon {
+    opacity: 1;
+    transform: translateY(-0.5px);
+  }
+
+  /* 复选框列：使用更高优先级选择器覆盖 .weave-table-header th 的 text-align: left */
   .weave-table-header .weave-checkbox-column {
     width: 48px;
     min-width: 48px;
     max-width: 48px;
     text-align: center;
-    /*  修复：与表格行 td 的 padding 完全一致 */
+    /* 与表格行 td 的 padding 完全一致 */
     padding: 10px 16px;
-    /*  修复：移除复选框列的省略号效果 */
+    /* 移除复选框列的省略号效果 */
     text-overflow: clip;
     overflow: visible;
   }
   
-  /*  修复：复选框包裹器，与表格行的DraggableCheckboxWrapper保持一致 */
+  /* 复选框包裹器，与表格行的 DraggableCheckboxWrapper 保持一致 */
   .weave-checkbox-wrapper {
     display: inline-flex;
     align-items: center;
@@ -290,6 +301,7 @@
   .weave-actions-column {
     min-width: 100px;
     text-align: center;
+    color: var(--text-faint);
   }
 
   /* 响应式：移动端优化 */

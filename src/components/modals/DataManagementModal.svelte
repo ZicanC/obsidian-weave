@@ -10,6 +10,9 @@
   import type { Card } from '../../data/types';
   import { 
     getDataManagementService,
+    DEFAULT_BATCH_FIX_TYPES,
+    HIGH_RISK_FIX_TYPES,
+    isHighRiskFixType,
     type DataCheckResult,
     type DataFixResult,
     type CheckType
@@ -23,16 +26,12 @@
   import { DEFAULT_SCAN_CONFIG } from '../../types/card-quality-types';
   import { getCardQualityInboxService, CardQualityInboxService } from '../../services/card-quality/CardQualityInboxService';
   import type { IssueSeverity } from '../../types/card-quality-types';
-  import ResizableModal from '../ui/ResizableModal.svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import EnhancedButton from '../ui/EnhancedButton.svelte';
+  import { showDangerConfirm } from '../../utils/obsidian-confirm';
 
   // ===== Props =====
   interface Props {
-    /** 是否显示模态窗 */
-    open: boolean;
-    /** 关闭回调 */
-    onClose: () => void;
     /** 插件实例 */
     plugin: WeavePlugin;
     /** 当前筛选的卡片（质量扫描用） */
@@ -44,15 +43,13 @@
   }
 
   let {
-    open = $bindable(),
-    onClose,
     plugin,
     cards = [],
     allCards = [],
     initialTab = 'data'
   }: Props = $props();
   
-  // UX#14: 扫描范围
+  // 扫描范围
   type ScanScope = 'filtered' | 'all';
   let scanScope = $state<ScanScope>('filtered');
   let scanTargetCards = $derived(scanScope === 'all' ? allCards : cards);
@@ -72,6 +69,7 @@
   let checkResults = $state<DataCheckResult[]>([]);
   let fixResults = $state<DataFixResult[]>([]);
   let migrationResults = $state<DataCheckResult[]>([]);
+  let latestMigrationSummary = $state<{ targetRoot: string; movedFiles: number; conflicts: number; rewrittenReferences: number; remainingLegacyRoots: number; reportTime: string } | null>(null);
   let logs = $state<string[]>([]);
   let progressMessage = $state('');
   let progressCurrent = $state(0);
@@ -86,7 +84,7 @@
   let scanView = $state<'config' | 'scanning' | 'result'>('config');
   let selectedIssues = $state(new Set<string>());
   
-  // UX#12: 筛选和排序状态
+  // 筛选和排序状态
   let filterSeverity = $state<IssueSeverity | 'all'>('all');
   let filterType = $state<QualityIssueType | 'all'>('all');
   let sortBy = $state<'severity' | 'type'>('severity');
@@ -121,7 +119,7 @@
     issueIds: string[];
   }
 
-  // Bug#4: 动态计算统计（从当前 issues 列表派生，忽略后自动更新）
+  // 基于当前 issues 动态计算统计，忽略项目变化后会自动更新
   let currentIssues = $derived(scanResult?.issues ?? []);
   let computedStats = $derived.by(() => {
     const byType: Record<string, number> = {};
@@ -133,7 +131,7 @@
     return { byType, bySeverity };
   });
   
-  // UX#12: 筛选后的问题列表
+  // 筛选后的问题列表
   let filteredIssues = $derived.by(() => {
     if (!scanResult) return [];
     return scanResult.issues.filter(issue => {
@@ -171,10 +169,54 @@
   // ===== Service =====
   const dataService = getDataManagementService(plugin);
 
+  async function refreshLatestMigrationSummary() {
+    const report = await dataService.getLatestMigrationReport();
+    if (!report) {
+      latestMigrationSummary = null;
+      return;
+    }
+
+    latestMigrationSummary = {
+      targetRoot: report.plan.targetRoot,
+      movedFiles: report.movedFiles,
+      conflicts: report.conflicts,
+      rewrittenReferences: report.rewrittenReferences,
+      remainingLegacyRoots: report.verification?.remainingLegacyRoots.length ?? report.untouchedLegacyRoots.length,
+      reportTime: report.completedAt || report.startedAt,
+    };
+  }
+
   // ===== Methods =====
   function addLog(message: string) {
     const time = new Date().toLocaleTimeString();
     logs = [...logs, `[${time}] ${message}`];
+  }
+
+  function getHighRiskFixWarning(type: CheckType): string {
+    switch (type) {
+      case 'duplicate_cards':
+        return '这会删除重复卡片，并重写牌组里的卡片引用。';
+      case 'ir_material_consistency':
+        return '这会清理失效的增量阅读材料记录、孤立块和无效引用。';
+      case 'filename_compatibility':
+        return '这会重命名真实文件和文件夹，并同步回写内部路径引用。';
+      case 'sync_conflict_files':
+        return '这会处理云同步冲突副本：能恢复或合并的会恢复，不能自动合并的会转存到插件备份目录。';
+      case 'progressive_cloze_unconverted':
+        return '这会把符合渐进挖空格式的卡片转换成父子卡片结构。';
+      case 'legacy_cleanup':
+        return '这会删除旧版数据目录，只应在迁移完成并核对无误后执行。';
+      default:
+        return '这项修复会直接改写真实数据，请在确认后执行。';
+    }
+  }
+
+  async function confirmHighRiskFix(type: CheckType): Promise<boolean> {
+    return showDangerConfirm(
+      plugin.app,
+      `${getTypeName(type)} 将直接修改真实数据。\n${getHighRiskFixWarning(type)}\n建议先完成检查并确认结果无误。`,
+      `确认执行 ${getTypeName(type)}`
+    );
   }
 
   async function handleCheckAll() {
@@ -218,6 +260,8 @@
       addLog(`修复完成，成功 ${totalSuccess}，失败 ${totalFailed}`);
 
       // 重新检测
+      addLog(`一键修复仅执行安全项：${DEFAULT_BATCH_FIX_TYPES.map(type => getTypeName(type)).join('、')}`);
+      addLog(`以下高风险项需单独确认：${HIGH_RISK_FIX_TYPES.map(type => getTypeName(type)).join('、')}`);
       await handleCheckAll();
     } catch (e) {
       addLog(`修复失败: ${e}`);
@@ -254,6 +298,14 @@
   }
 
   async function handleFix(type: CheckType) {
+    if (isHighRiskFixType(type)) {
+      const confirmed = await confirmHighRiskFix(type);
+      if (!confirmed) {
+        addLog(`已取消 ${getTypeName(type)}`);
+        return;
+      }
+    }
+
     isFixing = true;
     progressCurrent = 0;
     progressTotal = 1;
@@ -261,7 +313,7 @@
     addLog(`修复 ${getTypeName(type)}...`);
 
     try {
-      const result = await dataService.fix(type);
+      const result = await dataService.fix(type, { allowHighRisk: isHighRiskFixType(type) });
       progressCurrent = 1;
       addLog(`修复完成: 成功 ${result.success}，失败 ${result.failed}`);
 
@@ -297,6 +349,8 @@
       const legacyResult = await dataService.checkLegacyDirectories();
       migrationResults = [...migrationResults, legacyResult];
 
+      await refreshLatestMigrationSummary();
+
       const totalIssues = migrationResults.reduce((sum, r) => sum + r.count, 0);
       addLog(`迁移检测完成，发现 ${totalIssues} 个问题`);
     } catch (e) {
@@ -307,11 +361,22 @@
   }
 
   async function handleExecuteMigration() {
+    const confirmed = await showDangerConfirm(
+      plugin.app,
+      '这会移动真实数据到当前标准目录，并重写内部路径引用。\n迁移过程中会保留冲突副本并生成迁移报告。',
+      '确认执行数据迁移'
+    );
+    if (!confirmed) {
+      addLog('已取消 Schema V2 数据迁移');
+      return;
+    }
+
     isMigrating = true;
     addLog('开始执行 Schema V2 迁移...');
 
     try {
-      const result = await dataService.executeSchemaMigration();
+      const result = await dataService.executeSchemaMigration({ confirmed: true });
+      await refreshLatestMigrationSummary();
       addLog(`迁移完成: 成功 ${result.success}，失败 ${result.failed}`);
       
       // 重新检测
@@ -346,11 +411,21 @@
   }
 
   async function handleCleanupLegacy() {
+    const confirmed = await showDangerConfirm(
+      plugin.app,
+      '这会删除旧版数据目录。\n只有在最新迁移已经完成并核对无误后才应该执行。',
+      '确认清理旧目录'
+    );
+    if (!confirmed) {
+      addLog('已取消旧目录清理');
+      return;
+    }
+
     isMigrating = true;
     addLog('开始清理旧目录...');
 
     try {
-      const result = await dataService.cleanupLegacyDirectories();
+      const result = await dataService.cleanupLegacyDirectories({ allowHighRisk: true });
       addLog(`清理完成: 成功删除 ${result.success} 个目录，失败 ${result.failed} 个`);
       
       // 重新检测旧目录
@@ -368,9 +443,10 @@
   }
 
   function getTypeName(type: CheckType): string {
-    const names: Record<CheckType, string> = {
+    if (type === 'ir_topic_migration') return '增量阅读专题迁移';
+    const names: Record<string, string> = {
       'yaml_migration': 'YAML 元数据迁移',
-      'we_decks_fix': 'we_decks 牌组ID',
+      'we_decks_fix': 'we_decks 牌组 ID',
       'we_block_migration': 'we_block 合并迁移',
       'deprecated_fields': '弃用字段',
       'card_deck_consistency': '引用式牌组一致性',
@@ -391,19 +467,6 @@
     return names[type] || type;
   }
 
-  function getStatusIconName(status: string): string {
-    switch (status) {
-      case 'ok': return 'check-circle';
-      case 'warning': return 'alert-triangle';
-      case 'error': return 'x-circle';
-      default: return 'check-circle';
-    }
-  }
-
-  function handleClose() {
-    onClose();
-  }
-
   function getStatusClass(status: string): string {
     switch (status) {
       case 'ok': return 'status-ok';
@@ -413,8 +476,12 @@
     }
   }
 
+  function getResultCountText(result: DataCheckResult): string {
+    return result.count > 0 ? `发现 ${result.count} 项` : '正常';
+  }
+
   // ===== 质量扫描方法 =====
-  // UX#10: 使用服务层方法剥离YAML frontmatter显示
+  // 通过服务层剥离 YAML frontmatter 后再显示内容
   function getCardDisplayContent(card: Card | undefined, maxLen: number = 50): string {
     if (!card) return '(无内容)';
     return CardQualityInboxService.getDisplayContent(card, maxLen);
@@ -511,7 +578,7 @@
     }
   }
   
-  // UX#13: 编辑卡片
+  // 编辑卡片
   async function editCard(cardUuid: string) {
     try {
       const card = await plugin.directFileReader.getCardByUUID(cardUuid);
@@ -530,7 +597,7 @@
     }
   }
   
-  // UX#13: 删除卡片
+  // 删除卡片
   async function deleteCard(cardUuid: string) {
     try {
       const card = await plugin.directFileReader.getCardByUUID(cardUuid);
@@ -565,23 +632,12 @@
   onMount(() => {
     if (activeTab === 'data') {
       handleCheckAll();
+      void refreshLatestMigrationSummary();
     }
   });
 </script>
 
-{#if open}
-<ResizableModal
-  bind:open
-  {plugin}
-  title="数据管理"
-  onClose={handleClose}
-  enableTransparentMask={false}
-  enableWindowDrag={true}
-  accentColor="purple"
-  initialWidth={700}
-  initialHeight={600}
->
-  <div class="unified-management-modal">
+<div class="unified-management-modal">
     <!-- 顶部导航栏：分段标签 + 上下文操作 -->
     <div class="modal-header-bar">
       <div class="segmented-tabs">
@@ -658,11 +714,16 @@
 
         {#each checkResults as result}
           <div class="check-item {getStatusClass(result.status)}">
-            <div class="check-icon">
-              <EnhancedIcon name={getStatusIconName(result.status)} size={18} />
-            </div>
             <div class="check-info">
-              <span class="check-name">{getTypeName(result.type)}</span>
+              <div class="check-title-row">
+                <span class="check-name">{getTypeName(result.type)}</span>
+                <div class="check-badges">
+                  <span class={`check-status-pill ${getStatusClass(result.status)}`}>{getResultCountText(result)}</span>
+                  {#if result.count > 0 && isHighRiskFixType(result.type)}
+                    <span class="check-risk-pill">高风险</span>
+                  {/if}
+                </div>
+              </div>
               <span class="check-message">{result.message}</span>
               {#if result.items.length > 0 && (result.type === 'filename_compatibility' || result.type === 'sync_conflict_files')}
                 <div class="check-details">
@@ -734,14 +795,34 @@
                 检测迁移状态
               </EnhancedButton>
             </div>
+            {#if latestMigrationSummary}
+              <div class="check-item latest-migration-summary">
+                <div class="check-info">
+                  <span class="check-name">最近一次迁移报告</span>
+                  <span class="check-message">目标路径：{latestMigrationSummary.targetRoot}</span>
+                  <div class="check-details">
+                    <span class="detail-item">迁移文件 {latestMigrationSummary.movedFiles}</span>
+                    <span class="detail-item">冲突 {latestMigrationSummary.conflicts}</span>
+                    <span class="detail-item">重写引用 {latestMigrationSummary.rewrittenReferences}</span>
+                    <span class="detail-item">剩余旧路径 {latestMigrationSummary.remainingLegacyRoots}</span>
+                    <span class="detail-item">时间 {latestMigrationSummary.reportTime}</span>
+                  </div>
+                </div>
+              </div>
+            {/if}
             <div class="check-results">
               {#each migrationResults as result}
                 <div class="check-item {getStatusClass(result.status)}">
-                  <div class="check-icon">
-                    <EnhancedIcon name={getStatusIconName(result.status)} size={18} />
-                  </div>
                   <div class="check-info">
-                    <span class="check-name">{getTypeName(result.type)}</span>
+                    <div class="check-title-row">
+                      <span class="check-name">{getTypeName(result.type)}</span>
+                      <div class="check-badges">
+                        <span class={`check-status-pill ${getStatusClass(result.status)}`}>{getResultCountText(result)}</span>
+                        {#if result.count > 0 && isHighRiskFixType(result.type)}
+                          <span class="check-risk-pill">高风险</span>
+                        {/if}
+                      </div>
+                    </div>
                     <span class="check-message">{result.message}</span>
                     {#if result.items.length > 0 && result.type === 'legacy_cleanup'}
                       <div class="check-details">
@@ -1043,8 +1124,6 @@
       {/if}
     </div>
   </div>
-</ResizableModal>
-{/if}
 
 <style>
   .unified-management-modal {
@@ -1058,31 +1137,37 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 16px;
+    padding: 14px 18px;
     border-bottom: 1px solid var(--background-modifier-border);
     flex-shrink: 0;
     gap: 12px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
+      var(--background-primary);
   }
 
   .segmented-tabs {
     display: flex;
+    align-items: center;
     background: var(--background-secondary);
-    border-radius: 6px;
-    padding: 2px;
-    gap: 2px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+    padding: 4px;
+    gap: 4px;
   }
 
   .seg-tab {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 14px;
+    min-height: 36px;
+    padding: 0.45rem 0.95rem;
     border: none;
-    border-radius: 5px;
+    border-radius: 9px;
     background: transparent;
     color: var(--text-muted);
-    font-size: 13px;
-    font-weight: 500;
+    font-size: 0.82rem;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.15s ease;
     white-space: nowrap;
@@ -1090,38 +1175,45 @@
 
   .seg-tab:hover {
     color: var(--text-normal);
+    background: var(--background-modifier-hover);
   }
 
   .seg-tab.active {
     background: var(--background-primary);
     color: var(--text-normal);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--background-modifier-border);
+    box-shadow:
+      0 8px 18px rgba(15, 23, 42, 0.08),
+      0 1px 2px rgba(15, 23, 42, 0.06);
   }
 
   .header-actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
   }
 
   .header-action-btn {
     display: flex;
     align-items: center;
-    gap: 5px;
-    padding: 5px 12px;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    padding: 0.45rem 0.9rem;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 5px;
-    background: var(--background-primary);
-    color: var(--text-muted);
-    font-size: 12px;
+    border-radius: 10px;
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    font-size: 0.78rem;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.15s ease;
     white-space: nowrap;
   }
 
   .header-action-btn:hover:not(:disabled) {
-    color: var(--text-normal);
-    border-color: var(--interactive-accent);
+    background: var(--interactive-hover);
+    border-color: var(--background-modifier-border-hover);
   }
 
   .header-action-btn:disabled {
@@ -1130,13 +1222,14 @@
   }
 
   .header-action-btn.fix {
-    color: var(--text-accent);
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
     border-color: var(--interactive-accent);
   }
 
   .header-action-btn.fix:hover:not(:disabled) {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
+    background: var(--interactive-accent-hover);
+    border-color: var(--interactive-accent-hover);
   }
 
   .modal-tab-content {
@@ -1146,26 +1239,27 @@
   }
 
   .data-management-content {
-    padding: 16px;
+    padding: 18px 20px 20px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
   }
 
   .quality-scan-content {
-    padding: 16px;
+    padding: 18px 20px 20px;
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: 18px;
   }
 
   .scan-info {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 12px;
-    background: var(--background-secondary);
-    border-radius: 6px;
+    gap: 10px;
+    padding: 16px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent), var(--background-secondary-alt, var(--background-secondary));
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
     font-size: 13px;
   }
 
@@ -1179,9 +1273,19 @@
   .scope-option {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
+    padding: 6px 10px;
+    border-radius: 999px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
     cursor: pointer;
     font-size: 13px;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .scope-option:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
   }
 
   .scope-option input[type="radio"] {
@@ -1191,7 +1295,11 @@
   .section {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent), var(--background-secondary-alt, var(--background-secondary));
   }
 
   .section-title {
@@ -1199,73 +1307,136 @@
     align-items: center;
     gap: 8px;
     margin: 0;
-    font-size: 14px;
+    font-size: 0.95rem;
     font-weight: 600;
     color: var(--text-normal);
+  }
+
+  .section-title::before {
+    content: '';
+    width: 4px;
+    height: 15px;
+    border-radius: 999px;
+    background: var(--interactive-accent);
+    opacity: 0.85;
   }
 
   .check-results {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
   }
 
   .check-item {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
-    padding: 10px 12px;
-    background: var(--background-secondary);
-    border-radius: 6px;
+    padding: 13px 14px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    transition: border-color 0.15s ease, transform 0.15s ease, background-color 0.15s ease;
   }
 
-  .check-icon {
-    display: flex;
-    align-items: center;
+  .check-item:hover {
+    border-color: var(--background-modifier-border-hover);
+    background: color-mix(in srgb, var(--background-primary) 92%, var(--background-modifier-hover));
   }
 
-  .status-ok .check-icon {
-    color: var(--color-green);
-  }
-
-  .status-warning .check-icon {
-    color: var(--color-orange);
-  }
-
-  .status-error .check-icon {
-    color: var(--color-red);
+  .check-item.latest-migration-summary {
+    background: color-mix(in srgb, var(--background-primary) 88%, var(--background-secondary));
   }
 
   .check-info {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .check-title-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
   }
 
   .check-name {
-    font-weight: 500;
-    font-size: 13px;
+    font-weight: 650;
+    font-size: 0.92rem;
+    color: var(--text-normal);
   }
 
   .check-message {
-    font-size: 12px;
+    font-size: 0.79rem;
     color: var(--text-muted);
+    line-height: 1.45;
+  }
+
+  .check-badges {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .check-status-pill,
+  .check-risk-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1;
+    white-space: nowrap;
+    border: 1px solid transparent;
+  }
+
+  .check-status-pill.status-ok {
+    background: rgba(34, 197, 94, 0.1);
+    color: rgb(21, 128, 61);
+    border-color: rgba(34, 197, 94, 0.16);
+  }
+
+  .check-status-pill.status-warning {
+    background: rgba(245, 158, 11, 0.12);
+    color: rgb(180, 83, 9);
+    border-color: rgba(245, 158, 11, 0.18);
+  }
+
+  .check-status-pill.status-error {
+    background: rgba(239, 68, 68, 0.12);
+    color: rgb(185, 28, 28);
+    border-color: rgba(239, 68, 68, 0.18);
+  }
+
+  .check-risk-pill {
+    background: rgba(168, 85, 247, 0.12);
+    color: rgb(126, 34, 206);
+    border-color: rgba(168, 85, 247, 0.18);
   }
 
   .check-actions {
     display: flex;
-    gap: 4px;
+    gap: 6px;
+    align-self: flex-start;
+    flex-shrink: 0;
+    padding-top: 2px;
   }
 
   .batch-progress-container {
     display: flex;
     flex-direction: column;
-    gap: 6px;
-    padding: 12px;
-    background: var(--background-secondary);
-    border-radius: 6px;
-    border: none;
+    gap: 8px;
+    padding: 14px;
+    background: var(--background-primary);
+    border-radius: 14px;
+    border: 1px solid var(--background-modifier-border);
   }
 
   .batch-progress-header {
@@ -1311,16 +1482,22 @@
   .log-container {
     max-height: 150px;
     overflow-y: auto;
-    background: var(--background-secondary);
-    border-radius: 6px;
-    padding: 8px 12px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    padding: 10px 14px;
     font-family: var(--font-monospace);
     font-size: 11px;
   }
 
   .log-item {
-    padding: 2px 0;
+    padding: 4px 0;
     color: var(--text-muted);
+    border-bottom: 1px dashed rgba(128, 128, 128, 0.12);
+  }
+
+  .log-item:last-child {
+    border-bottom: none;
   }
 
   .empty-state {
@@ -1343,28 +1520,35 @@
   .config-section {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent), var(--background-secondary-alt, var(--background-secondary));
   }
 
   .config-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
   }
 
   .config-item {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 12px;
-    background: var(--background-secondary);
-    border-radius: 6px;
+    min-height: 42px;
+    padding: 10px 12px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
     cursor: pointer;
-    transition: background 0.15s ease;
+    transition: background 0.15s ease, border-color 0.15s ease;
   }
 
   .config-item:hover {
     background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
   }
 
   .config-item input[type="checkbox"] {
@@ -1392,6 +1576,7 @@
     font-size: 12px;
     color: var(--text-muted);
     margin: 0;
+    line-height: 1.45;
   }
 
   .action-buttons {
@@ -1399,7 +1584,8 @@
     justify-content: flex-end;
     gap: 8px;
     margin-top: auto;
-    padding-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--background-modifier-border);
   }
 
   .scanning-view {
@@ -1410,6 +1596,10 @@
     gap: 24px;
     flex: 1;
     min-height: 200px;
+    padding: 24px;
+    border-radius: 16px;
+    border: 1px solid var(--background-modifier-border);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent), var(--background-secondary-alt, var(--background-secondary));
   }
 
   .scan-spinner {
@@ -1457,19 +1647,21 @@
   }
 
   .result-summary {
-    display: flex;
-    gap: 16px;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 12px;
   }
 
   .summary-item {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    padding: 12px 16px;
-    background: var(--background-secondary);
-    border-radius: 8px;
-    min-width: 80px;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 14px 16px;
+    background: var(--background-secondary-alt, var(--background-secondary));
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
+    min-width: 0;
   }
 
   .summary-label {
@@ -1478,9 +1670,10 @@
   }
 
   .summary-value {
-    font-size: 20px;
+    font-size: 1.4rem;
     font-weight: 700;
     color: var(--text-normal);
+    line-height: 1;
   }
 
   .summary-value.has-issues {
@@ -1520,7 +1713,8 @@
     flex: 1;
     overflow-y: auto;
     border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
+    border-radius: 14px;
+    background: var(--background-secondary-alt, var(--background-secondary));
     max-height: 300px;
   }
 
@@ -1535,19 +1729,22 @@
     top: 0;
     background: var(--background-secondary);
     z-index: 1;
+    box-shadow: inset 0 -1px 0 var(--background-modifier-border);
   }
 
   .issues-table th {
-    padding: 10px 12px;
+    padding: 11px 12px;
     text-align: left;
     font-weight: 600;
     color: var(--text-muted);
     border-bottom: 1px solid var(--background-modifier-border);
     white-space: nowrap;
+    font-size: 0.74rem;
+    letter-spacing: 0.02em;
   }
 
   .issues-table td {
-    padding: 10px 12px;
+    padding: 11px 12px;
     border-bottom: 1px solid var(--background-modifier-border);
     vertical-align: middle;
   }
@@ -1561,7 +1758,7 @@
   }
 
   .issues-table tbody tr.selected {
-    background: var(--background-modifier-active);
+    background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
   }
 
   .col-checkbox { width: 40px; text-align: center; }
@@ -1593,20 +1790,26 @@
 
   .issue-badge {
     display: inline-block;
-    padding: 3px 6px;
-    background: var(--background-secondary);
-    border-radius: 4px;
+    padding: 4px 8px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
     font-size: 11px;
-    font-weight: 500;
+    font-weight: 600;
     color: var(--text-normal);
     white-space: nowrap;
   }
 
   .view-card-btn {
-    padding: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     background: none;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     color: var(--text-muted);
     cursor: pointer;
     transition: all 0.15s ease;
@@ -1626,23 +1829,27 @@
     gap: 2px;
   }
 
-  /* UX#11: info级别摘要颜色 */
+  /* info 级别摘要颜色 */
   .summary-item.info .summary-value {
     color: var(--color-blue);
   }
 
-  /* UX#12: 筛选栏 */
+  /* 筛选栏 */
   .scan-filter-bar {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 0;
+    padding: 12px 14px;
     flex-wrap: wrap;
+    background: var(--background-secondary-alt, var(--background-secondary));
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 14px;
   }
 
   .scan-filter-select {
-    padding: 4px 8px;
-    border-radius: 4px;
+    min-height: 32px;
+    padding: 4px 10px;
+    border-radius: 8px;
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
     color: var(--text-normal);
@@ -1650,23 +1857,27 @@
   }
 
   .scan-filter-reset {
-    padding: 4px 8px;
-    border-radius: 4px;
-    border: none;
-    background: none;
-    color: var(--text-accent);
+    min-height: 32px;
+    padding: 4px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
     cursor: pointer;
     font-size: 12px;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
 
   .scan-filter-reset:hover {
-    text-decoration: underline;
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
   }
 
   .scan-filter-count {
     margin-left: auto;
     font-size: 12px;
     color: var(--text-muted);
+    font-weight: 600;
   }
 
   /* 长度阈值配置 */
@@ -1685,8 +1896,8 @@
 
   .threshold-input {
     width: 80px;
-    padding: 4px 8px;
-    border-radius: 4px;
+    padding: 6px 8px;
+    border-radius: 8px;
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
     color: var(--text-normal);
@@ -1697,7 +1908,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    padding-top: 16px;
+    padding-top: 14px;
     border-top: 1px solid var(--background-modifier-border);
     flex-shrink: 0;
   }
@@ -1710,23 +1921,27 @@
   .migration-actions {
     display: flex;
     gap: 8px;
-    margin-bottom: 12px;
+    margin-bottom: 4px;
   }
 
   .check-details {
     display: flex;
     flex-wrap: wrap;
-    gap: 4px;
-    margin-top: 4px;
+    gap: 6px;
+    margin-top: 2px;
   }
 
   .detail-item {
     font-size: 11px;
-    padding: 2px 6px;
-    background: var(--background-modifier-border);
-    border-radius: 3px;
+    padding: 4px 8px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
     color: var(--text-muted);
     font-family: var(--font-monospace);
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .detail-more {
@@ -1740,7 +1955,7 @@
   /* 顶部导航栏：换行为两行，tabs上 actions下 */
   :global(body.is-mobile) .modal-header-bar {
     flex-wrap: wrap;
-    padding: 8px 12px;
+    padding: 12px 14px;
     gap: 8px;
   }
 
@@ -1779,10 +1994,15 @@
     gap: 12px;
   }
 
+  :global(body.is-mobile) .section,
+  :global(body.is-mobile) .config-section {
+    padding: 14px;
+  }
+
   /* 检测项：垂直堆叠 info 和 actions */
   :global(body.is-mobile) .check-item {
     flex-wrap: wrap;
-    padding: 10px;
+    padding: 12px;
     gap: 8px;
   }
 
@@ -1805,6 +2025,10 @@
     gap: 6px;
   }
 
+  :global(body.is-mobile) .check-title-row {
+    gap: 8px;
+  }
+
   /* 迁移按钮 */
   :global(body.is-mobile) .migration-actions {
     margin-bottom: 8px;
@@ -1813,7 +2037,7 @@
   /* 日志区域 */
   :global(body.is-mobile) .log-container {
     max-height: 120px;
-    padding: 6px 10px;
+    padding: 8px 10px;
     font-size: 10px;
   }
 
@@ -1824,5 +2048,9 @@
 
   :global(body.is-mobile) .batch-progress-header {
     font-size: 12px;
+  }
+
+  :global(body.is-mobile) .result-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 </style>

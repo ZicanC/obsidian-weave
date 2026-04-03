@@ -1,4 +1,3 @@
-import { describe, expect, it, vi } from 'vitest';
 import { Platform, TFile } from 'obsidian';
 import { EpubStorageService } from '../EpubStorageService';
 import type { EpubBook } from '../types';
@@ -162,23 +161,23 @@ describe('EpubStorageService', () => {
     const service = new EpubStorageService(app);
     const settings = await service.loadReaderSettings();
 
-    expect(settings.lineHeight).toBe(1.9);
-    expect(settings.widthMode).toBe('full');
+    expect(settings.lineHeight).toBe(1.72);
+    expect(settings.widthMode).toBe('standard');
     expect(settings.layoutMode).toBe('paginated');
     expect(settings.flowMode).toBe('paginated');
   });
 
-  it('returns scrolled reader defaults on mobile when no reader settings were saved', async () => {
+  it('returns paginated reader defaults on mobile when no reader settings were saved', async () => {
     const { app } = createMemoryApp();
 
     await withPlatformIsMobile(true, async () => {
       const service = new EpubStorageService(app);
       const settings = await service.loadReaderSettings();
 
-      expect(settings.lineHeight).toBe(1.9);
+      expect(settings.lineHeight).toBe(1.66);
       expect(settings.widthMode).toBe('full');
       expect(settings.layoutMode).toBe('paginated');
-      expect(settings.flowMode).toBe('scrolled');
+      expect(settings.flowMode).toBe('paginated');
     });
   });
 
@@ -206,6 +205,48 @@ describe('EpubStorageService', () => {
     expect(files.has('weave/incremental-reading/epub-reading/reader-settings.json')).toBe(true);
     expect(JSON.parse(files.get('weave/incremental-reading/epub-reading/reader-settings.mobile.json') || '{}').flowMode).toBe('scrolled');
     expect(JSON.parse(files.get('weave/incremental-reading/epub-reading/reader-settings.json') || '{}').flowMode).toBe('paginated');
+  });
+
+  it('resets the old forced mobile scrolled default back to paginated on mobile', async () => {
+    const { app } = createMemoryApp({
+      'weave/incremental-reading/epub-reading/reader-settings.mobile.json': JSON.stringify({
+        lineHeight: 1.9,
+        theme: 'default',
+        widthMode: 'full',
+        layoutMode: 'paginated',
+        flowMode: 'scrolled',
+        showScrolledSideNav: true,
+      }),
+    });
+
+    await withPlatformIsMobile(true, async () => {
+      const service = new EpubStorageService(app);
+      const settings = await service.loadReaderSettings();
+
+      expect(settings.layoutMode).toBe('paginated');
+      expect(settings.flowMode).toBe('paginated');
+    });
+  });
+
+  it('upgrades untouched legacy desktop reader settings to the new comfortable defaults', async () => {
+    const { app } = createMemoryApp({
+      'weave/incremental-reading/epub-reading/reader-settings.desktop.json': JSON.stringify({
+        lineHeight: 1.9,
+        theme: 'default',
+        widthMode: 'full',
+        layoutMode: 'paginated',
+        flowMode: 'paginated',
+        showScrolledSideNav: true,
+      }),
+    });
+
+    const service = new EpubStorageService(app);
+    const settings = await service.loadReaderSettings();
+
+    expect(settings.lineHeight).toBe(1.72);
+    expect(settings.widthMode).toBe('standard');
+    expect(settings.layoutMode).toBe('paginated');
+    expect(settings.flowMode).toBe('paginated');
   });
 
   it('migrates legacy epub-reading data into incremental-reading on first access', async () => {
@@ -286,6 +327,66 @@ describe('EpubStorageService', () => {
 
     expect(book?.currentPosition.percent).toBe(42);
     expect(book?.readingStats.lastReadTime).toBe(999);
+  });
+
+  it('stores concealed text fragments in a dedicated per-book file', async () => {
+    const { app, files } = createMemoryApp();
+    const service = new EpubStorageService(app);
+
+    await service.saveConcealedTexts('book-1', [
+      {
+        id: 'conceal-1',
+        text: '低价值片段',
+        mode: 'mask',
+        chapterIndex: 1,
+        cfiRange: '/6/4',
+        createdTime: 123,
+      },
+    ]);
+
+    expect(JSON.parse(files.get('weave/incremental-reading/epub-reading/book-1/concealed-texts.json') || '[]')).toEqual([
+      {
+        id: 'conceal-1',
+        text: '低价值片段',
+        mode: 'mask',
+        chapterIndex: 1,
+        cfiRange: '/6/4',
+        createdTime: 123,
+      },
+    ]);
+  });
+
+  it('deduplicates concealed text fragments by cfi range when adding repeatedly', async () => {
+    const { app } = createMemoryApp();
+    const service = new EpubStorageService(app);
+
+    await service.addConcealedText('book-1', {
+      id: 'conceal-1',
+      text: '第一次',
+      mode: 'mask',
+      chapterIndex: 1,
+      cfiRange: '/6/4',
+      createdTime: 123,
+    });
+    await service.addConcealedText('book-1', {
+      id: 'conceal-2',
+      text: '第二次',
+      mode: 'mask',
+      chapterIndex: 1,
+      cfiRange: '/6/4',
+      createdTime: 456,
+    });
+
+    expect(await service.loadConcealedTexts('book-1')).toEqual([
+      {
+        id: 'conceal-2',
+        text: '第二次',
+        mode: 'mask',
+        chapterIndex: 1,
+        cfiRange: '/6/4',
+        createdTime: 456,
+      },
+    ]);
   });
 
   it('refreshes folder bookshelf entries when cached folder data misses new epub files', async () => {

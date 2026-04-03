@@ -16,11 +16,12 @@ import StudyInterface from './StudyInterface.svelte';
 import { onMount } from 'svelte';
 import { Notice } from 'obsidian';
 import CelebrationModal from '../modals/CelebrationModal.svelte';
+import { QuestionBankSelectorModal } from '../../modals/QuestionBankSelectorModal';
 import type { CelebrationStats } from '../../types/celebration-types';
 //  导入国际化
 import { tr } from '../../utils/i18n';
 
-// 🆕 导入学习完成逻辑辅助函数
+// 导入学习完成逻辑辅助函数
 import { loadDeckCardsForStudy, loadAllDueCardsForStudy, loadCardsByIds, getAdvanceStudyCards } from '../../utils/study/studyCompletionHelper';
 import type { StudyMode } from '../../types/study-types';
 
@@ -32,6 +33,7 @@ interface Props {
   plugin: WeavePlugin;
   viewInstance: StudyView;
   deckId?: string;
+  deckName?: string;
   mode?: StudyMode;
   cardIds?: string[];
   cards?: Card[];  // 直接传递的卡片对象
@@ -48,6 +50,7 @@ let {
   plugin,
   viewInstance,
   deckId,
+  deckName,
   mode,
   cardIds,
   cards,
@@ -74,14 +77,47 @@ let shouldCloseAfterCelebration = $state(false); //  标记是否需要在庆祝
 
 // 状态监控（已移除调试日志）
 let currentDeckId = $state(deckId || '');
+let currentDeckName = $state(deckName || '');
 let currentMode = $state(mode);
 let currentCardIds = $state(cardIds);
 let currentCards = $state(cards);  //  添加cards状态
+let activeResumeData = $state<PersistedStudySession | null>(resumeData ?? null);
+let activeQueueState = $state<Props['queueState']>(queueState);
 let sessionStats = $state({
   completed: 0,
   correct: 0,
   incorrect: 0
 });
+
+function formatNextDueTime(dueIso: string): string | null {
+  const dueDate = new Date(dueIso);
+  if (Number.isNaN(dueDate.getTime())) {
+    return null;
+  }
+
+  const now = new Date();
+  const diff = dueDate.getTime() - now.getTime();
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+
+  if (days > 1) {
+    const dateStr = `${dueDate.getMonth() + 1}/${dueDate.getDate()}`;
+    const timeStr = `${String(dueDate.getHours()).padStart(2, '0')}:${String(dueDate.getMinutes()).padStart(2, '0')}`;
+    return `${dateStr} ${timeStr}`;
+  }
+
+  if (days === 1) {
+    const timeStr = `${String(dueDate.getHours()).padStart(2, '0')}:${String(dueDate.getMinutes()).padStart(2, '0')}`;
+    return `${t('deckStudyPage.time.tomorrow')} ${timeStr}`;
+  }
+
+  if (hours > 0) {
+    return t('deckStudyPage.time.hoursLater', { hours: String(hours) });
+  }
+
+  const minutes = Math.max(1, Math.floor(diff / (1000 * 60)));
+  return t('deckStudyPage.time.minutesLater', { minutes: String(minutes) });
+}
 
 // 学习会话数据
 let currentCardIndex = $state(0);
@@ -103,6 +139,9 @@ let liveQueueProgress = $state<{
 $effect(() => {
   if (deckId !== undefined) {
     currentDeckId = deckId;
+  }
+  if (deckName !== undefined) {
+    currentDeckName = deckName;
   }
   if (mode !== undefined) {
     currentMode = mode;
@@ -166,15 +205,34 @@ export function shouldPersist(): boolean {
  */
 export async function updateStudyParams(params: {
   deckId?: string;
+  deckName?: string;
   mode?: StudyMode;
   cardIds?: string[];
+  cards?: Card[];
+  resumeData?: PersistedStudySession | null;
+  queueState?: Props['queueState'];
 }): Promise<void> {
   // 更新参数
   currentDeckId = params.deckId || '';
+  currentDeckName = params.deckName || '';
   currentMode = params.mode;
   currentCardIds = params.cardIds;
+  currentCards = params.cards;
+  activeResumeData = params.resumeData ?? null;
+  activeQueueState = params.queueState;
   
   // 重置状态
+  studyCards = [];
+  currentCardIndex = 0;
+  remainingCardIds = [];
+  sessionStats = {
+    completed: 0,
+    correct: 0,
+    incorrect: 0
+  };
+  sessionType = 'mixed';
+  initialCardIndex = 0;
+  liveQueueProgress = null;
   isLoading = true;
   showStudyContent = false;
   
@@ -197,28 +255,63 @@ function handleClose(): void {
 }
 
 /**
- * 加载待学习的卡片（🆕 智能加载逻辑）
+ * 加载待学习的卡片
  */
 async function loadStudyCards() {
   try {
     isLoading = true;
+    studyCards = [];
     
     // 如果有恢复数据，使用恢复数据
-    if (resumeData) {
-      currentDeckId = resumeData.deckId;
-      currentCardIndex = resumeData.currentCardIndex;
-      remainingCardIds = resumeData.remainingCardIds;
-      sessionStats = resumeData.stats;
-      sessionType = resumeData.sessionType;
-      
-      // TODO: 从 remainingCardIds 加载实际卡片对象
-      // studyCards = await loadCardsFromIds(remainingCardIds);
-    } else if (queueState && queueState.studyQueueCardIds && queueState.studyQueueCardIds.length > 0) {
+    if (activeResumeData) {
+      currentDeckId = activeResumeData.deckId;
+      currentDeckName = activeResumeData.deckName || currentDeckName;
+      currentMode = activeResumeData.mode || currentMode;
+      currentCardIndex = activeResumeData.currentCardIndex;
+      remainingCardIds = activeResumeData.remainingCardIds;
+      sessionStats = activeResumeData.stats;
+      sessionType = activeResumeData.sessionType;
+
+      if (activeResumeData.queueState && activeResumeData.queueState.studyQueueCardIds?.length > 0) {
+        logger.info('[StudyViewWrapper] 从持久化队列恢复学习会话:', {
+          savedIndex: activeResumeData.queueState.currentCardIndex,
+          queueLength: activeResumeData.queueState.studyQueueCardIds.length
+        });
+
+        const dataStorage = await waitForService(
+          () => plugin?.dataStorage,
+          'DataStorage',
+          10000
+        );
+
+        const uniqueCardIds = [...new Set(activeResumeData.queueState.studyQueueCardIds)];
+        const uniqueCards = await loadCardsByIds(dataStorage, uniqueCardIds, currentDeckId);
+        const cardMap = new Map<string, Card>();
+        for (const card of uniqueCards) {
+          cardMap.set(card.uuid, card);
+        }
+
+        studyCards = activeResumeData.queueState.studyQueueCardIds
+          .map(id => cardMap.get(id))
+          .filter((card): card is Card => !!card);
+
+        initialCardIndex = Math.min(activeResumeData.queueState.currentCardIndex, Math.max(studyCards.length - 1, 0));
+        initialCardIndex = Math.max(0, initialCardIndex);
+      } else {
+        const dataStorage = await waitForService(
+          () => plugin?.dataStorage,
+          'DataStorage',
+          10000
+        );
+        studyCards = await loadCardsByIds(dataStorage, remainingCardIds, currentDeckId);
+        initialCardIndex = 0;
+      }
+    } else if (activeQueueState && activeQueueState.studyQueueCardIds && activeQueueState.studyQueueCardIds.length > 0) {
       // 重启恢复：按保存的队列顺序和索引加载卡片
       logger.info('[StudyViewWrapper] 重启恢复：从保存的队列状态恢复', {
-        savedIndex: queueState.currentCardIndex,
-        queueLength: queueState.studyQueueCardIds.length,
-        studiedCount: queueState.sessionStudiedCardIds?.length || 0
+        savedIndex: activeQueueState.currentCardIndex,
+        queueLength: activeQueueState.studyQueueCardIds.length,
+        studiedCount: activeQueueState.sessionStudiedCardIds?.length || 0
       });
       
       const dataStorage = await waitForService(
@@ -228,7 +321,7 @@ async function loadStudyCards() {
       );
       
       // 1. 提取唯一卡片ID（队列可能含重复ID，因learning steps插入）
-      const uniqueCardIds = [...new Set(queueState.studyQueueCardIds)];
+      const uniqueCardIds = [...new Set(activeQueueState.studyQueueCardIds)];
       const uniqueCards = await loadCardsByIds(dataStorage, uniqueCardIds, currentDeckId);
       
       if (uniqueCards.length > 0) {
@@ -240,7 +333,7 @@ async function loadStudyCards() {
         
         // 3. 按原始队列顺序重建完整队列（含重复）
         const restoredQueue: Card[] = [];
-        for (const id of queueState.studyQueueCardIds) {
+        for (const id of activeQueueState.studyQueueCardIds) {
           const card = cardMap.get(id);
           if (card) {
             restoredQueue.push(card);
@@ -249,7 +342,7 @@ async function loadStudyCards() {
         
         studyCards = restoredQueue;
         // 4. 设置初始卡片索引，确保不超出范围
-        initialCardIndex = Math.min(queueState.currentCardIndex, restoredQueue.length - 1);
+        initialCardIndex = Math.min(activeQueueState.currentCardIndex, restoredQueue.length - 1);
         initialCardIndex = Math.max(0, initialCardIndex);
         
         logger.info('[StudyViewWrapper] 队列恢复完成:', {
@@ -269,7 +362,14 @@ async function loadStudyCards() {
       }
     } else {
       //  智能加载逻辑：根据学习模式选择加载策略
-      if (currentCardIds && currentCardIds.length > 0) {
+      if (Array.isArray(currentCards)) {
+        logger.debug('[StudyViewWrapper] 📥 模式0: 使用显式传入的 cards', {
+          cardsCount: currentCards.length,
+          deckId: currentDeckId
+        });
+        studyCards = currentCards;
+        initialCardIndex = 0;
+      } else if (currentCardIds && currentCardIds.length > 0) {
         //  模式1: 自定义卡片列表（提前学习会使用这个）
         logger.debug('[StudyViewWrapper] 📥 模式1: 使用CardIds加载', {
           cardIdsCount: currentCardIds.length,
@@ -277,14 +377,14 @@ async function loadStudyCards() {
           mode: currentMode
         });
         
-        //  修复：等待 dataStorage 初始化完成
+        // 等待 dataStorage 初始化完成
         const dataStorage = await waitForService(
           () => plugin?.dataStorage,
           'DataStorage',
           10000  // 增加到10秒，处理大数据量情况
         );
         
-        //  关键修复：传递 deckId 确保从正确的牌组加载卡片
+        // 传递 deckId，确保从正确的牌组加载卡片
         studyCards = await loadCardsByIds(dataStorage, currentCardIds, currentDeckId);
         
         logger.debug('[StudyViewWrapper] ✅ 卡片加载完成:', {
@@ -297,7 +397,7 @@ async function loadStudyCards() {
         //  模式2: 提前学习模式（加载未到期的复习卡片）
         if (!currentDeckId) {
           logger.error('[StudyViewWrapper] 提前学习模式缺少 deckId');
-          new Notice('提前学习需要选择牌组');
+          new Notice(t('deckStudyPage.studyActions.advanceStudyRequiresDeck'));
           onClose();
           return;
         }
@@ -315,7 +415,7 @@ async function loadStudyCards() {
     if (studyCards.length > 0) {
       showStudyContent = true;
     } else {
-      //  修复：没有卡片时，立即显示友好提示并关闭
+      // 没有卡片时，立即显示友好提示并关闭
       logger.warn('[StudyViewWrapper] ⚠️ 无可学卡片，关闭学习界面');
       
       // 显示提示
@@ -341,7 +441,7 @@ async function loadDeckCards(deckId: string): Promise<Card[]> {
     const reviewsPerDay = plugin.settings.reviewsPerDay || 200;
     const filterSiblings = plugin.settings.studyConfig?.siblingDispersion?.filterInQueue ?? true;
     
-    //  修复：等待 dataStorage 初始化完成
+    // 等待 dataStorage 初始化完成
     const dataStorage = await waitForService(
       () => plugin?.dataStorage,
       'DataStorage',
@@ -388,14 +488,14 @@ async function loadDueCards(): Promise<Card[]> {
     const newCardsPerDay = plugin.settings.newCardsPerDay || 20;
     const reviewsPerDay = plugin.settings.reviewsPerDay || 20;
     
-    //  修复：等待 dataStorage 初始化完成
+    // 等待 dataStorage 初始化完成
     const dataStorage = await waitForService(
       () => plugin?.dataStorage,
       'DataStorage',
       10000  // 增加到10秒，处理大数据量情况
     );
     
-    // 🆕 使用新的辅助函数（应用新卡片限额）
+    // 使用辅助函数（应用新卡片限额）
     const cards = await loadAllDueCardsForStudy(
       dataStorage,
       newCardsPerDay,
@@ -410,11 +510,11 @@ async function loadDueCards(): Promise<Card[]> {
 }
 
 /**
- * 🆕 加载提前学习卡片（未到期的复习卡片）
+ * 加载提前学习卡片（未到期的复习卡片）
  */
 async function loadAdvanceCards(deckId: string): Promise<Card[]> {
   try {
-    //  修复：等待 dataStorage 初始化完成
+    // 等待 dataStorage 初始化完成
     const dataStorage = await waitForService(
       () => plugin?.dataStorage,
       'DataStorage',
@@ -443,16 +543,26 @@ function handleStudyComplete(session: StudySession) {
     correct: session.correctAnswers || 0,
     incorrect: (session.cardsReviewed || 0) - (session.correctAnswers || 0)
   };
+
+  if (session.completionReason === 'paused-until-next-due') {
+    const nextDueTime = session.pendingNextDueAt ? formatNextDueTime(session.pendingNextDueAt) : null;
+    new Notice(
+      nextDueTime
+        ? t('deckStudyPage.notices.shortTermResumeAt', { time: nextDueTime })
+        : t('deckStudyPage.notices.shortTermResumeSoon')
+    );
+    return;
+  }
   
   //  显示庆祝界面
   if (session.cardsReviewed && session.cardsReviewed > 0) {
-    //  关键修复：立即同步设置所有必需的状态
+    // 立即同步设置所有必需的状态
     const memoryRate = session.cardsReviewed > 0 
       ? (session.correctAnswers || 0) / session.cardsReviewed 
       : 0;
     
     // 先用默认值初始化，确保模态窗可以立即显示
-    celebrationDeckName = '加载中...';
+    celebrationDeckName = t('deckStudyPage.state.loadingDeckName');
     celebrationDeckId = session.deckId;
     celebrationStats = {
       reviewed: session.cardsReviewed,
@@ -468,17 +578,17 @@ function handleStudyComplete(session: StudySession) {
     // 然后异步加载牌组名称
     (async () => {
       try {
-        //  修复：等待 dataStorage 初始化完成
+        // 等待 dataStorage 初始化完成
         const dataStorage = await waitForService(
           () => plugin?.dataStorage,
           'DataStorage',
           10000  // 增加到10秒，处理大数据量情况
         );
         const deck = await dataStorage.getDeck(session.deckId);
-        celebrationDeckName = deck?.name || '未知牌组';
+        celebrationDeckName = deck?.name || t('toolbar.unknownDeck');
       } catch (error) {
         logger.error('[StudyViewWrapper] 加载牌组名称失败:', error);
-        celebrationDeckName = '未知牌组';
+        celebrationDeckName = t('toolbar.unknownDeck');
       }
     })();
   } else {
@@ -504,17 +614,21 @@ function handleCloseRequest() {
 /**
  *  关闭庆祝模态窗
  */
-function handleCloseCelebration() {
+async function handleCloseCelebration() {
   showCelebrationModal = false;
   celebrationStats = null;
   celebrationDeckId = '';
   
   // 如果学习已完成（shouldCloseAfterCelebration = true），关闭整个学习视图
   if (shouldCloseAfterCelebration) {
-    // 延迟一点让动画完成
-    setTimeout(() => {
-      onClose();
-    }, 100);
+    try {
+      await plugin.returnToDeckStudyView('memory');
+    } finally {
+      // 延迟一点让动画完成
+      setTimeout(() => {
+        onClose();
+      }, 100);
+    }
   }
   
   // 重置标志
@@ -524,6 +638,55 @@ function handleCloseCelebration() {
 /**
  *  开始考试模式
  */
+async function pickQuestionBankForDeck(deckId: string): Promise<Deck | null> {
+  const currentDeck = await plugin.dataStorage.getDeck(deckId);
+  logger.info('[StudyViewWrapper] 当前牌组信息:', currentDeck ? {
+    id: currentDeck.id,
+    name: currentDeck.name,
+    deckType: currentDeck.deckType,
+    pairedMemoryDeckId: (currentDeck.metadata as any)?.pairedMemoryDeckId
+  } : '未找到');
+
+  if (currentDeck && currentDeck.deckType === 'question-bank') {
+    logger.info('[StudyViewWrapper] 当前牌组本身就是考试题组，直接使用');
+    return currentDeck;
+  }
+
+  const candidates = await plugin.questionBankService!.getBankCandidatesByMemoryDeckId(deckId);
+  logger.info('[StudyViewWrapper] 候选考试题组:', candidates.map((candidate) => ({
+    id: candidate.bank.id,
+    name: candidate.bank.name,
+    pairedMemoryDeckId: (candidate.bank.metadata as any)?.pairedMemoryDeckId,
+    matchType: candidate.matchType,
+    overlapCount: candidate.overlapCount
+  })));
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  if (candidates.length === 1) {
+    return candidates[0].bank;
+  }
+
+  new Notice(t('deckStudyPage.exam.multipleBanksFound'));
+  return await new Promise<Deck | null>((resolve) => {
+    let settled = false;
+    const modal = new QuestionBankSelectorModal(plugin.app, candidates, (candidate) => {
+      settled = true;
+      resolve(candidate.bank);
+    });
+    const originalOnClose = modal.onClose.bind(modal);
+    modal.onClose = () => {
+      originalOnClose();
+      if (!settled) {
+        resolve(null);
+      }
+    };
+    modal.open();
+  });
+}
+
 async function handleStartPractice() {
   // 关闭庆祝模态窗
   showCelebrationModal = false;
@@ -533,7 +696,7 @@ async function handleStartPractice() {
   
   if (!deckId) {
     logger.error('[StudyViewWrapper] 无法开始考试：缺少牌组ID');
-    new Notice('无法开始考试：缺少牌组信息');
+    new Notice(t('deckStudyPage.exam.missingDeckInfo'));
     return;
   }
   
@@ -543,7 +706,7 @@ async function handleStartPractice() {
     // 检查题库服务是否可用
     if (!plugin.questionBankService) {
       logger.error('[StudyViewWrapper] 题库服务未初始化');
-      new Notice('题库功能未启用');
+      new Notice(t('deckStudyPage.exam.qbNotEnabled'));
       return;
     }
     
@@ -569,42 +732,17 @@ async function handleStartPractice() {
       }))
     });
     
-    //  关键修复：检查当前牌组是否本身就是题库牌组
-    const currentDeck = await plugin.dataStorage.getDeck(deckId);
-    logger.info('[StudyViewWrapper] 当前牌组信息:', currentDeck ? {
-      id: currentDeck.id,
-      name: currentDeck.name,
-      deckType: currentDeck.deckType,
-      pairedMemoryDeckId: (currentDeck.metadata as any)?.pairedMemoryDeckId
-    } : '未找到');
-    
-    let questionBank: Deck | null = null;
-    
-    // 如果当前牌组本身就是题库牌组，直接使用
-    if (currentDeck && currentDeck.deckType === 'question-bank') {
-      logger.info('[StudyViewWrapper] ✅ 当前牌组本身就是题库牌组，直接使用');
-      questionBank = currentDeck;
-    } else {
-      // 否则，将当前牌组ID作为记忆牌组ID，查找对应的题库牌组
-      logger.info('[StudyViewWrapper] 当前牌组是记忆牌组，查找对应的题库牌组');
-      questionBank = await plugin.questionBankService.findBankByMemoryDeckId(deckId);
-      
-      logger.info('[StudyViewWrapper] 查找结果:', questionBank ? {
-        id: questionBank.id,
-        name: questionBank.name,
-        pairedMemoryDeckId: (questionBank.metadata as any)?.pairedMemoryDeckId
-      } : '未找到');
-    }
+    logger.info('[StudyViewWrapper] 当前牌组是记忆牌组，查找对应的考试题组');
+    const questionBank = await pickQuestionBankForDeck(deckId);
     
     if (!questionBank) {
-      // 没有对应的考试牌组
-      logger.info('[StudyViewWrapper] 暂无该记忆牌组对应的考试牌组');
-      new Notice('暂无该记忆牌组对应的考试牌组');
+      logger.info('[StudyViewWrapper] 暂无该记忆牌组对应的考试题组');
+      new Notice(t('deckStudyPage.exam.noPairedBank'));
       return;
     }
     
     // 打开考试学习会话
-    logger.info('[StudyViewWrapper] 打开考试牌组:', questionBank.id, questionBank.name);
+    logger.info('[StudyViewWrapper] 打开考试题组:', questionBank.id, questionBank.name);
     await plugin.openQuestionBankSession({
       bankId: questionBank.id,
       bankName: questionBank.name
@@ -619,7 +757,7 @@ async function handleStartPractice() {
     
   } catch (error) {
     logger.error('[StudyViewWrapper] 开始考试失败:', error);
-    new Notice('开始考试失败');
+    new Notice(t('deckStudyPage.exam.startFailed'));
   }
   
   // 重置标志
@@ -638,6 +776,8 @@ async function handleStartPractice() {
           dataStorage={plugin.dataStorage}
           {plugin}
           {viewInstance}
+          sessionDeckId={currentDeckId}
+          forcedDeckName={currentDeckName}
           mode={currentMode === 'custom' ? 'normal' : currentMode}
           {initialCardIndex}
           onClose={handleCloseRequest}

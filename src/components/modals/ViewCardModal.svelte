@@ -9,14 +9,13 @@
   import type { WeavePlugin } from '../../main';
   import type { Card } from '../../data/types';
   import type { TabId } from '../../types/view-card-modal-types';
-  import ResizableModal from '../ui/ResizableModal.svelte';
   import TabNavigation from '../ui/TabNavigation.svelte';
   import CardInfoTab from './tabs/CardInfoTab.svelte';
   import ReviewStatsTab from './tabs/ReviewStatsTab.svelte';
   import MemoryCurveTab from './tabs/MemoryCurveTab.svelte';
   //  导入国际化
   import { tr } from '../../utils/i18n';
-  // 🆕 v2.2: 导入YAML工具函数获取牌组名称
+  // 导入 YAML 工具函数以获取牌组名称
   import { getCardDeckNames } from '../../utils/yaml-utils';
 
   //  移动端检测
@@ -26,12 +25,6 @@
   let t = $derived($tr);
 
   interface Props {
-    /** 是否显示模态窗 */
-    open: boolean;
-
-    /** 关闭回调 */
-    onClose: () => void;
-
     /** 卡片数据 */
     card: Card;
 
@@ -43,14 +36,12 @@
   }
 
   let {
-    open = $bindable(),
-    onClose,
     card,
     plugin,
     allDecks
   }: Props = $props();
 
-  // 🆕 内部卡片状态 - 用于动态刷新
+  // 内部卡片状态，用于动态刷新
   let currentCard = $state<Card>(card);
 
   // 当前激活的Tab
@@ -73,9 +64,9 @@
     if (!templateName) templateName = t('modals.viewCard.unknownTemplate');
   });
 
-  // 🆕 监听模态窗打开状态，重新读取最新卡片数据
+  // 监听模态窗打开状态，重新读取最新卡片数据
   $effect(() => {
-    if (open && card.uuid) {
+    if (card.uuid) {
       // 异步刷新卡片数据
       (async () => {
         try {
@@ -95,12 +86,12 @@
     }
   });
 
-  // 🆕 使用$effect响应式加载关联数据（基于currentCard变化）
+  // 使用 $effect 响应式加载关联数据（基于 currentCard 变化）
   $effect(() => {
     if (currentCard) {
       (async () => {
         try {
-          // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取牌组名称
+          // 优先从 content YAML 的 we_decks 获取牌组名称
           const decks = allDecks || await plugin.dataStorage.getAllDecks();
           const names = getCardDeckNames(currentCard, decks, t('modals.viewCard.noDeck'));
           deckName = names.join(', ');
@@ -120,67 +111,81 @@
   function handleTabChange(tabId: string) {
     activeTab = tabId as TabId;
   }
-
-  // 处理关闭
-  function handleClose() {
-    if (typeof onClose === 'function') {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-<ResizableModal
-  bind:open
-  {plugin}
-  title={t('modals.viewCard.title')}
-  onClose={handleClose}
-  enableTransparentMask={false}
-  enableWindowDrag={false}
-  accentColor="blue"
->
-  <div class="view-card-modal-v2" class:mobile={isMobile}>
-    <!-- Tab导航 -->
-    <div class="modal-tabs" class:mobile={isMobile}>
-      <TabNavigation
-        {tabs}
-        {activeTab}
-        onTabChange={handleTabChange}
-      />
-    </div>
-
-    <!-- Tab内容 -->
-    <div class="modal-tab-content" class:mobile={isMobile}>
-      {#if activeTab === 'info'}
-        <CardInfoTab card={currentCard} {plugin} {deckName} {templateName} />
-      {:else if activeTab === 'stats'}
-        <ReviewStatsTab card={currentCard} />
-      {:else if activeTab === 'curve'}
-        <MemoryCurveTab card={currentCard} />
-      {/if}
-    </div>
+<div class="view-card-modal-v2" class:mobile={isMobile}>
+  <!-- Tab导航 -->
+  <div class="modal-tabs" class:mobile={isMobile}>
+    <TabNavigation
+      {tabs}
+      {activeTab}
+      onTabChange={handleTabChange}
+    />
   </div>
-</ResizableModal>
-{/if}
+
+  <!-- Tab内容 -->
+  <div class="modal-tab-content" class:mobile={isMobile}>
+    {#if activeTab === 'info'}
+      <CardInfoTab card={currentCard} {plugin} {deckName} {templateName} />
+    {:else if activeTab === 'stats'}
+      <ReviewStatsTab card={currentCard} />
+    {:else if activeTab === 'curve'}
+      <MemoryCurveTab card={currentCard} />
+    {/if}
+  </div>
+</div>
 
 <style>
   .view-card-modal-v2 {
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: var(--background-primary);
+    background: linear-gradient(
+      180deg,
+      var(--background-primary) 0%,
+      var(--background-primary) 70%,
+      var(--background-secondary) 100%
+    );
+    gap: 8px;
   }
 
   .modal-tabs {
     flex-shrink: 0;
-    padding: 12px 16px 0 16px;
-    background: var(--background-primary);
+    padding: 12px 14px 0 14px;
+    background: transparent;
+  }
+
+  .modal-tabs :global(.tab-navigation) {
+    border-radius: 10px;
+    padding: 4px;
+    gap: 4px;
+    border: 1px solid var(--background-modifier-border);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .modal-tabs :global(.tab-button) {
+    border-radius: 8px;
+    border: 1px solid transparent;
+    padding: 7px 14px;
+    font-size: 12.5px;
+    line-height: 1.1;
+    transition: all 0.16s ease;
+  }
+
+  .modal-tabs :global(.tab-button:hover) {
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border);
+  }
+
+  .modal-tabs :global(.tab-button.active) {
+    border-color: var(--background-modifier-border);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.12);
   }
 
   .modal-tab-content {
     flex: 1;
     overflow-y: auto;
-    padding: 0;
+    padding: 0 14px 14px 14px;
   }
 
   /* 滚动条样式 */
@@ -207,19 +212,19 @@
   /* 移动端模态窗容器 - 限制高度，避免过长 */
   .view-card-modal-v2.mobile {
     /*  移动端：限制最大高度为屏幕高度的 70%，避免模态窗过长 */
-    max-height: 70vh;
+    max-height: 72vh;
     min-height: 0;
     overflow: hidden;
   }
 
   /* 移动端Tab导航 - 图标居中，增大触摸区域 */
   .modal-tabs.mobile {
-    padding: 8px 12px 0 12px;
+    padding: 8px 10px 0 10px;
   }
 
   .modal-tabs.mobile :global(.tab-button) {
     min-height: 40px;
-    padding: 8px 12px;
+    padding: 8px 11px;
     flex: 1;
     justify-content: center;
   }
@@ -228,6 +233,7 @@
   .modal-tab-content.mobile {
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+    padding: 0 10px 10px 10px;
   }
 
   /* 移动端内部组件样式调整 */

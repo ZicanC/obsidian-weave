@@ -1,22 +1,18 @@
 /**
  * 卡片元数据服务 - UI 适配层
- * 
+ *
  * 为 UI 组件提供统一的元数据访问接口
  * 封装 CardMetadataCache 并提供便捷的统计计算方法
- * 
+ *
  * @module services/CardMetadataService
  * @version 1.0.0
  * @see YAML属性栏卡片元数据方案.md
  */
 
-import type { Card, Deck } from '../data/types';
-import { 
-  getCardMetadataCache, 
-  type ParsedCardMetadata 
-} from './CardMetadataCache';
-import { getDeckNameMapper } from './DeckNameMapper';
-import { extractAllTags, getCardMetadata } from '../utils/yaml-utils';
-import { logger } from '../utils/logger';
+import type { Card, Deck } from "../data/types";
+import { getCardMetadata } from "../utils/yaml-utils";
+import { getCardMetadataCache } from "./CardMetadataCache";
+import { getDeckNameMapper } from "./DeckNameMapper";
 
 // ===== 类型定义 =====
 
@@ -24,389 +20,425 @@ import { logger } from '../utils/logger';
  * 牌组统计信息
  */
 export interface DeckStats {
-  id: string;
-  name: string;
-  count: number;
+	id: string;
+	name: string;
+	count: number;
 }
 
 /**
  * 标签统计信息
  */
 export interface TagStats {
-  name: string;
-  count: number;
+	name: string;
+	count: number;
 }
 
 /**
  * 卡片类型统计
  */
 export interface TypeStats {
-  [type: string]: number;
+	[type: string]: number;
+}
+
+export interface CardDeckLookupOptions {
+	/**
+	 * 是否允许回退到运行时兼容字段。
+	 * 默认 true；当业务要求“以卡片内容 YAML 为准”时应显式传 false。
+	 */
+	fallbackToReferences?: boolean;
 }
 
 // ===== 服务实现 =====
 
 /**
  * 卡片元数据服务
- * 
+ *
  * 提供：
  * 1. 统一的元数据访问接口
  * 2. 统计数据计算
  * 3. 向后兼容的字段访问
  */
 export class CardMetadataService {
-  private static instance: CardMetadataService | null = null;
+	private static instance: CardMetadataService | null = null;
 
-  private constructor() {}
+	private constructor() {}
 
-  static getInstance(): CardMetadataService {
-    if (!CardMetadataService.instance) {
-      CardMetadataService.instance = new CardMetadataService();
-    }
-    return CardMetadataService.instance;
-  }
+	static getInstance(): CardMetadataService {
+		if (!CardMetadataService.instance) {
+			CardMetadataService.instance = new CardMetadataService();
+		}
+		return CardMetadataService.instance;
+	}
 
-  // ===== 元数据访问 =====
+	// ===== 元数据访问 =====
 
-  /**
-   * 获取卡片的牌组ID列表
-   * 兼容新旧两种数据格式
-   * @param card 卡片对象
-   * @returns 牌组ID数组
-   */
-  getCardDeckIds(card: Card): string[] {
-    // 1. 优先从缓存获取（新格式：YAML frontmatter）
-    try {
-      const cache = getCardMetadataCache();
-      const metadata = cache.getMetadata(card);
-      if (metadata.deckIds.length > 0) {
-        return metadata.deckIds;
-      }
-    } catch {
-      // 缓存未初始化，继续使用旧格式
-    }
+	/**
+	 * 获取卡片的牌组ID列表
+	 * 兼容新旧两种数据格式
+	 * @param card 卡片对象
+	 * @param options 控制是否允许回退到兼容字段
+	 * @returns 牌组ID数组
+	 */
+	getCardDeckIds(card: Card, options: CardDeckLookupOptions = {}): string[] {
+		const fallbackToReferences = options.fallbackToReferences ?? true;
 
-    // 2. 回退到旧格式字段
-    const deckIds = new Set<string>();
-    
-    if (card.referencedByDecks && card.referencedByDecks.length > 0) {
-      card.referencedByDecks.forEach(id => deckIds.add(id));
-    }
-    
-    if (card.deckId) {
-      deckIds.add(card.deckId);
-    }
-    
-    return Array.from(deckIds);
-  }
+		// 1. 优先从缓存获取（新格式：YAML frontmatter）
+		try {
+			const cache = getCardMetadataCache();
+			const metadata = cache.getMetadata(card);
+			if (metadata.deckIds.length > 0) {
+				return metadata.deckIds;
+			}
+		} catch {
+			// 缓存未初始化，继续使用旧格式
+		}
 
-  /**
-   * 获取卡片的牌组名称列表
-   * @param card 卡片对象
-   * @returns 牌组名称数组
-   */
-  getCardDeckNames(card: Card): string[] {
-    // 1. 优先从缓存获取（新格式）
-    try {
-      const cache = getCardMetadataCache();
-      const metadata = cache.getMetadata(card);
-      if (metadata.decks.length > 0) {
-        return metadata.decks;
-      }
-    } catch {
-      // 继续使用旧格式
-    }
+		let mapper: ReturnType<typeof getDeckNameMapper> | null = null;
 
-    // 2. 回退：通过 ID 获取名称
-    const deckIds = this.getCardDeckIds(card);
-    try {
-      const mapper = getDeckNameMapper();
-      return mapper.getDeckNamesByIds(deckIds);
-    } catch {
-      return [];
-    }
-  }
+		try {
+			mapper = getDeckNameMapper();
+		} catch {
+			mapper = null;
+		}
 
-  /**
-   * 获取卡片的标签列表
-   * 兼容新旧两种数据格式
-   * @param card 卡片对象
-   * @returns 标签数组
-   */
-  getCardTags(card: Card): string[] {
-    // 1. 优先从缓存获取（新格式：YAML + 正文）
-    try {
-      const cache = getCardMetadataCache();
-      const metadata = cache.getMetadata(card);
-      if (metadata.tags.length > 0) {
-        return metadata.tags;
-      }
-    } catch {
-      // 继续使用旧格式
-    }
+		// 2. 直接从 YAML 读取 we_decks，避免缓存未初始化时误判。
+		if (card.content) {
+			try {
+				const metadata = getCardMetadata(card.content);
+				if (Array.isArray(metadata.we_decks) && metadata.we_decks.length > 0) {
+					return mapper
+						? mapper.getDeckIdsByNames(metadata.we_decks)
+						: Array.from(new Set(metadata.we_decks.filter(Boolean)));
+				}
+			} catch {
+				// YAML 解析失败时再决定是否走兼容回退
+			}
+		}
 
-    // 2. 回退到旧格式字段
-    return card.tags || [];
-  }
+		if (!fallbackToReferences) {
+			return [];
+		}
 
-  /**
-   * 获取卡片的类型
-   * @param card 卡片对象
-   * @returns 卡片类型
-   */
-  getCardType(card: Card): string {
-    // 1. 优先从缓存获取
-    try {
-      const cache = getCardMetadataCache();
-      const metadata = cache.getMetadata(card);
-      if (metadata.type) {
-        return metadata.type;
-      }
-    } catch {
-      // 继续使用旧格式
-    }
+		// 3. 回退到旧格式字段
+		const deckIds = new Set<string>();
 
-    // 2. 回退到旧格式字段
-    return card.type || 'basic';
-  }
+		if (card.referencedByDecks && card.referencedByDecks.length > 0) {
+			card.referencedByDecks.forEach((_id) => {
+				const normalizedId = mapper?.hasDeckId(_id)
+					? _id
+					: (mapper ? mapper.getDeckIdByName(_id) : undefined) || _id;
+				deckIds.add(normalizedId);
+			});
+		}
 
-  /**
-   * 获取卡片的优先级
-   * @param card 卡片对象
-   * @returns 优先级
-   */
-  getCardPriority(card: Card): number | undefined {
-    // 1. 优先从缓存获取
-    try {
-      const cache = getCardMetadataCache();
-      const metadata = cache.getMetadata(card);
-      if (metadata.priority !== undefined) {
-        return metadata.priority;
-      }
-    } catch {
-      // 继续使用旧格式
-    }
+		if (card.deckId) {
+			const normalizedDeckId = mapper?.hasDeckId(card.deckId)
+				? card.deckId
+				: (mapper ? mapper.getDeckIdByName(card.deckId) : undefined) || card.deckId;
+			deckIds.add(normalizedDeckId);
+		}
 
-    // 2. 回退到旧格式字段
-    return card.priority;
-  }
+		return Array.from(deckIds);
+	}
 
-  /**
-   * 获取卡片的来源文档
-   * @param card 卡片对象
-   * @returns 来源文档路径
-   */
-  getCardSource(card: Card): string | undefined {
-    // 1. 优先从缓存获取
-    try {
-      const cache = getCardMetadataCache();
-      const metadata = cache.getMetadata(card);
-      if (metadata.source) {
-        // 解析 wikilink 格式
-        const match = metadata.source.match(/\[\[(.+?)\]\]/);
-        return match ? match[1] : metadata.source;
-      }
-    } catch {
-      // 继续使用旧格式
-    }
+	/**
+	 * 获取卡片的牌组名称列表
+	 * @param card 卡片对象
+	 * @param options 控制是否允许回退到兼容字段
+	 * @returns 牌组名称数组
+	 */
+	getCardDeckNames(card: Card, options: CardDeckLookupOptions = {}): string[] {
+		// 1. 优先从缓存获取（新格式）
+		try {
+			const cache = getCardMetadataCache();
+			const metadata = cache.getMetadata(card);
+			if (metadata.decks.length > 0) {
+				const mapper = getDeckNameMapper();
+				const normalizedNames: string[] = [];
+				const seen = new Set<string>();
 
-    // 2. 回退到旧格式字段
-    return card.sourceFile;
-  }
+				for (const value of metadata.decks) {
+					const normalizedName = mapper.getDeckNameById(value) || value;
+					if (!seen.has(normalizedName)) {
+						seen.add(normalizedName);
+						normalizedNames.push(normalizedName);
+					}
+				}
 
-  /**
-   * 检查卡片是否为孤儿卡片
-   * @param card 卡片对象
-   * @returns 是否为孤儿
-   */
-  isOrphanCard(card: Card): boolean {
-    const deckIds = this.getCardDeckIds(card);
-    return deckIds.length === 0;
-  }
+				return normalizedNames;
+			}
+		} catch {
+			// 继续使用旧格式
+		}
 
-  // ===== 统计计算 =====
+		// 2. 回退：通过 ID 获取名称
+		const deckIds = this.getCardDeckIds(card, options);
+		try {
+			const mapper = getDeckNameMapper();
+			return mapper.getDeckNamesByIds(deckIds);
+		} catch {
+			return [];
+		}
+	}
 
-  /**
-   * 计算牌组统计
-   * @param cards 卡片数组
-   * @param allDecks 所有牌组
-   * @returns 牌组统计数组
-   */
-  computeDeckStats(cards: Card[], allDecks: Deck[]): DeckStats[] {
-    const deckCounts = new Map<string, number>();
-    const cardUUIDs = new Set(cards.map(c => c.uuid));
+	/**
+	 * 获取卡片的标签列表
+	 * 兼容新旧两种数据格式
+	 * @param card 卡片对象
+	 * @returns 标签数组
+	 */
+	getCardTags(card: Card): string[] {
+		// 1. 优先从缓存获取（新格式：YAML + 正文）
+		try {
+			const cache = getCardMetadataCache();
+			const metadata = cache.getMetadata(card);
+			if (metadata.tags.length > 0) {
+				return metadata.tags;
+			}
+		} catch {
+			// 继续使用旧格式
+		}
 
-    // 方式1：通过 deck.cardUUIDs 统计（优先）
-    for (const deck of allDecks) {
-      if (deck.cardUUIDs && deck.cardUUIDs.length > 0) {
-        const count = deck.cardUUIDs.filter(uuid => cardUUIDs.has(uuid)).length;
-        if (count > 0) {
-          deckCounts.set(deck.id, count);
-        }
-      }
-    }
+		// 2. 回退到旧格式字段
+		return card.tags || [];
+	}
 
-    // 方式2：通过卡片元数据统计
-    for (const card of cards) {
-      const cardDeckIds = this.getCardDeckIds(card);
-      for (const deckId of cardDeckIds) {
-        const deck = allDecks.find(d => d.id === deckId);
-        // 只统计没有 cardUUIDs 的牌组（避免重复）
-        if (deck && (!deck.cardUUIDs || deck.cardUUIDs.length === 0)) {
-          deckCounts.set(deckId, (deckCounts.get(deckId) || 0) + 1);
-        }
-      }
-    }
+	/**
+	 * 获取卡片的类型
+	 * @param card 卡片对象
+	 * @returns 卡片类型
+	 */
+	getCardType(card: Card): string {
+		// 1. 优先从缓存获取
+		try {
+			const cache = getCardMetadataCache();
+			const metadata = cache.getMetadata(card);
+			if (metadata.type) {
+				return metadata.type;
+			}
+		} catch {
+			// 继续使用旧格式
+		}
 
-    // 转换为结果数组
-    const result: DeckStats[] = [];
-    for (const [id, count] of deckCounts) {
-      const deck = allDecks.find(d => d.id === id);
-      if (deck) {
-        result.push({
-          id,
-          name: deck.name,
-          count
-        });
-      }
-    }
+		// 2. 回退到旧格式字段
+		return card.type || "basic";
+	}
 
-    return result.sort((a, b) => b.count - a.count);
-  }
+	/**
+	 * 获取卡片的优先级
+	 * @param card 卡片对象
+	 * @returns 优先级
+	 */
+	getCardPriority(card: Card): number | undefined {
+		// 1. 优先从缓存获取
+		try {
+			const cache = getCardMetadataCache();
+			const metadata = cache.getMetadata(card);
+			if (metadata.priority !== undefined) {
+				return metadata.priority;
+			}
+		} catch {
+			// 继续使用旧格式
+		}
 
-  /**
-   * 计算标签统计
-   * @param cards 卡片数组
-   * @returns 标签统计数组
-   */
-  computeTagStats(cards: Card[]): TagStats[] {
-    const tagCounts = new Map<string, number>();
+		// 2. 回退到旧格式字段
+		return card.priority;
+	}
 
-    for (const card of cards) {
-      const tags = this.getCardTags(card);
-      for (const tag of tags) {
-        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
-      }
-    }
+	/**
+	 * 获取卡片的来源文档
+	 * @param card 卡片对象
+	 * @returns 来源文档路径
+	 */
+	getCardSource(card: Card): string | undefined {
+		// 1. 优先从缓存获取
+		try {
+			const cache = getCardMetadataCache();
+			const metadata = cache.getMetadata(card);
+			if (metadata.source) {
+				// 解析 wikilink 格式
+				const match = metadata.source.match(/\[\[(.+?)\]\]/);
+				return match ? match[1] : metadata.source;
+			}
+		} catch {
+			// 继续使用旧格式
+		}
 
-    const result: TagStats[] = [];
-    for (const [name, count] of tagCounts) {
-      result.push({ name, count });
-    }
+		// 2. 回退到旧格式字段
+		return card.sourceFile;
+	}
 
-    return result.sort((a, b) => b.count - a.count);
-  }
+	/**
+	 * 检查卡片是否为孤儿卡片
+	 * @param card 卡片对象
+	 * @returns 是否为孤儿
+	 */
+	isOrphanCard(card: Card): boolean {
+		const deckIds = this.getCardDeckIds(card);
+		return deckIds.length === 0;
+	}
 
-  /**
-   * 计算类型统计
-   * @param cards 卡片数组
-   * @returns 类型统计对象
-   */
-  computeTypeStats(cards: Card[]): TypeStats {
-    const stats: TypeStats = {};
+	// ===== 统计计算 =====
 
-    for (const card of cards) {
-      const type = this.getCardType(card);
-      stats[type] = (stats[type] || 0) + 1;
-    }
+	/**
+	 * 计算牌组统计
+	 * @param cards 卡片数组
+	 * @param allDecks 所有牌组
+	 * @returns 牌组统计数组
+	 */
+	computeDeckStats(cards: Card[], allDecks: Deck[]): DeckStats[] {
+		const deckCounts = new Map<string, number>();
+		for (const card of cards) {
+			const cardDeckIds = this.getCardDeckIds(card, { fallbackToReferences: false });
+			for (const deckId of cardDeckIds) {
+				if (allDecks.some((deck) => deck.id === deckId)) {
+					deckCounts.set(deckId, (deckCounts.get(deckId) || 0) + 1);
+				}
+			}
+		}
 
-    return stats;
-  }
+		// 转换为结果数组
+		const result: DeckStats[] = [];
+		for (const [id, count] of deckCounts) {
+			const deck = allDecks.find((d) => d.id === id);
+			if (deck) {
+				result.push({
+					id,
+					name: deck.name,
+					count,
+				});
+			}
+		}
 
-  /**
-   * 筛选孤儿卡片
-   * @param cards 卡片数组
-   * @returns 孤儿卡片数组
-   */
-  filterOrphanCards(cards: Card[]): Card[] {
-    return cards.filter(card => this.isOrphanCard(card));
-  }
+		return result.sort((a, b) => b.count - a.count);
+	}
 
-  /**
-   * 按牌组筛选卡片
-   * @param cards 卡片数组
-   * @param deckId 牌组ID
-   * @param deck 可选的牌组对象（用于优先使用 cardUUIDs）
-   * @returns 筛选后的卡片
-   */
-  filterByDeck(cards: Card[], deckId: string, deck?: Deck): Card[] {
-    // 优先使用 deck.cardUUIDs
-    if (deck?.cardUUIDs && deck.cardUUIDs.length > 0) {
-      const uuidSet = new Set(deck.cardUUIDs);
-      return cards.filter(card => uuidSet.has(card.uuid));
-    }
+	/**
+	 * 计算标签统计
+	 * @param cards 卡片数组
+	 * @returns 标签统计数组
+	 */
+	computeTagStats(cards: Card[]): TagStats[] {
+		const tagCounts = new Map<string, number>();
 
-    // 回退：通过卡片元数据筛选
-    return cards.filter(card => {
-      const deckIds = this.getCardDeckIds(card);
-      return deckIds.includes(deckId);
-    });
-  }
+		for (const card of cards) {
+			const tags = this.getCardTags(card);
+			for (const tag of tags) {
+				tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+			}
+		}
 
-  /**
-   * 按标签筛选卡片
-   * @param cards 卡片数组
-   * @param tag 标签
-   * @returns 筛选后的卡片
-   */
-  filterByTag(cards: Card[], tag: string): Card[] {
-    return cards.filter(card => {
-      const tags = this.getCardTags(card);
-      return tags.includes(tag);
-    });
-  }
+		const result: TagStats[] = [];
+		for (const [name, count] of tagCounts) {
+			result.push({ name, count });
+		}
 
-  /**
-   * 按优先级筛选卡片
-   * @param cards 卡片数组
-   * @param priority 优先级
-   * @returns 筛选后的卡片
-   */
-  filterByPriority(cards: Card[], priority: number): Card[] {
-    return cards.filter(card => {
-      return this.getCardPriority(card) === priority;
-    });
-  }
+		return result.sort((a, b) => b.count - a.count);
+	}
 
-  // ===== 缓存管理 =====
+	/**
+	 * 计算类型统计
+	 * @param cards 卡片数组
+	 * @returns 类型统计对象
+	 */
+	computeTypeStats(cards: Card[]): TypeStats {
+		const stats: TypeStats = {};
 
-  /**
-   * 使卡片缓存失效
-   * @param cardUUID 卡片UUID
-   */
-  invalidateCard(cardUUID: string): void {
-    try {
-      const cache = getCardMetadataCache();
-      cache.invalidate(cardUUID);
-    } catch {
-      // 缓存未初始化
-    }
-  }
+		for (const card of cards) {
+			const type = this.getCardType(card);
+			stats[type] = (stats[type] || 0) + 1;
+		}
 
-  /**
-   * 清除所有缓存
-   */
-  clearCache(): void {
-    try {
-      const cache = getCardMetadataCache();
-      cache.clear();
-    } catch {
-      // 缓存未初始化
-    }
-  }
+		return stats;
+	}
 
-  /**
-   * 预热缓存
-   * @param cards 卡片数组
-   */
-  warmUpCache(cards: Card[]): void {
-    try {
-      const cache = getCardMetadataCache();
-      cache.warmUp(cards);
-    } catch {
-      // 缓存未初始化
-    }
-  }
+	/**
+	 * 筛选孤儿卡片
+	 * @param cards 卡片数组
+	 * @returns 孤儿卡片数组
+	 */
+	filterOrphanCards(cards: Card[]): Card[] {
+		return cards.filter((card) => this.isOrphanCard(card));
+	}
+
+	/**
+	 * 按牌组筛选卡片
+	 * @param cards 卡片数组
+	 * @param deckId 牌组ID
+	 * @param _deck 保留参数位，兼容旧调用方
+	 * @returns 筛选后的卡片
+	 */
+	filterByDeck(cards: Card[], deckId: string, _deck?: Deck): Card[] {
+		return cards.filter((_card) => {
+			const deckIds = this.getCardDeckIds(_card, { fallbackToReferences: false });
+			return deckIds.includes(deckId);
+		});
+	}
+
+	/**
+	 * 按标签筛选卡片
+	 * @param cards 卡片数组
+	 * @param tag 标签
+	 * @returns 筛选后的卡片
+	 */
+	filterByTag(cards: Card[], tag: string): Card[] {
+		return cards.filter((_card) => {
+			const tags = this.getCardTags(_card);
+			return tags.includes(tag);
+		});
+	}
+
+	/**
+	 * 按优先级筛选卡片
+	 * @param cards 卡片数组
+	 * @param priority 优先级
+	 * @returns 筛选后的卡片
+	 */
+	filterByPriority(cards: Card[], priority: number): Card[] {
+		return cards.filter((_card) => {
+			return this.getCardPriority(_card) === priority;
+		});
+	}
+
+	// ===== 缓存管理 =====
+
+	/**
+	 * 使卡片缓存失效
+	 * @param cardUUID 卡片UUID
+	 */
+	invalidateCard(cardUUID: string): void {
+		try {
+			const cache = getCardMetadataCache();
+			cache.invalidate(cardUUID);
+		} catch {
+			// 缓存未初始化
+		}
+	}
+
+	/**
+	 * 清除所有缓存
+	 */
+	clearCache(): void {
+		try {
+			const cache = getCardMetadataCache();
+			cache.clear();
+		} catch {
+			// 缓存未初始化
+		}
+	}
+
+	/**
+	 * 预热缓存
+	 * @param cards 卡片数组
+	 */
+	warmUpCache(cards: Card[]): void {
+		try {
+			const cache = getCardMetadataCache();
+			void cache.prefetchAsync(cards);
+		} catch {
+			// 缓存未初始化
+		}
+	}
 }
 
 // ===== 单例导出 =====
@@ -415,7 +447,7 @@ export class CardMetadataService {
  * 获取卡片元数据服务实例
  */
 export function getCardMetadataService(): CardMetadataService {
-  return CardMetadataService.getInstance();
+	return CardMetadataService.getInstance();
 }
 
 // ===== 便捷函数导出 =====
@@ -426,8 +458,8 @@ export function getCardMetadataService(): CardMetadataService {
  * @returns 牌组名称字符串（逗号分隔）
  */
 export function getCardDeckNamesString(card: Card): string {
-  const service = getCardMetadataService();
-  return service.getCardDeckNames(card).join(', ');
+	const service = getCardMetadataService();
+	return service.getCardDeckNames(card).join(", ");
 }
 
 /**
@@ -436,6 +468,6 @@ export function getCardDeckNamesString(card: Card): string {
  * @returns 标签数组
  */
 export function getCardTagsFromMetadata(card: Card): string[] {
-  const service = getCardMetadataService();
-  return service.getCardTags(card);
+	const service = getCardMetadataService();
+	return service.getCardTags(card);
 }

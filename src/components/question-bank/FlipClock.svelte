@@ -13,7 +13,7 @@
   let { remainingTime, isPaused = false, isTimeWarning = false }: Props = $props();
 
   // 计算当前显示的数字
-  const digits = $derived(() => {
+  const digits = $derived.by(() => {
     const minutes = Math.floor(remainingTime / 60);
     const seconds = remainingTime % 60;
     
@@ -45,11 +45,17 @@
     // 创建翻页动画元素
     const flipTop = document.createElement('div');
     flipTop.className = 'flip-top flipping';
-    flipTop.innerHTML = `<div class="flip-content">${oldValue}</div>`;
+    const flipTopContent = document.createElement('div');
+    flipTopContent.className = 'flip-content';
+    flipTopContent.textContent = oldValue || '';
+    flipTop.appendChild(flipTopContent);
 
     const flipBottom = document.createElement('div');
     flipBottom.className = 'flip-bottom flipping';
-    flipBottom.innerHTML = `<div class="flip-content">${newValue}</div>`;
+    const flipBottomContent = document.createElement('div');
+    flipBottomContent.className = 'flip-content';
+    flipBottomContent.textContent = newValue || '';
+    flipBottom.appendChild(flipBottomContent);
 
     digitCard.appendChild(flipTop);
     digitCard.appendChild(flipBottom);
@@ -68,7 +74,7 @@
 
   // 监听数字变化并触发动画
   $effect(() => {
-    const d = digits();
+    const d = digits;
     
     // 首次渲染时只初始化，不触发动画
     if (isFirstRender) {
@@ -111,12 +117,12 @@
   <!-- 分钟 -->
   <div class="flip-digit" id="flip-min-tens">
     <div class="digit-card">
-      <div class="digit-current" data-old-value="0">{digits().minTens}</div>
+      <div class="digit-current" data-old-value="0">{digits.minTens}</div>
     </div>
   </div>
   <div class="flip-digit" id="flip-min-ones">
     <div class="digit-card">
-      <div class="digit-current" data-old-value="5">{digits().minOnes}</div>
+      <div class="digit-current" data-old-value="5">{digits.minOnes}</div>
     </div>
   </div>
 
@@ -126,12 +132,12 @@
   <!-- 秒 -->
   <div class="flip-digit" id="flip-sec-tens">
     <div class="digit-card">
-      <div class="digit-current" data-old-value="0">{digits().secTens}</div>
+      <div class="digit-current" data-old-value="0">{digits.secTens}</div>
     </div>
   </div>
   <div class="flip-digit" id="flip-sec-ones">
     <div class="digit-card">
-      <div class="digit-current" data-old-value="0">{digits().secOnes}</div>
+      <div class="digit-current" data-old-value="0">{digits.secOnes}</div>
     </div>
   </div>
 </div>

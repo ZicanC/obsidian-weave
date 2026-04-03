@@ -7,10 +7,10 @@
   - 提供完整的配置选项和最佳实践指导
   
   功能：
-  - P0: 队列生成时过滤
-  - P1: 创建时初始分散
-  - P2: 复习后动态调整
-  - P3: FSRS调度集成
+  - 队列生成时过滤
+  - 创建时初始分散
+  - 复习后动态调整
+  - FSRS 调度集成
   
   @version 1.0.0
   @date 2025-12-08
@@ -133,9 +133,24 @@ logger.info('[兄弟分散设置] 配置已保存:', siblingConfig);
 <div class="weave-settings settings-section sibling-dispersion-settings">
   <!-- 主配置区 -->
   <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-purple">
-      {t('settings.siblingDispersion.title') || '兄弟卡片智能分散'}
-    </h4>
+    <div class="group-title-row">
+      <h4 class="group-title with-accent-bar accent-purple">
+        {t('settings.siblingDispersion.title') || '兄弟卡片智能分散'}
+      </h4>
+      <button
+        class="icon-button reset-button"
+        onclick={resetToDefaults}
+        disabled={!siblingConfig.enabled}
+        title={t('settings.siblingDispersion.resetButton') || '重置为推荐配置'}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+          <path d="M21 3v5h-5"/>
+          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+          <path d="M3 21v-5h5"/>
+        </svg>
+      </button>
+    </div>
     
     <div class="group-content">
       <!-- 主开关行 -->
@@ -148,35 +163,20 @@ logger.info('[兄弟分散设置] 配置已保存:', siblingConfig);
             {t('settings.siblingDispersion.enable.description') || '自动管理兄弟卡片的学习日期，避免在同一学习会话或相近日期出现'}
           </span>
         </div>
-        <div class="title-controls">
-          <button
-            class="icon-button reset-button"
-            onclick={resetToDefaults}
-            disabled={!siblingConfig.enabled}
-            title={t('settings.siblingDispersion.resetButton') || '重置为推荐配置'}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
-              <path d="M21 3v5h-5"/>
-              <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
-              <path d="M3 21v-5h5"/>
-            </svg>
-          </button>
-          <label class="modern-switch">
-            <input
-              id="sibling-enabled"
-              type="checkbox"
-              checked={siblingConfig.enabled}
-              onchange={handleEnabledChange}
-            />
-            <span class="switch-slider"></span>
-          </label>
-        </div>
+        <label class="modern-switch">
+          <input
+            id="sibling-enabled"
+            type="checkbox"
+            checked={siblingConfig.enabled}
+            onchange={handleEnabledChange}
+          />
+          <span class="switch-slider"></span>
+        </label>
       </div>
 
       <!-- 功能开关 -->
       {#if siblingConfig.enabled}
-      <!-- P0: 队列过滤 -->
+      <!-- 队列过滤 -->
       <div class="row">
         <div class="setting-label-group">
           <label for="filter-queue" class="setting-label">
@@ -313,10 +313,12 @@ logger.info('[兄弟分散设置] 配置已保存:', siblingConfig);
 <style>
   /* 标题样式继承自settings-common.css，这里不需要重复定义 */
 
-  .title-controls {
+  .group-title-row {
     display: flex;
     align-items: center;
-    gap: 12px;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
   }
 
   .icon-button {

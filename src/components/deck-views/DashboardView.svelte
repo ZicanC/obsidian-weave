@@ -22,7 +22,7 @@
     plugin: WeavePlugin;
     onStartStudy: (deckId: string) => void;
     onContinueStudy: () => void;
-    // 🆕 菜单操作回调
+// 菜单操作回调
     onCreateSubdeck?: (deckId: string) => void;
     onMoveDeck?: (deckId: string) => void;
     onEditDeck?: (deckId: string) => void;
@@ -47,15 +47,15 @@
   //  响应式翻译函数
   let t = $derived($tr);
   
-  // 🆕 牌组类型筛选状态
+// 牌组类型筛选状态
   let selectedFilter = $state<DeckFilter>('all');
   
-  // 🆕 浮窗状态
+// 浮窗状态
   let showPopover = $state(false);
   let popoverDeckId = $state<string | null>(null);
   let popoverPosition = $state({ x: 0, y: 0 });
   
-  // 🆕 计算当前过滤后牌组名的最大宽度
+// 计算当前过滤后牌组名的最大宽度
   const maxDeckNameWidth = $derived(() => {
     const decks = filteredDecks();
     if (decks.length === 0) return 200; // 默认最小宽度
@@ -81,7 +81,7 @@
     return Math.min(Math.max(maxWidth, 200), 400);
   });
   
-  // 🆕 初始化筛选器
+// 初始化筛选器
   onMount(() => {
     // 恢复上次选择的筛选器
     const savedFilter = vaultStorage.getItem('weave-deck-filter') as DeckFilter;
@@ -91,7 +91,7 @@
     logger.debug('[DashboardView] 筛选器初始化:', selectedFilter);
   });
   
-  // 🆕 筛选器选择处理
+// 筛选器选择处理
   function handleFilterSelect(filter: DeckFilter) {
     selectedFilter = filter;
     vaultStorage.setItem('weave-deck-filter', filter);
@@ -124,10 +124,10 @@
     return deck.metadata?.pairedParentDeck != null;
   }
   
-  // 🆕 分类列表（空数组，如果需要可以后续添加）
+// 分类列表（空数组，如有需要可后续添加）
   const categories: Array<{ id: string; name: string }> = [];
 
-  // 🆕 根据类型筛选牌组
+// 根据类型筛选牌组
   const filteredDecks = $derived(() => {
     if (selectedFilter === 'all') {
       return allDecks;
@@ -144,7 +144,7 @@
     return (stats?.newCards ?? 0) + (stats?.learningCards ?? 0) + (stats?.reviewCards ?? 0);
   }
   
-  // 🆕 获取牌组总卡片数
+// 获取牌组总卡片数
   function getTotalCards(deckId: string): number {
     const stats = deckStats[deckId];
     if (!stats) return 0;
@@ -153,7 +153,7 @@
     return stats.totalCards ?? 0;
   }
   
-  // 🆕 获取今日学习数据
+// 获取今日学习数据
   function getTodayStudyData(deckId: string): { studyTime: number; reviewed: number } {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -171,7 +171,7 @@
     return { studyTime, reviewed };
   }
   
-  // 🆕 处理进度条点击（智能定位）
+// 处理进度条点击（智能定位）
   function handleProgressClick(event: MouseEvent, deckId: string) {
     // Svelte 5: 移除 stopPropagation
     
@@ -205,13 +205,13 @@
     showPopover = true;
   }
   
-  // 🆕 关闭浮窗
+// 关闭浮窗
   function handleClosePopover() {
     showPopover = false;
     popoverDeckId = null;
   }
   
-  // 🆕 显示牌组菜单
+// 显示牌组菜单
   function showDeckMenu(event: MouseEvent, deckId: string) {
     const menu = new Menu();
     
@@ -276,7 +276,7 @@
     menu.showAtMouseEvent(event);
   }
   
-  // 🆕 显示分类菜单
+// 显示分类菜单
   function showCategoryMenu(event: MouseEvent, deckId: string) {
     const deck = allDecks.find(d => d.id === deckId);
     if (!deck) return;
@@ -297,7 +297,7 @@
                 // 取消选择（至少保留一个分类）
                 newCategoryIds = deck.categoryIds.filter(id => id !== cat.id);
                 if (newCategoryIds.length === 0) {
-                  new Notice('至少需要保留一个分类');
+                  new Notice(t('decks.dashboard.categoryRequired'));
                   return;
                 }
               } else {
@@ -315,7 +315,7 @@
             if (onRefreshData) {
               await onRefreshData();
             }
-            new Notice(`已更新分类`);
+            new Notice(t('decks.dashboard.categoryUpdated'));
           });
       });
     });
@@ -341,7 +341,7 @@
     const completed = todaySessions.reduce((sum, s) => sum + (s.cardsReviewed || 0), 0);
     const totalTime = todaySessions.reduce((sum, s) => sum + (s.totalTime || 0), 0);
     const durationMinutes = Math.round(totalTime / 60000); // 毫秒转分钟
-    const duration = durationMinutes > 0 ? `${durationMinutes}分钟` : '0分钟';
+    const duration = durationMinutes > 0 ? t('decks.dashboard.durationMinutes', { n: String(durationMinutes) }) : t('decks.dashboard.durationZero');
     
     return {
       total,
@@ -366,7 +366,7 @@
 </script>
 
 <div class="dashboard-view">
-  <!-- 🆕 彩色圆点牌组类型筛选器 -->
+<!-- 彩色圆点牌组类型筛选器 -->
   <CategoryFilter 
     {selectedFilter}
     onSelect={handleFilterSelect}
@@ -376,9 +376,9 @@
   <div class="dashboard-section heatmap">
     <h3 class="section-title">
       <EnhancedIcon name="bar-chart-2" size={18} />
-      牌组热力图
+      {t('decks.dashboard.heatmapTitle')}
       {#if selectedFilter !== 'all'}
-        {@const filterNames = { parent: '父卡片牌组', child: '子卡片牌组', all: '全部牌组' } as Record<DeckFilter, string>}
+        {@const filterNames = { parent: t('decks.dashboard.filterParent'), child: t('decks.dashboard.filterChild'), all: t('decks.dashboard.filterAll') } as Record<DeckFilter, string>}
         {@const filterColors = { 
           parent: { start: '#ef4444', end: '#dc2626' },
           child: { start: '#3b82f6', end: '#2563eb' },
@@ -392,7 +392,7 @@
     
     <div class="heatmap-list">
       {#if filteredDecks().length === 0}
-        <!-- 🆕 紧凑的空状态提示（不阻挡点击） -->
+<!-- 紧凑的空状态提示（不阻挡点击） -->
         <div class="empty-hint-inline">
           <span class="empty-hint-icon">--</span>
           <span class="empty-hint-text">{t('decks.dashboard.emptyHint')}</span>
@@ -449,7 +449,7 @@
   </div>
 </div>
 
-<!-- 🆕 统计浮窗（直接渲染，高 z-index） -->
+<!-- 统计浮窗（直接渲染，高 z-index） -->
 {#if showPopover && popoverDeckId}
   {@const deck = allDecks.find(d => d.id === popoverDeckId)}
   {@const stats = deckStats[popoverDeckId]}
@@ -479,6 +479,7 @@
     flex-direction: column;
     gap: 20px;
     overflow-y: auto;
+    background: var(--weave-deck-page-bg, var(--weave-surface-background, var(--background-primary)));
   }
   
   
@@ -499,7 +500,7 @@
     margin: 0 0 16px 0;
   }
   
-  /* 🆕 分类徽章 */
+/* 分类徽章 */
   .category-badge {
     display: inline-flex;
     align-items: center;
@@ -512,7 +513,7 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
   
-  /* 🆕 紧凑的内联空状态提示（不阻挡点击） */
+/* 紧凑的内联空状态提示（不阻挡点击） */
   .empty-hint-inline {
     display: flex;
     align-items: center;
@@ -544,7 +545,7 @@
   
   .heatmap-row {
     display: grid;
-    grid-template-columns: var(--deck-name-width, 250px) 1fr auto auto; /* 🆕 动态宽度 | 进度条 | 计数 | 操作区 */
+grid-template-columns: var(--deck-name-width, 250px) 1fr auto auto; /* 动态宽度 | 进度条 | 计数 | 操作区 */
     align-items: center;
     gap: 12px;
     padding: 10px;
@@ -557,12 +558,12 @@
     background: var(--background-modifier-hover);
   }
   
-  /* 🆕 子牌组样式 */
+/* 子牌组样式 */
   .heatmap-row.subdeck {
     background: var(--background-secondary);
   }
   
-  /* 🆕 牌组信息区（图标+名称） */
+/* 牌组信息区（图标+名称） */
   .deck-info {
     display: flex;
     align-items: center;
@@ -589,9 +590,9 @@
   .deck-name {
     font-size: 13px;
     color: var(--text-normal);
-    overflow: hidden; /* 🆕 隐藏溢出 */
-    text-overflow: ellipsis; /* 🆕 省略号 */
-    white-space: nowrap; /* 🆕 不换行 */
+overflow: hidden; /* 隐藏溢出 */
+text-overflow: ellipsis; /* 省略号 */
+white-space: nowrap; /* 不换行 */
     flex: 1; /* 占据剩余空间 */
   }
   
@@ -631,7 +632,7 @@
     transform: translateY(-1px);
   }
   
-  /* 🆕 操作区样式 */
+/* 操作区样式 */
   .deck-actions {
     display: flex;
     align-items: center;

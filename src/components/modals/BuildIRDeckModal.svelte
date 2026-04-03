@@ -1,8 +1,8 @@
 <script lang="ts">
   /**
-   * 组建增量阅读牌组模态窗 (v2.0+ 引入式架构)
+   * 组建增量阅读专题模态窗（引用式架构）
    * 
-   * 功能：从选中的内容块创建新的增量阅读牌组
+   * 功能：从选中的内容块创建新的增量阅读专题
    * - 牌组只存储内容块ID引用，不复制数据
    * - 创建后自动更新牌组的 blockIds
    */
@@ -114,7 +114,7 @@
     <div class="modal" role="dialog" aria-modal="true" tabindex="0" 
 >
       <div class="modal-header">
-        <h3>组建增量阅读牌组</h3>
+        <h3>组建增量阅读专题</h3>
         <button class="icon-btn" aria-label="关闭" onclick={closeModal}>×</button>
       </div>
 

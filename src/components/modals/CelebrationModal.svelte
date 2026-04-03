@@ -88,7 +88,7 @@
       onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { if (typeof onClose === 'function') onClose(); } }}
       role="button"
       tabindex="0"
-      aria-label="关闭庆祝窗口"
+      aria-label={t('celebration.footer.closeButton')}
     >
       <!-- 礼花动画层 -->
       <ConfettiEffect />
@@ -167,7 +167,7 @@
     z-index: calc(var(--layer-notice) + 50); /* 庆祝模态窗层级：高于学习界面覆盖层(100) */
     padding: 20px;
     animation: backdrop-fade-in 0.3s ease-out;
-    /* 🆕 确保在窄容器中也能正常显示 */
+    /* 确保在窄容器中也能正常显示 */
     overflow: auto;
   }
 
@@ -202,20 +202,6 @@
   }
 
   /* 主标题 */
-  .celebration-title {
-    font-size: 24px;
-    font-weight: 600;
-    color: var(--text-normal);
-    text-align: center;
-    margin: 0 0 24px 0;
-    line-height: 1.4;
-    background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    animation: title-slide-up 0.5s ease-out 0.4s both;
-  }
-
   @keyframes title-slide-up {
     from {
       opacity: 0;
@@ -325,13 +311,6 @@
     }
   }
 
-  .footer-hint {
-    font-size: 13px;
-    color: var(--text-muted);
-    margin: 0 0 16px 0;
-    font-style: italic;
-  }
-
   .footer-buttons-row {
     display: flex;
     gap: 12px;
@@ -387,10 +366,6 @@
   @media (max-width: 600px) {
     .celebration-card {
       padding: 24px 20px;
-    }
-
-    .celebration-title {
-      font-size: 20px;
     }
 
     .stat-row {

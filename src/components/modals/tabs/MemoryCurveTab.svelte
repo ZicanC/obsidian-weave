@@ -1,8 +1,6 @@
 <script lang="ts">
   import { Platform } from 'obsidian';
   import MemoryCurveChart from '../../charts/MemoryCurveChartEcharts.svelte';
-  import EnhancedIcon from '../../ui/EnhancedIcon.svelte';
-  import EnhancedButton from '../../ui/EnhancedButton.svelte';
   import { generateMemoryCurveData } from '../../../utils/memory-curve-utils';
   import type { Card } from '../../../data/types';
   import type { TimeRange, TimeRangeConfig } from '../../../types/view-card-modal-types';
@@ -136,20 +134,21 @@
 
 <style>
   .memory-curve-tab {
-    padding: var(--size-4-4);
+    padding: 14px;
     display: flex;
     flex-direction: column;
-    gap: var(--size-4-4);
+    gap: 12px;
     overflow-y: auto;
     height: 100%;
     min-height: 0;
   }
 
   .curve-controls {
-    background: var(--background-primary);
+    background: var(--background-secondary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: var(--radius-m);
-    padding: var(--size-4-4);
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   }
 
   .range-selector {
@@ -164,7 +163,7 @@
     align-items: center;
     gap: var(--size-4-1);
     font-size: var(--font-ui-small);
-    color: var(--text-muted);
+    color: var(--text-faint);
     font-weight: 500;
   }
 
@@ -175,26 +174,30 @@
   }
 
   .range-button {
-    padding: 6px 16px;
-    background: var(--background-secondary);
+    padding: 7px 12px;
+    background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: var(--radius-s);
-    color: var(--text-normal);
-    font-size: var(--font-ui-small);
+    border-radius: 8px;
+    color: var(--text-muted);
+    font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.16s ease;
+    min-width: 56px;
   }
 
   .range-button:hover {
     background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover, var(--background-modifier-border));
+    transform: translateY(-1px);
   }
 
   .range-button.active {
     background: var(--interactive-accent);
     border-color: var(--interactive-accent);
-    color: white;
+    color: var(--text-on-accent, white);
+    box-shadow: 0 4px 10px rgba(var(--interactive-accent-rgb), 0.22);
   }
 
   /* 自定义日期选择器 */
@@ -203,8 +206,8 @@
     align-items: center;
     gap: var(--size-4-3);
     flex-wrap: wrap;
-    margin-top: var(--size-4-3);
-    padding-top: var(--size-4-3);
+    margin-top: 10px;
+    padding-top: 10px;
     border-top: 1px solid var(--background-modifier-border);
   }
 
@@ -216,14 +219,14 @@
   }
 
   .date-input {
-    padding: 6px 12px;
-    background: var(--background-secondary);
+    padding: 7px 10px;
+    background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: var(--radius-s);
+    border-radius: 8px;
     color: var(--text-normal);
-    font-size: var(--font-ui-small);
+    font-size: 12.5px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease;
   }
 
   .date-input:hover {
@@ -253,20 +256,23 @@
     display: flex;
     align-items: center;
     gap: var(--size-4-1);
-    margin-top: var(--size-4-2);
-    padding: var(--size-4-2) var(--size-4-3);
-    background: var(--background-secondary-alt);
-    border-radius: var(--radius-s);
+    margin-top: 4px;
+    padding: 7px 12px;
+    background: var(--background-primary);
+    border-radius: 999px;
     font-size: var(--font-ui-smaller);
     color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+    width: fit-content;
   }
 
   .curve-chart-section {
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: var(--radius-m);
-    padding: var(--size-4-4);
+    border-radius: 14px;
+    padding: 10px 8px;
     min-height: 450px;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.14);
   }
 
   .chart-empty {
@@ -277,7 +283,7 @@
     height: 450px;
     color: var(--text-muted);
     text-align: center;
-    gap: var(--size-4-2);
+    gap: 8px;
   }
 
   .chart-empty h4 {
@@ -297,9 +303,9 @@
   }
 
   .empty-icon {
-    font-size: 48px;
-    margin-bottom: var(--size-4-3);
-    opacity: 0.5;
+    font-size: 36px;
+    margin-bottom: 4px;
+    opacity: 0.4;
   }
 
   .hint-indicator {
@@ -311,10 +317,11 @@
   .curve-summary {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--size-4-3);
-    padding: var(--size-4-3);
+    gap: 10px;
+    padding: 12px;
     background: var(--background-secondary);
-    border-radius: var(--radius-m);
+    border-radius: 12px;
+    border: 1px solid var(--background-modifier-border);
   }
 
   .summary-item {

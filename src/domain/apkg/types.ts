@@ -7,6 +7,8 @@
  * @module domain/apkg/types
  */
 
+import type { Card } from "../../data/types";
+
 // ==================== APKG 文件相关 ====================
 
 /**
@@ -220,6 +222,8 @@ export interface ConversionConfig {
 	clozeFormat: "==" | "{{c::}}";
 	/** 是否保留CSS样式 */
 	preserveStyles: boolean;
+	/** 是否保留卡片字段内容的原始 HTML，并跳过格式清洗 */
+	preserveCardContentHtml: boolean;
 	/** 表格复杂度阈值 */
 	tableComplexityThreshold: {
 		maxColumns: number;
@@ -237,6 +241,7 @@ export const DEFAULT_CONVERSION_CONFIG: ConversionConfig = {
 	mediaFormat: "wikilink",
 	clozeFormat: "==",
 	preserveStyles: false,
+	preserveCardContentHtml: false,
 	tableComplexityThreshold: {
 		maxColumns: 3,
 		maxRows: 5,
@@ -396,7 +401,7 @@ export interface CardBuildParams {
 	model: AnkiModel;
 	/** 目标牌组ID */
 	deckId: string;
-	/** 🆕 v2.2: 目标牌组名称（用于写入 we_decks） */
+	/** 目标牌组名称（用于写入 we_decks） */
 	deckName?: string;
 	/** 模板ID */
 	templateId?: string;
@@ -413,7 +418,7 @@ export interface CardBuildParams {
  */
 export interface CardBuildResult {
 	/** 构建的卡片 */
-	card: any; // 使用插件的Card类型
+	card: Card | null;
 	/** 警告信息 */
 	warnings: string[];
 	/** 是否成功 */

@@ -44,12 +44,12 @@ let {
 // 创建Store实例
 const store = createMaskStore(initialMaskData?.masks || []);
 
-//  修复：创建响应式代理，让 store 的关键属性触发重新渲染
+// 创建响应式代理，让 store 的关键属性触发重新渲染
 let storeMasks = $state<Mask[]>([]);
 let storeActiveDrawing = $state<Partial<Mask> | null>(null);
 let storeSelectedId = $state<string | null>(null);
 
-//  关键修复：直接同步函数，避免 $effect 无限循环
+// 直接同步函数，避免 $effect 无限循环
 function syncStoreToState() {
   storeMasks = [...store.masks]; // 创建新数组引用，触发响应式更新
   storeActiveDrawing = store.activeDrawing ? {...store.activeDrawing} : null; // 创建新对象
@@ -307,7 +307,7 @@ function handleSvgMouseDown(e: MouseEvent) {
     style: 'solid'
   };
   
-  //  修复：同步状态
+  // 同步状态
   syncStoreToState();
   
   logger.debug('[MaskEditorSVG] 开始绘制:', drawMode);
@@ -398,7 +398,7 @@ function finishDrawing() {
     store.activeDrawing = null;
     syncStoreToState();  //  同步状态
     drawStart = null;
-    //  修复：不清空 drawMode，允许连续绘制
+    // 不清空 drawMode，允许连续绘制
     // drawMode = null;
     return;
   }
@@ -409,7 +409,7 @@ function finishDrawing() {
     store.activeDrawing = null;
     syncStoreToState();  //  同步状态
     drawStart = null;
-    //  修复：不清空 drawMode，允许连续绘制
+    // 不清空 drawMode，允许连续绘制
     // drawMode = null;
     return;
   }
@@ -424,7 +424,7 @@ function finishDrawing() {
   store.activeDrawing = null;
   syncStoreToState();  //  同步状态
   drawStart = null;
-  //  修复：不清空 drawMode，允许连续绘制多个遮罩
+  // 不清空 drawMode，允许连续绘制多个遮罩
   // drawMode = null;
   
   logger.debug('[MaskEditorSVG] 绘制完成');
@@ -466,7 +466,7 @@ function handleSvgClick(e: MouseEvent) {
   // Svelte 5: 点击事件通过目标判断处理
   // 不需要 stopPropagation
   
-  //  修复：如果刚刚完成绘制，不处理这个click（它是拖拽的副作用）
+  // 如果刚刚完成绘制，不处理这个 click（它是拖拽的副作用）
   if (store.activeDrawing || drawStart) {
     return;
   }
@@ -492,29 +492,23 @@ function handleSvgClick(e: MouseEvent) {
       <p>{error}</p>
     </div>
   {:else}
-    <div
+    <button
+      type="button"
       class="mask-editor-canvas"
-      role="application"
-      tabindex="0"
+      class:drawing={!!drawMode}
+      class:has-active={!!storeActiveDrawing}
       onmousedown={handleSvgMouseDown}
       onmousemove={handleSvgMouseMove}
       onmouseup={handleSvgMouseUp}
       onclick={handleSvgClick}
+      ondragstart={(e) => { e.preventDefault(); }}
+      oncontextmenu={(e) => { e.preventDefault(); }}
       onkeydown={(e) => {
-        if (false) {
-          e.preventDefault();
-          store.clearSelection();
-          syncStoreToState();
-          drawMode = null;
-        } else if ((e.key === 'Delete' || e.key === 'Backspace') && store.selectedId) {
+        if ((e.key === 'Delete' || e.key === 'Backspace') && store.selectedId) {
           e.preventDefault();
           handleMaskDelete(store.selectedId);
         }
       }}
-      ondragstart={(e) => { e.preventDefault(); }}
-      oncontextmenu={(e) => { e.preventDefault(); }}
-      class:drawing={!!drawMode}
-      class:has-active={!!storeActiveDrawing}
     >
     <svg
       bind:this={svgElement}
@@ -524,7 +518,7 @@ function handleSvgClick(e: MouseEvent) {
     >
       
       <!-- 背景图片 -->
-      <!--  修复：使用 preserveAspectRatio="none" 让图片填满 viewBox -->
+      <!-- 使用 preserveAspectRatio="none" 让图片填满 viewBox -->
       <!-- 这样遮罩坐标直接对应图片内容，预览时也能正确对齐 -->
       <image
         href={imageUrl}
@@ -558,7 +552,7 @@ function handleSvgClick(e: MouseEvent) {
         />
       {/if}
     </svg>
-    </div>
+    </button>
     
     <!-- 提示信息 -->
     <div class="hint">
@@ -591,6 +585,7 @@ function handleSvgClick(e: MouseEvent) {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     cursor: default;
     outline: none;
+    padding: 0;
   }
   
   .mask-editor-canvas.drawing {

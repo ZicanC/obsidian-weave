@@ -3,20 +3,20 @@
  * 提供开箱即用的卡片拆分功能
  */
 
-import type { AIAction } from '../types/ai-types';
+import type { AIAction } from "../types/ai-types";
 
 /**
  * 官方AI拆分动作配置
  */
 export const DEFAULT_SPLIT_ACTIONS: AIAction[] = [
-  {
-    id: 'official-knowledge-split',
-    name: '知识点拆分',
-    description: '将复杂卡片按知识点拆分成多张独立的子卡片',
-    icon: 'split',
-    type: 'split',
-    
-    systemPrompt: `你是一个专业的知识卡片拆分助手，专注于将复杂学习内容拆分成独立的知识点卡片。
+	{
+		id: "official-knowledge-split",
+		name: "知识点拆分",
+		description: "将复杂卡片按知识点拆分成多张独立的子卡片",
+		icon: "split",
+		type: "split",
+
+		systemPrompt: `你是一个专业的知识卡片拆分助手，专注于将复杂学习内容拆分成独立的知识点卡片。
 
 ## 拆分原则
 
@@ -56,7 +56,7 @@ export const DEFAULT_SPLIT_ACTIONS: AIAction[] = [
 概念解释格式：
 "机器学习的定义\\n\\n---div---\\n\\n机器学习是人工智能的一个分支，通过算法和统计模型使计算机系统能够从数据中学习并改进性能。"`,
 
-    userPromptTemplate: `请将以下卡片内容拆分成{{数量}}张独立的子卡片。
+		userPromptTemplate: `请将以下卡片内容拆分成{{数量}}张独立的子卡片。
 
 原始卡片内容：
 {{cardContent}}
@@ -69,29 +69,29 @@ export const DEFAULT_SPLIT_ACTIONS: AIAction[] = [
 
 请识别内容中的独立知识点，为每个知识点创建一张完整的子卡片。`,
 
-    splitConfig: {
-      targetCount: 3,
-      splitStrategy: 'knowledge-point',
-      outputFormat: 'qa'
-    },
+		splitConfig: {
+			targetCount: 3,
+			splitStrategy: "knowledge-point",
+			outputFormat: "qa",
+		},
 
-    // AI服务配置（用户可修改）
-    provider: undefined,
-    model: undefined,
+		// AI服务配置（用户可修改）
+		provider: undefined,
+		model: undefined,
 
-    category: 'official',
-    createdAt: new Date().toISOString(),
-    enabled: true
-  },
+		category: "official",
+		createdAt: new Date().toISOString(),
+		enabled: true,
+	},
 
-  {
-    id: 'official-difficulty-split',
-    name: '难度层次拆分',
-    description: '将复杂概念按难度层次拆分，从基础到高级递进学习',
-    icon: 'trending-up',
-    type: 'split',
-    
-    systemPrompt: `你是一个专业的学习难度分析师，擅长将复杂内容按难度层次拆分。
+	{
+		id: "official-difficulty-split",
+		name: "难度层次拆分",
+		description: "将复杂概念按难度层次拆分，从基础到高级递进学习",
+		icon: "trending-up",
+		type: "split",
+
+		systemPrompt: `你是一个专业的学习难度分析师，擅长将复杂内容按难度层次拆分。
 
 ## 拆分策略
 
@@ -131,7 +131,7 @@ export const DEFAULT_SPLIT_ACTIONS: AIAction[] = [
 高级卡片：
 "神经网络的反向传播算法如何工作？\\n\\n---div---\\n\\n反向传播通过计算误差梯度，从输出层向输入层传播，调整权重以最小化误差。"`,
 
-    userPromptTemplate: `请将以下卡片内容按难度层次拆分成{{数量}}张子卡片。
+		userPromptTemplate: `请将以下卡片内容按难度层次拆分成{{数量}}张子卡片。
 
 原始卡片内容：
 {{cardContent}}
@@ -144,29 +144,29 @@ export const DEFAULT_SPLIT_ACTIONS: AIAction[] = [
 
 请分析内容的复杂程度，创建从基础概念到深入应用的学习路径。`,
 
-    splitConfig: {
-      targetCount: 4,
-      splitStrategy: 'difficulty',
-      outputFormat: 'qa'
-    },
+		splitConfig: {
+			targetCount: 4,
+			splitStrategy: "difficulty",
+			outputFormat: "qa",
+		},
 
-    // AI服务配置（用户可修改）
-    provider: undefined,
-    model: undefined,
+		// AI服务配置（用户可修改）
+		provider: undefined,
+		model: undefined,
 
-    category: 'official',
-    createdAt: new Date().toISOString(),
-    enabled: true
-  },
+		category: "official",
+		createdAt: new Date().toISOString(),
+		enabled: true,
+	},
 
-  {
-    id: 'official-cloze-split',
-    name: '挖空题拆分',
-    description: '将内容拆分成多张挖空题，适合记忆关键信息',
-    icon: 'eye-off',
-    type: 'split',
-    
-    systemPrompt: `你是一个专业的挖空题制作专家，擅长将学习内容转换为有效的挖空题。
+	{
+		id: "official-cloze-split",
+		name: "挖空题拆分",
+		description: "将内容拆分成多张挖空题，适合记忆关键信息",
+		icon: "eye-off",
+		type: "split",
+
+		systemPrompt: `你是一个专业的挖空题制作专家，擅长将学习内容转换为有效的挖空题。
 
 ## 挖空题制作原则
 
@@ -207,7 +207,7 @@ export const DEFAULT_SPLIT_ACTIONS: AIAction[] = [
 多个挖空：
 "==神经网络==是一种模拟人脑神经元连接的==计算模型==，广泛应用于机器学习领域。"`,
 
-    userPromptTemplate: `请将以下卡片内容拆分成{{数量}}张挖空题子卡片。
+		userPromptTemplate: `请将以下卡片内容拆分成{{数量}}张挖空题子卡片。
 
 原始卡片内容：
 {{cardContent}}
@@ -220,18 +220,18 @@ export const DEFAULT_SPLIT_ACTIONS: AIAction[] = [
 
 请识别内容中的关键信息点，为每个关键点创建一张有效的挖空题卡片。`,
 
-    splitConfig: {
-      targetCount: 3,
-      splitStrategy: 'content-length',
-      outputFormat: 'cloze'
-    },
+		splitConfig: {
+			targetCount: 3,
+			splitStrategy: "content-length",
+			outputFormat: "cloze",
+		},
 
-    // AI服务配置（用户可修改）
-    provider: undefined,
-    model: undefined,
+		// AI服务配置（用户可修改）
+		provider: undefined,
+		model: undefined,
 
-    category: 'official',
-    createdAt: new Date().toISOString(),
-    enabled: true
-  }
+		category: "official",
+		createdAt: new Date().toISOString(),
+		enabled: true,
+	},
 ];

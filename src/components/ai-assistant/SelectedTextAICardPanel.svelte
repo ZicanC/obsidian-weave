@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Notice } from 'obsidian';
   import type { WeavePlugin } from '../../main';
-  import type { AIAction } from '../../types/ai-types';
   import type { Card } from '../../data/types';
   import { CardType } from '../../data/types';
   import { get } from 'svelte/store';
@@ -13,7 +12,7 @@
   import { AISplitService } from '../../services/ai/AISplitService';
   import { BlockLinkManager } from '../../utils/block-link-manager';
   import { createContentWithMetadata, extractBodyContent } from '../../utils/yaml-utils';
-  import { generateUUID } from '../../utils/helpers';
+  import { generateCardUUID } from '../../services/identifier/WeaveIDGenerator';
 
   interface Props {
     plugin: WeavePlugin;
@@ -36,54 +35,7 @@
 
   let didInit = $state(false);
 
-  const proactiveActionId = 'Weave:proactive-question';
-  const isProactiveMode = actionId === proactiveActionId;
-  let generationMode = $state<'initial' | 'followup'>('initial');
-
-  let showQuestionPrompt = $state(isProactiveMode);
-  let userQuestion = $state('');
-
-  let questionPromptTitle = $derived.by(() => {
-    if (generationMode === 'followup') return '输入追问';
-    if (isProactiveMode) return '输入问题';
-    return '输入追问';
-  });
-
-  let questionPromptPlaceholder = $derived.by(() => {
-    if (generationMode === 'followup') return '基于选中文本，你希望AI补充什么？';
-    if (isProactiveMode) return '基于选中文本，你希望AI回答什么？';
-    return '基于选中文本，你希望AI补充什么？';
-  });
-
-  const proactiveAction: AIAction = {
-    id: proactiveActionId,
-    name: '主动提问',
-    icon: 'help-circle',
-    type: 'split',
-    systemPrompt: '你是一个严谨的学习助手，擅长把原文内容转换为可复习的学习卡片。',
-    userPromptTemplate: `请根据“原文内容”和“用户问题”，生成{{数量}}张学习卡片，帮助用户回答该问题并提炼关键点。
-
-原文内容：
-{{cardContent}}
-
-输出要求：
-- 返回标准JSON格式：{ "cards": [ { "content": "<具体问题>\\n\\n---div---\\n\\n<具体答案>" } ] }
-- <具体问题> 必须是完整可读的问题文本（可直接使用或改写“用户问题”），禁止输出占位词“问题”
-- <具体答案> 必须是完整可读的答案文本，禁止只输出占位词“答案”
-- 每张卡片聚焦一个关键点
-- content字段必须使用"---div---"作为问题和答案的分隔符`,
-    splitConfig: {
-      targetCount: 3,
-      splitStrategy: 'knowledge-point',
-      outputFormat: 'qa'
-    },
-    category: 'official',
-    createdAt: new Date().toISOString(),
-    enabled: true
-  };
-
   let currentAction = $derived.by(() => {
-	if (actionId === proactiveActionId) return proactiveAction;
     const actions = get(customActionsForMenu);
     return actions.split.find((a) => a.id === actionId) || null;
   });
@@ -191,15 +143,8 @@
     return `${fallback}\n\n${sep}\n\n${back}`;
   }
 
-  async function generateCards(mode: 'initial' | 'followup' = 'initial'): Promise<void> {
+  async function generateCards(): Promise<void> {
     if (isGenerating) return;
-
-    const shouldRequireQuestion = isProactiveMode || mode === 'followup';
-    if (shouldRequireQuestion && !userQuestion.trim()) {
-      generationMode = mode;
-      showQuestionPrompt = true;
-      return;
-    }
 
     const action = currentAction;
     if (!action) {
@@ -223,10 +168,7 @@
       const effectiveTargetCount = action.splitConfig?.targetCount || 3;
 
       const baseInstruction = (plugin.settings as any).aiConfig?.cardSplitting?.defaultInstruction || undefined;
-      const instructionParts: string[] = [];
-      if (userQuestion.trim()) instructionParts.push(`用户问题：${userQuestion.trim()}`);
-      if (baseInstruction) instructionParts.push(baseInstruction);
-      const instruction = instructionParts.length > 0 ? instructionParts.join('\n\n') : undefined;
+      const instruction = baseInstruction ? String(baseInstruction) : undefined;
 
       const tempParentCard: Card = {
         uuid: `temp-parent-${Date.now()}`,
@@ -272,23 +214,14 @@
         throw new Error(result.error || '拆分失败');
       }
 
-      const questionFallback = isProactiveMode || mode === 'followup' ? userQuestion.trim() : '';
       const newlyGenerated = result.splitCards.map((c, idx) => {
-        const normalized = normalizeGeneratedCardContent(c.content || '', questionFallback);
+        const normalized = normalizeGeneratedCardContent(c.content || '');
         return toTempPreviewCard(normalized, idx);
       });
 
-      if (mode === 'followup') {
-        childCards = [...childCards, ...newlyGenerated];
-        const nextSelected = new Set(selectedCardIds);
-        for (const c of newlyGenerated) nextSelected.add(c.uuid);
-        selectedCardIds = nextSelected;
-        new Notice(`已追加 ${newlyGenerated.length} 张预览卡片`);
-      } else {
-        childCards = newlyGenerated;
-        selectedCardIds = new Set(newlyGenerated.map((c) => c.uuid));
-        new Notice(`已生成 ${newlyGenerated.length} 张预览卡片`);
-      }
+      childCards = newlyGenerated;
+      selectedCardIds = new Set(newlyGenerated.map((c) => c.uuid));
+      new Notice(`已生成 ${newlyGenerated.length} 张预览卡片`);
     } catch (e) {
       new Notice(e instanceof Error ? e.message : '生成失败');
     } finally {
@@ -337,7 +270,7 @@
 
         const cardToSave: Card = {
           ...c,
-          uuid: generateUUID(),
+          uuid: generateCardUUID(),
           deckId: selectedDeckId,
           templateId: 'official-qa',
           type: CardType.Basic,
@@ -373,16 +306,8 @@
     if (didInit) return;
     didInit = true;
     loadDecks();
-	if (!isProactiveMode) {
-		generateCards('initial');
-	}
+    generateCards();
   });
-
-  function submitQuestionAndGenerate(): void {
-    if (!userQuestion.trim()) return;
-    showQuestionPrompt = false;
-	generateCards(generationMode);
-  }
 
   function toggleCardSelection(cardId: string) {
     const next = new Set(selectedCardIds);
@@ -396,45 +321,11 @@
   <div class="header">
     <div class="title">AI预览卡片分布</div>
     <div class="header-actions">
-      <button
-			class="question"
-			type="button"
-			onclick={() => {
-				generationMode = 'followup';
-				showQuestionPrompt = true;
-			}}
-		>追问</button>
       <button class="close" type="button" onclick={onClose}>关闭</button>
     </div>
   </div>
 
   <div class="content">
-    {#if showQuestionPrompt}
-      <div class="question-overlay">
-        <div class="question-dialog">
-          <div class="question-title">{questionPromptTitle}</div>
-          <textarea
-            class="question-input"
-            rows="3"
-            bind:value={userQuestion}
-            placeholder={questionPromptPlaceholder}
-            onkeydown={(e) => {
-              if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') submitQuestionAndGenerate();
-            }}
-          ></textarea>
-          <div class="question-actions">
-            <button class="question-cancel" type="button" onclick={() => (showQuestionPrompt = false)}>取消</button>
-            <button
-              class="question-submit"
-              type="button"
-              disabled={!userQuestion.trim() || isGenerating}
-              onclick={submitQuestionAndGenerate}
-            >生成</button>
-          </div>
-        </div>
-      </div>
-    {/if}
-
     {#if isGenerating}
       <div class="generating-overlay" aria-busy="true">
         <div class="spinner"></div>
@@ -506,16 +397,6 @@
     gap: 0.5rem;
   }
 
-  .question {
-    border: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    color: var(--text-normal);
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    font-size: 12px;
-  }
-
   .close {
     border: 1px solid var(--background-modifier-border);
     background: var(--background-primary);
@@ -538,26 +419,6 @@
     overflow-y: hidden;
     padding: 0.5rem 0 1rem;
     align-items: center;
-  }
-
-  .question-overlay {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    pointer-events: none;
-    z-index: 2;
-  }
-
-  .question-dialog {
-    width: min(520px, 96%);
-    border: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    border-radius: 0.5rem;
-    padding: 0.75rem;
-    box-shadow: var(--shadow-s);
-    pointer-events: auto;
   }
 
   .generating-overlay {
@@ -595,43 +456,6 @@
     to {
       transform: rotate(360deg);
     }
-  }
-
-  .question-title {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-normal);
-    margin-bottom: 0.5rem;
-  }
-
-  .question-input {
-    width: 100%;
-    resize: vertical;
-    border: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    color: var(--text-normal);
-    border-radius: 0.375rem;
-    padding: 0.5rem;
-    font-size: 12px;
-    line-height: 1.4;
-  }
-
-  .question-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
-  .question-cancel,
-  .question-submit {
-    border: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
-    color: var(--text-normal);
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
-    cursor: pointer;
-    font-size: 12px;
   }
 
   .loading {

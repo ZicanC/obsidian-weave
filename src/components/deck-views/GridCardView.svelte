@@ -4,6 +4,7 @@
 
   import { onMount } from 'svelte';
   import { Menu } from 'obsidian';
+  import { get } from 'svelte/store';
   import type { Deck, DeckStats } from '../../data/types';
   import type { DeckTreeNode } from '../../services/deck/DeckHierarchyService';
   import type { StudySession } from '../../data/study-types';
@@ -12,16 +13,16 @@
   import ChineseElegantDeckCard from './ChineseElegantDeckCard.svelte';
   import CategoryFilter, { type DeckFilter } from './CategoryFilter.svelte';
   import { getColorSchemeForDeck } from '../../config/card-color-schemes';
-  // 🆕 v0.10 导入题库组件
+// 导入题库组件
   import QuestionBankListView from '../question-bank/QuestionBankListView.svelte';
   import QuestionBankGridView from '../question-bank/QuestionBankGridView.svelte';
   import { tr } from '../../utils/i18n';
-  // 🆕 牌组卡片设计类型
+// 牌组卡片设计类型
   import type { DeckCardStyle } from '../../types/plugin-settings.d';
   //  高级功能限制
   import { PremiumFeatureGuard, PREMIUM_FEATURES } from '../../services/premium/PremiumFeatureGuard';
   import ActivationPrompt from '../premium/ActivationPrompt.svelte';
-  // 🆕 侧边栏检测
+// 侧边栏检测
   import { isInSidebar, createSidebarObserver } from '../../utils/responsive';
 
   interface Props {
@@ -29,7 +30,7 @@
     deckStats: Record<string, DeckStats>;
     studySessions: StudySession[];
     plugin: WeavePlugin;
-    // 🆕 筛选器状态（由父组件管理）
+// 筛选器状态（由父组件管理）
     selectedFilter?: DeckFilter;
     onFilterSelect?: (filter: DeckFilter) => void;
     onStartStudy: (deckId: string) => void;
@@ -41,7 +42,8 @@
     onEditDeck?: (deckId: string) => void;
     onDeleteDeck?: (deckId: string) => void;
     onRefreshData?: () => Promise<void>;
-    // 🆕 v2.0 引用式牌组系统
+    onOpenKnowledgeGraph?: (deckId: string) => void;
+// 引用式牌组系统
     onDissolveDeck?: (deckId: string) => void;
   }
 
@@ -50,7 +52,7 @@
     deckStats,
     studySessions,
     plugin,
-    // 🆕 筛选器状态（由父组件管理，支持双向绑定）
+// 筛选器状态（由父组件管理，支持双向绑定）
     selectedFilter: externalFilter = undefined,
     onFilterSelect: externalOnFilterSelect = undefined,
     onStartStudy,
@@ -61,7 +63,8 @@
     onEditDeck,
     onDeleteDeck,
     onRefreshData,
-    // 🆕 v2.0 引用式牌组系统
+    onOpenKnowledgeGraph,
+// 引用式牌组系统
     onDissolveDeck
   }: Props = $props();
 
@@ -70,31 +73,39 @@
 
   //  高级功能守卫
   const premiumGuard = PremiumFeatureGuard.getInstance();
-  let isPremium = $state(false);
+  let isPremium = $state(get(premiumGuard.isPremiumActive));
+  let showPremiumFeaturesPreview = $state(get(premiumGuard.premiumFeaturesPreviewEnabled));
   let showActivationPrompt = $state(false);
   let promptFeatureId = $state('');
 
   // 订阅高级版状态
   $effect(() => {
-    const unsubscribe = premiumGuard.isPremiumActive.subscribe(value => {
+    const unsubscribePremium = premiumGuard.isPremiumActive.subscribe(value => {
       isPremium = value;
     });
-    return unsubscribe;
+    const unsubscribePreview = premiumGuard.premiumFeaturesPreviewEnabled.subscribe(value => {
+      showPremiumFeaturesPreview = value;
+    });
+
+    return () => {
+      unsubscribePremium();
+      unsubscribePreview();
+    };
   });
 
-  // 🆕 获取当前牌组卡片设计样式
+// 获取当前牌组卡片设计样式
   const deckCardStyle = $derived<DeckCardStyle>(
     (plugin.settings.deckCardStyle as DeckCardStyle) || 'default'
   );
 
-  // 🆕 检测是否在侧边栏（容器宽度较窄）
+// 检测是否在侧边栏（容器宽度较窄）
   let containerRef: HTMLElement | null = $state(null);
   let isCompactMode = $state(false);
-  // 🆕 侧边栏模式检测（用于隐藏 CategoryFilter）
+// 侧边栏模式检测（用于隐藏 CategoryFilter）
   let isInSidebarMode = $state(false);
   let sidebarObserverCleanup: (() => void) | null = null;
 
-  // 🆕 v0.10 牌组模式筛选状态
+// 牌组模式筛选状态
   // 如果父组件传入了 selectedFilter，则使用父组件的状态
   // 否则使用本地状态（向后兼容）
   //  同步初始化：从 localStorage 读取，确保首次渲染即为正确值
@@ -111,14 +122,14 @@
     return 'memory' as DeckFilter;
   })());
   
-  // 🆕 计算实际使用的筛选器（优先使用外部传入的）
+// 计算实际使用的筛选器（优先使用外部传入的）
   const currentFilter = $derived(externalFilter ?? internalFilter);
 
   //  internalFilter 已在状态初始化时同步从 localStorage 恢复，onMount 无需重复读取
   onMount(() => {
     logger.debug('[GridCardView] 模式筛选器初始化:', currentFilter);
 
-    // 🆕 检测容器宽度，决定是否使用紧凑模式
+// 检测容器宽度，决定是否使用紧凑模式
     if (containerRef) {
       const resizeObserver = new ResizeObserver((entries) => {
         for (const entry of entries) {
@@ -129,7 +140,7 @@
       // 初始检测
       isCompactMode = containerRef.clientWidth < 500;
       
-      // 🆕 初始化侧边栏检测
+// 初始化侧边栏检测
       isInSidebarMode = isInSidebar(containerRef);
       logger.debug('[GridCardView] 初始侧边栏模式:', isInSidebarMode);
       
@@ -149,7 +160,7 @@
     }
   });
 
-  // 🆕 筛选器选择处理
+// 筛选器选择处理
   function handleFilterSelect(filter: DeckFilter) {
     // 如果有外部回调，调用它
     if (externalOnFilterSelect) {
@@ -176,9 +187,9 @@
 
   const allDecks = $derived(flattenDeckTree(deckTree));
 
-  // 🆕 v0.10 根据模式筛选牌组（与 DeckStudyPage 保持一致）
+// 根据模式筛选牌组（与 DeckStudyPage 保持一致）
   const filteredDecks = $derived(() => {
-    // v0.10: 新的三模式筛选
+// 三模式筛选
     // memory: 显示所有记忆牌组（现有牌组系统）
     // reading: 增量阅读（占位）
     // question-bank: 题库牌组（由 QuestionBankListView 组件处理）
@@ -210,7 +221,7 @@
     const deck = allDecks.find(d => d.id === deckId);
     const isSubdeck = deck?.parentId != null;
 
-    // 🆕 提前学习功能
+// 提前学习功能
     menu.addItem((item) =>
       item
         .setTitle(t('decks.menu.advanceStudy'))
@@ -219,23 +230,34 @@
     );
 
     //  牌组分析（包含负荷预测）- 高级功能
-    menu.addItem((item) => {
-      const title = isPremium ? t('decks.menu.deckAnalytics') : t('decks.menu.deckAnalytics') + ' 🔒';
-      item
-        .setTitle(title)
-        .setIcon("bar-chart-2")
-        .setDisabled(!isPremium)
-        .onClick(() => {
-          if (!isPremium) {
-            promptFeatureId = PREMIUM_FEATURES.DECK_ANALYTICS;
-            showActivationPrompt = true;
-            return;
-          }
-          onOpenDeckAnalytics?.(deckId);
-        });
-    });
+    if (premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.DECK_ANALYTICS, {
+      isPremium,
+      showPremiumPreview: showPremiumFeaturesPreview
+    })) {
+      menu.addItem((item) => {
+        const title = isPremium ? t('decks.menu.deckAnalytics') : t('decks.menu.deckAnalytics') + ' 🔒';
+        item
+          .setTitle(title)
+          .setIcon("bar-chart-2")
+          .onClick(() => {
+            if (!isPremium) {
+              promptFeatureId = PREMIUM_FEATURES.DECK_ANALYTICS;
+              showActivationPrompt = true;
+              return;
+            }
+            onOpenDeckAnalytics?.(deckId);
+          });
+      });
+    }
 
     menu.addSeparator();
+
+    menu.addItem((item) =>
+      item
+        .setTitle(t('decks.menu.knowledgeGraph'))
+        .setIcon("git-fork")
+        .onClick(() => onOpenKnowledgeGraph?.(deckId))
+    );
 
     // 创建子牌组和移动牌组功能已移除 - 不再支持父子牌组层级结构
 
@@ -255,11 +277,11 @@
         .onClick(() => onDeleteDeck?.(deckId))
     );
 
-    // 🆕 v2.0 解散牌组（引用式牌组系统）
+// 解散牌组
     if (onDissolveDeck) {
       menu.addItem((item) =>
         item
-          .setTitle('解散牌组')
+          .setTitle(t('decks.menu.dissolveDeck'))
           .setIcon("unlink")
           .onClick(() => onDissolveDeck?.(deckId))
       );
@@ -276,7 +298,7 @@
   <!--  桌面端彩色圆点筛选器已移除 - 现在由 WeaveApp 中的 SidebarNavHeader 统一处理 -->
   <!-- 侧边栏和主内容区都使用 SidebarNavHeader 提供的筛选功能 -->
 
-  <!-- 🆕 v0.10 根据模式显示不同内容 -->
+<!-- 根据模式显示不同内容 -->
   {#if currentFilter === 'memory'}
     <!-- 记忆牌组模式 -->
     {#if filteredDecks().length > 0}
@@ -300,7 +322,7 @@
           {@const colorVariant = ((index % 4) + 1) as 1 | 2 | 3 | 4}
           
           {#if deckCardStyle === 'chinese-elegant'}
-            <!-- 🆕 中式典雅风格卡片 -->
+<!-- 中式典雅风格卡片 -->
             <ChineseElegantDeckCard
               {deck}
               {stats}
@@ -325,16 +347,16 @@
       <!-- 空状态占位符 -->
       <div class="mode-placeholder">
         <div class="placeholder-icon">--</div>
-        <h2 class="placeholder-title">{t('deckStudyPage.emptyState.noDecks')}</h2>
-        <p class="placeholder-desc">{t('deckStudyPage.emptyState.createFirstDeck')}</p>
+        <h2 class="placeholder-title">{t('decks.grid.emptyText')}</h2>
+        <p class="placeholder-desc">{t('decks.grid.emptyHint')}</p>
       </div>
     {/if}
   {:else if currentFilter === 'reading'}
-    <!-- @deprecated 增量摘录模式已弃用，显示提示信息 -->
+    <!-- Compatibility note: 增量摘录模式已弃用，显示提示信息 -->
     <div class="extract-list-wrapper deprecated-notice">
       <div class="placeholder-icon">--</div>
-      <h2 class="placeholder-title">增量阅读</h2>
-      <p class="placeholder-desc">增量阅读功能已整合到左侧边栏</p>
+      <h2 class="placeholder-title">{t('decks.grid.readingTitle')}</h2>
+      <p class="placeholder-desc">{t('decks.grid.readingDesc')}</p>
     </div>
   {:else if currentFilter === 'question-bank'}
     <!-- 题库牌组模式 - 网格视图 -->
@@ -354,13 +376,17 @@
 <style>
   .grid-card-view {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    padding: 20px 4px;
+    padding: var(--weave-deck-page-content-gap, 1rem);
     overflow-y: auto;
-    background: var(--background-primary);
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    background: var(--weave-deck-page-bg, var(--weave-surface-background, var(--background-primary)));
     container-type: inline-size;
     container-name: deck-grid;
+    scroll-padding-bottom: 24px;
   }
 
   /*  桌面端彩色圆点筛选器已移除 - 现在由 WeaveApp 中的 SidebarNavHeader 统一处理 */
@@ -373,7 +399,7 @@
     container-type: inline-size;
   }
 
-  /* 🆕 v0.10 模式占位符样式 */
+/* 模式占位符样式 */
   .mode-placeholder {
     display: flex;
     flex-direction: column;
@@ -452,7 +478,8 @@
 
   /*  Obsidian 移动端特定样式 - 内容区贴边 */
   :global(body.is-mobile) .grid-card-view {
-    padding: 8px 2px; /* 🔧 减少左右间距，让卡片更贴边 */
+    padding: 8px 2px calc(88px + env(safe-area-inset-bottom, 0px)); /* 为底部手势区/浏览器栏预留空间 */
+    scroll-padding-bottom: calc(88px + env(safe-area-inset-bottom, 0px));
   }
 
   :global(body.is-mobile) .cards-grid {
@@ -461,11 +488,32 @@
   }
 
   :global(body.is-phone) .grid-card-view {
-    padding: 4px 1px; /* 🔧 手机端进一步减少间距 */
+    padding: 4px 1px calc(96px + env(safe-area-inset-bottom, 0px)); /* 手机端增加底部滚动缓冲，避免最后一张卡被遮住 */
+    scroll-padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
   }
 
   :global(body.is-phone) .cards-grid {
     gap: 6px; /* 🔧 手机端进一步减少卡片间距 */
+  }
+  @media (max-width: 768px) {
+    .grid-card-view {
+      padding-left: var(--weave-deck-page-content-gap, 1rem);
+      padding-right: var(--weave-deck-page-content-gap, 1rem);
+    }
+  }
+
+  :global(body.is-mobile) .grid-card-view {
+    padding-left: var(--weave-deck-page-content-gap, 1rem);
+    padding-right: var(--weave-deck-page-content-gap, 1rem);
+    padding-bottom: calc(128px + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(128px + env(safe-area-inset-bottom, 0px));
+  }
+
+  :global(body.is-phone) .grid-card-view {
+    padding-left: var(--weave-deck-page-content-gap, 1rem);
+    padding-right: var(--weave-deck-page-content-gap, 1rem);
+    padding-bottom: calc(144px + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(144px + env(safe-area-inset-bottom, 0px));
   }
 </style>
 

@@ -8,9 +8,11 @@
    * @module components/incremental-reading/IRBlockInfoModal
    * @version 1.1.0 - 新增计算记录视图
    */
+  import type { App } from 'obsidian';
   import type { IRBlock } from '../../types/ir-types';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import { onMount, tick } from 'svelte';
+  import { IRStorageService } from '../../services/incremental-reading/IRStorageService';
   import {
     calculatePsi,
     calculateNextInterval,
@@ -25,9 +27,11 @@
     block: IRBlock;
     onClose: () => void;
     position?: { x: number; y: number };
+    app?: App;
+    useObsidianModal?: boolean;
   }
 
-  let { block, onClose, position }: Props = $props();
+  let { block, onClose, position, app, useObsidianModal = false }: Props = $props();
 
   let modalEl: HTMLDivElement | null = $state(null);
   let left = $state(-9999);
@@ -37,8 +41,37 @@
   type ViewMode = 'info' | 'json' | 'calc';
   let currentView = $state<ViewMode>('info');
 
-  // 格式化JSON数据
-  const formattedJson = $derived(JSON.stringify(block, null, 2));
+  let totalReadingTimeSeconds = $state<number>((block as any).totalReadingTime ?? 0);
+
+  const formattedJson = $derived(JSON.stringify({
+    ...block,
+    totalReadingTime: totalReadingTimeSeconds,
+    stats: (block as any).stats
+      ? {
+          ...(block as any).stats,
+          totalReadingTimeSec: totalReadingTimeSeconds
+        }
+      : undefined
+  }, null, 2));
+
+  async function refreshReadingTimeFromHistory(): Promise<void> {
+    if (!app || !block?.id) {
+      totalReadingTimeSeconds = (block as any).totalReadingTime ?? 0;
+      return;
+    }
+
+    try {
+      const storage = new IRStorageService(app);
+      await storage.initialize();
+      const sessions = await storage.getBlockSessions(block.id);
+      const historyTotal = sessions.reduce((sum, session) => sum + Math.max(0, Number(session.duration || 0)), 0);
+      totalReadingTimeSeconds = historyTotal > 0
+        ? historyTotal
+        : ((block as any).totalReadingTime ?? 0);
+    } catch {
+      totalReadingTimeSeconds = (block as any).totalReadingTime ?? 0;
+    }
+  }
 
   function handleKeydown(_e: KeyboardEvent) {
   }
@@ -62,6 +95,7 @@
 
   onMount(() => {
     void updatePosition();
+    void refreshReadingTimeFromHistory();
 
     const onKeydownDoc = (_e: KeyboardEvent) => {
     };
@@ -74,14 +108,29 @@
       }
     };
 
+    const onTimerUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ blockId?: string }>).detail;
+      if (!detail?.blockId || detail.blockId === block.id) {
+        void refreshReadingTimeFromHistory();
+      }
+    };
+
+    const onIRDataUpdated = () => {
+      void refreshReadingTimeFromHistory();
+    };
+
     document.addEventListener('keydown', onKeydownDoc, true);
     document.addEventListener('pointerdown', onPointerDownDoc, true);
     window.addEventListener('resize', updatePosition);
+    window.addEventListener('Weave:ir-timer-updated', onTimerUpdated as EventListener);
+    window.addEventListener('Weave:ir-data-updated', onIRDataUpdated);
 
     return () => {
       document.removeEventListener('keydown', onKeydownDoc, true);
       document.removeEventListener('pointerdown', onPointerDownDoc, true);
       window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('Weave:ir-timer-updated', onTimerUpdated as EventListener);
+      window.removeEventListener('Weave:ir-data-updated', onIRDataUpdated);
     };
   });
 
@@ -238,27 +287,24 @@
 <div 
   class="ir-block-info-backdrop" 
   class:ir-block-info-backdrop--popover={!!position}
-  onclick={onClose}
+  class:ir-block-info-backdrop--obsidian={useObsidianModal}
+  onclick={(event) => {
+    if (!useObsidianModal && event.target === event.currentTarget) onClose();
+  }}
   onkeydown={handleKeydown}
 >
   <div 
     class="ir-block-info-container" 
     class:ir-block-info-container--popover={!!position}
+    class:ir-block-info-container--obsidian={useObsidianModal}
     bind:this={modalEl}
     style={position ? `left: ${left}px; top: ${top}px;` : undefined}
-    onclick={(e) => e.stopPropagation()} 
     role="dialog" 
     tabindex="-1"
-    aria-modal={!position}
-    aria-labelledby="ir-block-info-title"
+    aria-modal={!position && !useObsidianModal}
+    aria-label="内容块信息与来源"
   >
     {#if currentView === 'info'}
-      <!-- 基础信息视图 -->
-      <div class="modal-header">
-        <h3 id="ir-block-info-title">内容块信息与来源</h3>
-        <button class="modal-close" onclick={onClose}>×</button>
-      </div>
-      
       <div class="modal-content">
         <!-- 基础信息 -->
         <section class="info-section">
@@ -317,7 +363,7 @@
           
           <div class="info-row">
             <span class="info-label">累计阅读时长</span>
-            <span class="info-value">{formatReadingTime(block.totalReadingTime)}</span>
+            <span class="info-value">{formatReadingTime(totalReadingTimeSeconds)}</span>
           </div>
           
           {#if block.lastRating}
@@ -403,11 +449,11 @@
 
         <!-- 操作按钮 -->
         <div class="action-buttons">
-          <button class="action-btn secondary" onclick={() => currentView = 'calc'}>
+          <button type="button" class="action-btn" onclick={() => currentView = 'calc'}>
             <EnhancedIcon name="calculator" size={16} />
             <span>查看计算记录</span>
           </button>
-          <button class="action-btn primary" onclick={() => currentView = 'json'}>
+          <button type="button" class="action-btn" onclick={() => currentView = 'json'}>
             <EnhancedIcon name="code" size={16} />
             <span>查看数据结构</span>
           </button>
@@ -415,13 +461,16 @@
       </div>
 
     {:else if currentView === 'calc'}
-      <!-- 计算记录视图 -->
-      <div class="modal-header">
-        <button class="back-btn" onclick={() => currentView = 'info'}>
+      <div class="view-nav">
+        <button
+          type="button"
+          class="view-back-btn clickable-icon"
+          onclick={() => currentView = 'info'}
+          aria-label="返回详情"
+          title="返回详情"
+        >
           <EnhancedIcon name="arrow-left" size={16} />
         </button>
-        <h3 id="ir-block-info-title">调度计算记录</h3>
-        <button class="modal-close" onclick={onClose}>×</button>
       </div>
       
       <div class="modal-content calc-content">
@@ -594,13 +643,16 @@
       </div>
 
     {:else}
-      <!-- JSON数据结构视图 -->
-      <div class="modal-header">
-        <button class="back-btn" onclick={() => currentView = 'info'}>
+      <div class="view-nav">
+        <button
+          type="button"
+          class="view-back-btn clickable-icon"
+          onclick={() => currentView = 'info'}
+          aria-label="返回详情"
+          title="返回详情"
+        >
           <EnhancedIcon name="arrow-left" size={16} />
         </button>
-        <h3 id="ir-block-info-title">内容块数据结构</h3>
-        <button class="modal-close" onclick={onClose}>×</button>
       </div>
       
       <div class="json-content">
@@ -638,6 +690,18 @@
     pointer-events: none;
   }
 
+  .ir-block-info-backdrop--obsidian {
+    position: static;
+    inset: auto;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    z-index: auto;
+    align-items: stretch;
+    justify-content: stretch;
+    animation: none;
+  }
+
   @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -663,6 +727,17 @@
     pointer-events: auto;
   }
 
+  .ir-block-info-container--obsidian {
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    height: 100%;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    animation: none;
+  }
+
   @keyframes slideUp {
     from { 
       opacity: 0;
@@ -674,59 +749,36 @@
     }
   }
 
-  .modal-header {
+  .view-nav {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
+    padding: 10px 16px 0;
   }
 
-  .modal-header h3 {
-    margin: 0;
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-accent);
-    flex: 1;
-  }
-
-  .back-btn {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 4px 8px;
-    margin-right: 8px;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-  }
-
-  .back-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-  }
-
-  .modal-close {
-    background: none;
-    border: none;
-    font-size: 24px;
-    color: var(--text-muted);
-    cursor: pointer;
+  .view-back-btn {
+    width: var(--clickable-icon-size, 32px);
+    height: var(--clickable-icon-size, 32px);
     padding: 0;
-    width: 28px;
-    height: 28px;
-    display: flex;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--clickable-icon-radius, 6px);
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    border-radius: 4px;
-    transition: all 0.2s;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
 
-  .modal-close:hover {
+  .view-back-btn:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
+    border-color: color-mix(in srgb, var(--interactive-accent) 30%, var(--background-modifier-border));
+  }
+
+  .view-back-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
   }
 
   .modal-content {
@@ -812,38 +864,39 @@
   }
 
   .action-buttons {
-    margin-top: 20px;
-    padding-top: 16px;
+    margin-top: 18px;
+    padding-top: 14px;
     border-top: 1px solid var(--background-modifier-border);
-    display: flex;
-    flex-direction: row;
-    flex-wrap: nowrap;
-    gap: 10px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 
   .action-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
-    padding: 12px 16px;
-    border: none;
+    gap: 6px;
+    min-height: 34px;
+    padding: 8px 12px;
+    border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
-    font-size: 14px;
-    font-weight: 500;
+    background: var(--background-secondary);
+    color: var(--text-normal);
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    transition: all 0.2s;
-    flex: 1;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
 
-  .action-btn.primary {
-    background: linear-gradient(135deg, var(--interactive-accent), var(--interactive-accent-hover));
-    color: white;
+  .action-btn:hover {
+    background: var(--background-modifier-hover);
+    border-color: color-mix(in srgb, var(--interactive-accent) 30%, var(--background-modifier-border));
   }
 
-  .action-btn.primary:hover {
-    filter: brightness(1.1);
-    transform: translateY(-1px);
+  .action-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
   }
 
   /* JSON视图样式 */
@@ -891,17 +944,6 @@
     color: var(--text-normal);
     white-space: pre;
     word-wrap: break-word;
-  }
-
-  /* Secondary 按钮样式 */
-  .action-btn.secondary {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
-  }
-
-  .action-btn.secondary:hover {
-    background: var(--background-modifier-border);
   }
 
   /* ==================== 计算记录视图样式 ==================== */
@@ -1117,12 +1159,8 @@
     max-height: 80vh;
   }
 
-  :global(.is-mobile) .modal-header {
-    padding: 12px 14px;
-  }
-
-  :global(.is-mobile) .modal-header h3 {
-    font-size: 14px;
+  :global(.is-mobile) .view-nav {
+    padding: 8px 12px 0;
   }
 
   :global(.is-mobile) .modal-content {
@@ -1145,13 +1183,15 @@
   }
 
   :global(.is-mobile) .action-buttons {
-    margin-top: 16px;
+    margin-top: 14px;
     padding-top: 12px;
-    gap: 8px;
+    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   :global(.is-mobile) .action-btn {
-    padding: 10px 12px;
+    min-height: 32px;
+    padding: 7px 10px;
     font-size: 13px;
     gap: 6px;
     border-radius: 7px;

@@ -4,28 +4,62 @@
    * 上方为月历热力图，下方为选中日期的阅读材料列表
    */
   import { onDestroy, onMount } from 'svelte';
-  import { Menu, Notice, Platform } from 'obsidian';
+  import { Menu, Notice, Platform, TFile, normalizePath } from 'obsidian';
   import { mount, unmount } from 'svelte';
   import type AnkiObsidianPlugin from '../../main';
-  import type { IRDeck, IRBlock } from '../../types/ir-types';
+  import type { IRDeck, IRBlock, IRBlockV4, IRSession } from '../../types/ir-types';
+  import { createDefaultIRBlockV4 } from '../../types/ir-types';
+  import type { ReadingMaterial } from '../../types/incremental-reading-types';
   import { IRStorageService } from '../../services/incremental-reading/IRStorageService';
   import { IRChunkScheduleAdapter } from '../../services/incremental-reading/IRChunkScheduleAdapter';
   import { IRPdfBookmarkTaskService, isPdfBookmarkTaskId } from '../../services/incremental-reading/IRPdfBookmarkTaskService';
+  import { IREpubBookmarkTaskService, isEpubBookmarkTaskId } from '../../services/incremental-reading/IREpubBookmarkTaskService';
   import { IRTagGroupService } from '../../services/incremental-reading/IRTagGroupService';
-  import { calculatePriorityEWMA, calculateNextInterval, calculateNextRepDate, calculatePsi } from '../../services/incremental-reading/IRCoreAlgorithmsV4';
+  import { IRV4SchedulerService } from '../../services/incremental-reading/IRV4SchedulerService';
+  import { IRScheduleKernel, type IRPlannedScheduleItem, type IRScheduleExplanation } from '../../services/incremental-reading/IRScheduleKernel';
+  import { recomputeAndBroadcastIRData } from '../../services/incremental-reading/IRScheduleRefreshService';
+  import { calculatePsi } from '../../services/incremental-reading/IRCoreAlgorithmsV4';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
   import FloatingMenu from '../ui/FloatingMenu.svelte';
   import IRPrioritySlider from './IRPrioritySlider.svelte';
-  import MaterialImportModal from './MaterialImportModal.svelte';
+  import IRScheduleImpactPreviewPanel, { type PreviewDetails } from './IRScheduleImpactPreviewPanel.svelte';
+  import { MaterialImportModalObsidian } from './MaterialImportModalObsidian';
+  import AddReadingPointModal from './AddReadingPointModal.svelte';
+  import { IRAnalyticsModalObsidian } from './IRAnalyticsModalObsidian';
   import IRBlockInfoModal from './IRBlockInfoModal.svelte';
   import IRReviewReminderModal from './IRReviewReminderModal.svelte';
+  import { MarkdownFileSuggestModal } from '../../modals/MarkdownFileSuggestModal';
   import type { BatchImportResult } from '../../services/incremental-reading/ReadingMaterialManager';
   import { logger } from '../../utils/logger';
+  import { tr } from '../../utils/i18n';
   import { showDeleteConfirm, showObsidianConfirm, showObsidianInput } from '../../utils/obsidian-confirm';
+  import { VIEW_TYPE_EPUB } from '../../views/EpubView';
+  import { IRMonitoringService } from '../../services/incremental-reading/IRMonitoringService';
+  import type { IRCalendarSidebarSettings } from '../../types/plugin-settings.d';
+  import {
+    getIRCalendarTimerRuntimeState,
+    setIRCalendarTimerRuntimeState,
+    type IRCalendarActiveReadingTimerState
+  } from '../../stores/ir-calendar-timer-store';
 
   interface Props {
     plugin: AnkiObsidianPlugin;
   }
+
+  interface IRMaterialFinishedEventDetail {
+    blockId?: string;
+    reason?: 'completed' | 'skipped';
+    nextBlockId?: string;
+    nextMaterial?: ScheduleItem | null;
+    autoStartNextTimer?: boolean;
+  }
+
+  const DEFAULT_CALENDAR_SIDEBAR_SETTINGS: Required<IRCalendarSidebarSettings> = {
+    continuousReadingEnabled: false,
+    autoStartNextTimerEnabled: false,
+    showSchedulingPreview: false,
+    showMaterialTimers: true
+  };
 
   function closeBlockInfoModal() {
     try {
@@ -60,6 +94,7 @@
   }
 
   let { plugin }: Props = $props();
+  let t = $derived($tr);
 
   // 日历状态
   let currentDate = $state(new Date());
@@ -72,7 +107,7 @@
   let allBlocks = $state<IRBlock[]>([]);
   let isLoading = $state(true);
 
-  let readingMaterials = $state<import('../../types/incremental-reading-types').ReadingMaterial[]>([]);
+  let readingMaterials = $state<ReadingMaterial[]>([]);
 
   // 按日期分组的材料数据
   let materialsByDate = $state<Map<string, ScheduleItem[]>>(new Map());
@@ -82,6 +117,10 @@
   let irStorage = $state<IRStorageService | null>(null);
   let chunkScheduleAdapter = $state<IRChunkScheduleAdapter | null>(null);
   let pdfBookmarkTaskService = $state<IRPdfBookmarkTaskService | null>(null);
+  let epubBookmarkTaskService = $state<IREpubBookmarkTaskService | null>(null);
+  let scheduleKernel = $state<IRScheduleKernel | null>(null);
+  let monitoringService = $state<IRMonitoringService | null>(null);
+  let v4SchedulerService = $state<IRV4SchedulerService | null>(null);
 
   let schedulingMenuAnchor = $state<HTMLElement | null>(null);
   let schedulingMenuOpen = $state(false);
@@ -92,6 +131,16 @@
   let priorityMenuOpen = $state(false);
   let priorityMenuTarget = $state<ScheduleItem | null>(null);
   let prioritySliderExpanded = $state(true);
+  type ImpactedPreviewItem = PreviewDetails['impactedItems'][number];
+  type PreviewDayDelta = PreviewDetails['dayDeltas'][number];
+  let priorityPreviewDetails = $state<PreviewDetails | null>(null);
+  let schedulingPreviewByAction = $state<Record<SchedulingAction, PreviewDetails | null>>({
+    intensive: null,
+    normal: null,
+    slow: null,
+    postpone: null
+  });
+  let schedulingPreviewFocusAction = $state<SchedulingAction>('normal');
 
   let blockInfoModalContainer: HTMLElement | null = null;
   let blockInfoModalInstance: any | null = null;
@@ -107,22 +156,423 @@
   let longPressTriggered = $state(false);
 
   // 导入模态窗状态
-  let showImportModal = $state(false);
+  let importModalInstance: MaterialImportModalObsidian | null = null;
+  let analyticsModalInstance: IRAnalyticsModalObsidian | null = null;
+
+  // 新增阅读点弹窗状态
+  let showAddReadingPointModal = $state(false);
+  let arpDeckId = $state('');
+  let arpPdfPath = $state('');
+  let arpParentTitle = $state('');
 
   // 连续阅读模式
   let continuousReadingEnabled = $state(false);
-  // 显示调度时间
-  let showScheduleTime = $state(false);
+  // 完成当前阅读点后，自动启动下一个阅读点的计时器
+  let autoStartNextTimerEnabled = $state(false);
+  // 显示调度动作下方的实时预览
+  let showSchedulingPreview = $state(false);
   let expandedMaterialIds = $state(new Set<string>());
   let siblingCache = $state(new Map<string, ScheduleItem[]>());
   let loadingSiblings = $state(new Set<string>());
+  type ActiveReadingTimerState = IRCalendarActiveReadingTimerState;
+  type TimerPauseReason = 'manual' | 'switch' | 'completed' | 'skipped';
+  let activeReadingTimer = $state<ActiveReadingTimerState | null>(null);
+  let timerTotalsByBlockId = $state<Record<string, number>>({});
+  let timerNowMs = $state(Date.now());
+  let timerTickIntervalId = $state<number | null>(null);
+  let timerBusyBlockId = $state<string | null>(null);
+  let autoTimerChainBlockId = $state<string | null>(null);
 
-  const isTablet = (Platform as any).isTablet ?? false;
-  const hideCalendarTitle = Platform.isMobile && !isTablet;
+  function syncTimerRuntimeState(): void {
+    setIRCalendarTimerRuntimeState({
+      activeReadingTimer: activeReadingTimer ? { ...activeReadingTimer } : null,
+      autoTimerChainBlockId
+    });
+  }
+
+  function restoreTimerRuntimeState(): void {
+    const runtimeState = getIRCalendarTimerRuntimeState();
+    activeReadingTimer = runtimeState.activeReadingTimer
+      ? { ...runtimeState.activeReadingTimer }
+      : null;
+    autoTimerChainBlockId = runtimeState.autoTimerChainBlockId;
+    timerNowMs = Date.now();
+
+    if (activeReadingTimer) {
+      ensureTimerTicker();
+    } else {
+      clearTimerTicker();
+    }
+  }
+
+  function clearAutoTimerChain(): void {
+    autoTimerChainBlockId = null;
+    syncTimerRuntimeState();
+  }
+
+  function armAutoTimerChain(blockId: string): void {
+    autoTimerChainBlockId = blockId;
+    syncTimerRuntimeState();
+  }
+
+  function shouldContinueAutoTimerChainForBlock(blockId: string): boolean {
+    return autoTimerChainBlockId === blockId || activeReadingTimer?.blockId === blockId;
+  }
+
+  function shouldAutoStartNextTimerAfterScheduling(blockId: string): boolean {
+    if (!autoStartNextTimerEnabled) return false;
+    // “自动计时”开关的语义是：在这个侧边栏里完成当前阅读点后，继续给下一个阅读点计时。
+    // 过去这里还额外要求“当前阅读点的侧边栏计时器已经在运行”，导致设置开启后仍然经常不生效。
+    // 这里放宽为：
+    // 1. 当前没有其他阅读点在计时时，允许直接接力到下一个；
+    // 2. 当前正在计时的就是这个阅读点时，也允许正常接力；
+    // 3. 如果另一个阅读点正在计时，则不抢占，避免误切换。
+    if (!activeReadingTimer) return true;
+    return activeReadingTimer.blockId === blockId;
+  }
+
+  function waitForMs(ms: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function startReadingTimerWithRetry(
+    material: ScheduleItem,
+    options: { announceStart?: boolean; retries?: number } = {}
+  ): Promise<boolean> {
+    const retries = options.retries ?? 3;
+    const delays = [0, 120, 280, 500];
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+      const delay = delays[Math.min(attempt, delays.length - 1)] ?? 0;
+      if (delay > 0) {
+        await waitForMs(delay);
+      }
+
+      if (activeReadingTimer?.blockId === material.id) {
+        return true;
+      }
+
+      if (timerBusyBlockId) {
+        continue;
+      }
+
+      await toggleReadingTimer(material, { announceStart: options.announceStart });
+
+      if (activeReadingTimer?.blockId === material.id) {
+        return true;
+      }
+    }
+
+    logger.warn('[IRCalendarSidebar] 自动启动下一个阅读点计时失败:', {
+      blockId: material.id,
+      autoTimerChainBlockId,
+      activeReadingTimerBlockId: activeReadingTimer?.blockId ?? null
+    });
+    return activeReadingTimer?.blockId === material.id;
+  }
+
+  function getCalendarSidebarSettings(): Required<IRCalendarSidebarSettings> {
+    const raw = plugin.settings?.incrementalReading?.calendarSidebar;
+    return {
+      ...DEFAULT_CALENDAR_SIDEBAR_SETTINGS,
+      ...(raw || {})
+    };
+  }
+
+  function applyCalendarSidebarSettingsFromPlugin(): void {
+    const settings = getCalendarSidebarSettings();
+    continuousReadingEnabled = settings.continuousReadingEnabled;
+    autoStartNextTimerEnabled = settings.autoStartNextTimerEnabled;
+    showSchedulingPreview = settings.showSchedulingPreview;
+
+    if (!continuousReadingEnabled) {
+      expandedMaterialIds = new Set();
+    }
+  }
+
+  async function saveCalendarSidebarSettings(patch: Partial<IRCalendarSidebarSettings>): Promise<void> {
+    if (!plugin.settings.incrementalReading) {
+      plugin.settings.incrementalReading = {};
+    }
+
+    plugin.settings.incrementalReading.calendarSidebar = {
+      ...getCalendarSidebarSettings(),
+      ...patch
+    };
+
+    await plugin.saveSettings();
+  }
+
+  async function setContinuousReadingEnabled(enabled: boolean): Promise<void> {
+    continuousReadingEnabled = enabled;
+    if (!enabled) {
+      expandedMaterialIds = new Set();
+    }
+
+    try {
+      await saveCalendarSidebarSettings({ continuousReadingEnabled: enabled });
+    } catch (error) {
+      logger.warn('[IRCalendarSidebar] 保存连续阅读设置失败:', error);
+      new Notice('保存侧边栏设置失败');
+    }
+  }
+
+  async function setAutoStartNextTimerEnabled(enabled: boolean): Promise<void> {
+    autoStartNextTimerEnabled = enabled;
+
+    try {
+      await saveCalendarSidebarSettings({ autoStartNextTimerEnabled: enabled });
+    } catch (error) {
+      logger.warn('[IRCalendarSidebar] 保存自动计时设置失败:', error);
+      new Notice('保存侧边栏设置失败');
+    }
+  }
+
+  async function setShowSchedulingPreviewEnabled(enabled: boolean): Promise<void> {
+    showSchedulingPreview = enabled;
+
+    try {
+      await saveCalendarSidebarSettings({ showSchedulingPreview: enabled });
+    } catch (error) {
+      logger.warn('[IRCalendarSidebar] 保存实时预览设置失败:', error);
+      new Notice('保存侧边栏设置失败');
+    }
+  }
 
   // 格式化日期为 key
   function formatDateKey(date: Date): string {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  function getScheduleItemLabel(material: ScheduleItem): string {
+    return material.displayName || material.title || '未命名';
+  }
+
+  function findScheduleItemById(blockId: string): ScheduleItem | null {
+    for (const item of selectedMaterials) {
+      if (item.id === blockId) return item;
+    }
+
+    for (const siblings of siblingCache.values()) {
+      const match = siblings.find((item) => item.id === blockId);
+      if (match) return match;
+    }
+
+    for (const items of pinnedByDate.values()) {
+      const match = items.find((item) => item.id === blockId);
+      if (match) return match;
+    }
+
+    for (const items of materialsByDate.values()) {
+      const match = items.find((item) => item.id === blockId);
+      if (match) return match;
+    }
+
+    return null;
+  }
+
+  function getActiveReadingTimerLabel(): string {
+    if (!activeReadingTimer) return '未命名';
+    const currentItem = findScheduleItemById(activeReadingTimer.blockId);
+    return currentItem ? getScheduleItemLabel(currentItem) : activeReadingTimer.title;
+  }
+
+  function formatTimerDuration(totalSeconds: number): string {
+    const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const seconds = safeSeconds % 60;
+    if (hours > 0) {
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function formatCompactTimerDuration(totalSeconds: number): string {
+    const safeSeconds = Math.max(0, Math.floor(totalSeconds));
+    if (safeSeconds < 3600) {
+      const minutes = Math.floor(safeSeconds / 60);
+      const seconds = safeSeconds % 60;
+      return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  }
+
+  function ensureTimerTicker(): void {
+    if (timerTickIntervalId !== null) return;
+    timerTickIntervalId = window.setInterval(() => {
+      timerNowMs = Date.now();
+    }, 1000);
+  }
+
+  function clearTimerTicker(): void {
+    if (timerTickIntervalId === null) return;
+    window.clearInterval(timerTickIntervalId);
+    timerTickIntervalId = null;
+  }
+
+  function getDisplayedTimerSeconds(blockId: string): number {
+    if (activeReadingTimer?.blockId === blockId) {
+      return activeReadingTimer.baseSeconds + Math.max(0, Math.floor((timerNowMs - activeReadingTimer.startedAtMs) / 1000));
+    }
+    return timerTotalsByBlockId[blockId] ?? 0;
+  }
+
+  function isTimerRunningForBlock(blockId: string): boolean {
+    return activeReadingTimer?.blockId === blockId;
+  }
+
+  async function loadTimerTotalsFromHistory(): Promise<void> {
+    try {
+      const storage = await getStorage();
+      const history = await storage.getHistory();
+      const totals: Record<string, number> = {};
+      for (const session of history.sessions || []) {
+        const blockId = String(session?.blockId || '');
+        const duration = Number(session?.duration || 0);
+        if (!blockId || duration <= 0) continue;
+        totals[blockId] = (totals[blockId] || 0) + duration;
+      }
+      timerTotalsByBlockId = totals;
+    } catch (error) {
+      logger.warn('[IRCalendarSidebar] 读取阅读计时历史失败:', error);
+    }
+  }
+
+  async function getStoredTimerTotalSeconds(blockId: string): Promise<number> {
+    try {
+      const storage = await getStorage();
+      const sessions = await storage.getBlockSessions(blockId);
+      return sessions.reduce((sum, session) => sum + Math.max(0, Number(session.duration || 0)), 0);
+    } catch (error) {
+      logger.warn('[IRCalendarSidebar] 读取阅读点计时统计失败:', error);
+      return timerTotalsByBlockId[blockId] ?? 0;
+    }
+  }
+
+  async function appendTimerSession(
+    blockId: string,
+    deckId: string,
+    startedAtMs: number,
+    durationSeconds: number,
+    reason: Exclude<TimerPauseReason, 'manual' | 'switch'>
+      | 'manual'
+      | 'switch'
+  ): Promise<void> {
+    if (durationSeconds <= 0) return;
+
+    const storage = await getStorage();
+    const endedAtMs = startedAtMs + durationSeconds * 1000;
+    const action: IRSession['action'] = reason === 'completed'
+      ? 'completed'
+      : reason === 'skipped'
+        ? 'skipped'
+        : 'suspended';
+
+    await storage.addSession({
+      id: crypto.randomUUID(),
+      blockId,
+      deckId,
+      startTime: new Date(startedAtMs).toISOString(),
+      endTime: new Date(endedAtMs).toISOString(),
+      duration: durationSeconds,
+      action
+    });
+  }
+
+  async function pauseActiveReadingTimer(reason: TimerPauseReason = 'manual', onlyBlockId?: string): Promise<boolean> {
+    if (!activeReadingTimer) return false;
+    if (onlyBlockId && activeReadingTimer.blockId !== onlyBlockId) return false;
+
+    const snapshot = activeReadingTimer;
+    const finalSeconds = getDisplayedTimerSeconds(snapshot.blockId);
+    const sessionSeconds = Math.max(0, finalSeconds - snapshot.baseSeconds);
+    const totalSeconds = snapshot.baseSeconds + sessionSeconds;
+
+    try {
+      await appendTimerSession(
+        snapshot.blockId,
+        snapshot.deckId,
+        snapshot.startedAtMs,
+        sessionSeconds,
+        reason
+      );
+    } catch (error) {
+      logger.warn('[IRCalendarSidebar] 写入阅读计时历史失败:', error);
+      return false;
+    }
+
+    timerTotalsByBlockId = {
+      ...timerTotalsByBlockId,
+      [snapshot.blockId]: totalSeconds
+    };
+    window.dispatchEvent(new CustomEvent('Weave:ir-timer-updated', {
+      detail: {
+        blockId: snapshot.blockId,
+        totalSeconds,
+        reason
+      }
+    }));
+    activeReadingTimer = null;
+    clearTimerTicker();
+    if (reason === 'manual') {
+      autoTimerChainBlockId = null;
+    }
+    syncTimerRuntimeState();
+
+    if (reason === 'manual') {
+      new Notice(`已暂停计时：${snapshot.title}`);
+    }
+
+    return true;
+  }
+
+  async function toggleReadingTimer(
+    material: ScheduleItem,
+    options: { announceStart?: boolean } = {}
+  ): Promise<void> {
+    if (timerBusyBlockId) return;
+
+    const announceStart = options.announceStart !== false;
+    timerBusyBlockId = material.id;
+
+    try {
+      if (activeReadingTimer?.blockId === material.id) {
+        await pauseActiveReadingTimer('manual', material.id);
+        return;
+      }
+
+      if (activeReadingTimer) {
+        await pauseActiveReadingTimer('switch');
+      }
+
+      const deckId = await resolveDeckIdForScheduleItem(material);
+      const baseSeconds = timerTotalsByBlockId[material.id] ?? await getStoredTimerTotalSeconds(material.id);
+      const currentItem = findScheduleItemById(material.id) ?? material;
+
+      activeReadingTimer = {
+        blockId: material.id,
+        deckId,
+        title: getScheduleItemLabel(currentItem),
+        startedAtMs: Date.now(),
+        baseSeconds
+      };
+      autoTimerChainBlockId = material.id;
+      timerNowMs = Date.now();
+      ensureTimerTicker();
+      syncTimerRuntimeState();
+      if (announceStart) {
+        new Notice(`开始计时：${getScheduleItemLabel(currentItem)}`);
+      }
+    } catch (error) {
+      logger.error('[IRCalendarSidebar] 切换阅读计时失败:', error);
+      new Notice('启动计时失败');
+    } finally {
+      timerBusyBlockId = null;
+    }
   }
 
   async function ensureDoneItemsVisibleForDate(dateKey: string): Promise<void> {
@@ -135,10 +585,15 @@
 
       const doneItems: ScheduleItem[] = [];
       const unresolvedPdfIds: string[] = [];
+      const unresolvedEpubIds: string[] = [];
 
       for (const id of doneIds) {
         if (isPdfBookmarkTaskId(id)) {
           unresolvedPdfIds.push(id);
+          continue;
+        }
+        if (isEpubBookmarkTaskId(id)) {
+          unresolvedEpubIds.push(id);
           continue;
         }
 
@@ -188,6 +643,28 @@
           }
         } catch (e) {
           logger.warn('[IRCalendarSidebar] PDF 书签任务恢复失败:', e);
+        }
+      }
+
+      if (unresolvedEpubIds.length > 0) {
+        try {
+          const epubService = await getEpubBookmarkTaskService();
+          for (const eid of unresolvedEpubIds) {
+            const task = await epubService.getTask(eid);
+            if (!task) continue;
+            doneItems.push({
+              id: eid,
+              title: String(task.title || '').trim() || 'EPUB',
+              sourceFile: task.epubFilePath,
+              priority: Number(task.priorityUi ?? task.priorityEff ?? 5),
+              intervalDays: Number(task.intervalDays ?? 1),
+              scheduleStatus: String(task.status || 'new'),
+              nextRepDate: Number(task.nextRepDate || 0),
+              nextReviewDate: task.nextRepDate ? new Date(task.nextRepDate) : null,
+            });
+          }
+        } catch (e) {
+          logger.warn('[IRCalendarSidebar] EPUB 书签任务恢复失败:', e);
         }
       }
 
@@ -256,7 +733,11 @@
     for (const p of pinned) {
       if (!merged.has(p.id)) merged.set(p.id, p);
     }
-    return [...merged.values()].sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    return [...merged.values()].sort((a, b) => {
+      const scoreDiff = (b.explanation?.compositeScore ?? 0) - (a.explanation?.compositeScore ?? 0);
+      if (scoreDiff !== 0) return scoreDiff;
+      return (b.priority || 0) - (a.priority || 0);
+    });
   }
 
   // 切换月份
@@ -299,13 +780,23 @@
 
   // 打开导入模态窗
   function openImportModal(): void {
-    showImportModal = true;
+    if (importModalInstance) {
+      importModalInstance.close();
+      importModalInstance = null;
+    }
+
+    importModalInstance = new MaterialImportModalObsidian(plugin.app, {
+      plugin,
+      onImportComplete: handleImportComplete,
+      onClose: () => {
+        importModalInstance = null;
+      }
+    });
+    importModalInstance.open();
   }
   
   // 处理导入完成
   function handleImportComplete(result: BatchImportResult): void {
-    showImportModal = false;
-    
     if (result.errors.length > 0) {
       new Notice(`导入完成：${result.success} 个成功，${result.skipped} 个跳过，${result.errors.length} 个失败`);
     } else if (result.skipped > 0) {
@@ -314,9 +805,8 @@
       new Notice(`成功导入 ${result.success} 个阅读材料`);
     }
     
-    // 刷新数据并通知其他组件
-    loadData();
-    window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+    // 导入弹窗内部已经触发统一重排，这里只刷新本地视图
+    void loadData();
   }
 
   async function getStorage(): Promise<IRStorageService> {
@@ -362,6 +852,99 @@
     return pdfBookmarkTaskService;
   }
 
+  async function getEpubBookmarkTaskService(): Promise<IREpubBookmarkTaskService> {
+    if (!epubBookmarkTaskService) {
+      epubBookmarkTaskService = new IREpubBookmarkTaskService(plugin.app);
+    }
+    await epubBookmarkTaskService.initialize();
+    return epubBookmarkTaskService;
+  }
+
+  async function getScheduleKernel(): Promise<IRScheduleKernel> {
+    if (!scheduleKernel) {
+      scheduleKernel = new IRScheduleKernel(plugin.app);
+    }
+    return scheduleKernel;
+  }
+
+  async function getMonitoringService(): Promise<IRMonitoringService> {
+    if (!monitoringService) {
+      monitoringService = new IRMonitoringService(plugin.app.vault);
+      await monitoringService.load();
+    }
+    return monitoringService;
+  }
+
+  async function getV4SchedulerService(): Promise<IRV4SchedulerService> {
+    if (!v4SchedulerService) {
+      v4SchedulerService = new IRV4SchedulerService(plugin.app);
+    }
+    await v4SchedulerService.initialize();
+    return v4SchedulerService;
+  }
+
+  async function resolveScheduleItemToBlockV4(item: ScheduleItem): Promise<IRBlockV4> {
+    if (isPdfBookmarkTaskId(item.id)) {
+      const pdfService = await getPdfBookmarkTaskService();
+      const task = await pdfService.getTask(item.id);
+      if (task) return pdfService.toBlockV4(task);
+    }
+
+    if (isEpubBookmarkTaskId(item.id)) {
+      const epubService = await getEpubBookmarkTaskService();
+      const task = await epubService.getTask(item.id);
+      if (task) return epubService.toBlockV4(task);
+    }
+
+    const storage = await getStorage();
+    const chunk = await storage.getChunkData(item.id);
+    if (chunk) {
+      return {
+        id: chunk.chunkId,
+        sourcePath: chunk.filePath,
+        blockId: chunk.chunkId,
+        contentHash: '',
+        status: chunk.scheduleStatus || 'new',
+        priorityUi: chunk.priorityUi ?? chunk.priorityEff ?? item.priority ?? 5,
+        priorityEff: chunk.priorityEff ?? chunk.priorityUi ?? item.priority ?? 5,
+        intervalDays: chunk.intervalDays ?? item.intervalDays ?? 1,
+        nextRepDate: chunk.nextRepDate ?? item.nextRepDate ?? 0,
+        stats: { ...chunk.stats },
+        meta: { ...chunk.meta, siblings: { ...(chunk.meta?.siblings || { prev: null, next: null }) } },
+        createdAt: chunk.createdAt ?? Date.now(),
+        updatedAt: chunk.updatedAt ?? Date.now()
+      };
+    }
+
+    const fallback = createDefaultIRBlockV4(item.id, item.sourceFile, item.id);
+    fallback.priorityUi = item.priority ?? 5;
+    fallback.priorityEff = item.priority ?? 5;
+    fallback.intervalDays = item.intervalDays ?? 1;
+    fallback.nextRepDate = item.nextRepDate ?? 0;
+    fallback.status = (item.scheduleStatus as any) || 'queued';
+    return fallback;
+  }
+
+  async function resolveDeckIdForScheduleItem(item: ScheduleItem): Promise<string> {
+    if (item.deckId) return item.deckId;
+
+    if (isPdfBookmarkTaskId(item.id)) {
+      const pdfService = await getPdfBookmarkTaskService();
+      const task = await pdfService.getTask(item.id);
+      return task?.deckId || irDecks[0]?.id || '';
+    }
+
+    if (isEpubBookmarkTaskId(item.id)) {
+      const epubService = await getEpubBookmarkTaskService();
+      const task = await epubService.getTask(item.id);
+      return task?.deckId || irDecks[0]?.id || '';
+    }
+
+    const storage = await getStorage();
+    const chunk = await storage.getChunkData(item.id);
+    return chunk?.deckIds?.[0] || irDecks[0]?.id || '';
+  }
+
   function getNextUnprocessedMaterial(currentId: string): ScheduleItem | null {
     const list = selectedMaterials;
     if (!list || list.length === 0) return null;
@@ -394,6 +977,42 @@
           detail: { blockId: material.id } 
         });
         window.dispatchEvent(event);
+        return;
+      }
+
+      // EPUB: reuse existing tab or open new, then navigate
+      if (isEpubBookmarkTaskId(material.id)) {
+        try {
+          const epubService = await getEpubBookmarkTaskService();
+          const task = await epubService.getTask(material.id);
+          if (task) {
+            const navDetail: any = { filePath: task.epubFilePath };
+            if (task.resumeCfi) {
+              navDetail.cfi = task.resumeCfi;
+            } else if (task.tocHref) {
+              navDetail.href = task.tocHref;
+            }
+
+            const existingLeaf = plugin.app.workspace.getLeavesOfType(VIEW_TYPE_EPUB)
+              .find(leaf => {
+                try {
+                  const state = (leaf.view as any)?.getState?.();
+                  return state?.filePath === task.epubFilePath || state?.file === task.epubFilePath;
+                } catch { return false; }
+              });
+
+            if (existingLeaf) {
+              plugin.app.workspace.setActiveLeaf(existingLeaf, { focus: true });
+              window.dispatchEvent(new CustomEvent('Weave:epub-navigate', { detail: navDetail }));
+            } else {
+              (window as any).__weaveEpubPendingNav = navDetail;
+              const ctxPath = plugin.app.workspace.getActiveFile()?.path ?? '';
+              await plugin.app.workspace.openLinkText(task.epubFilePath, ctxPath, false);
+            }
+          }
+        } catch (e) {
+          logger.warn('[IRCalendarSidebar] EPUB 导航失败:', e);
+        }
         return;
       }
 
@@ -434,7 +1053,7 @@
               (chunk as any).filePath = matched.path;
               (chunk as any).updatedAt = Date.now();
               await storage.saveChunkData(chunk);
-              window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+              await recomputeAndBroadcastIRData(plugin.app, 'ui_refresh');
             }
 
             return;
@@ -475,12 +1094,16 @@
     title: string;
     displayName?: string;
     sourceFile: string;
+    associatedNotePath?: string;
+    associatedNoteScope?: 'point' | 'material';
+    deckId?: string;
     priority: number;
     intervalDays: number;
     scheduleStatus: string;
     nextRepDate: number;
     nextReviewDate: Date | null;
     resumeLink?: string;
+    explanation?: IRScheduleExplanation;
   }
 
   // 读取 IR 高级调度设置
@@ -494,37 +1117,207 @@
     };
   }
 
-  // 获取材料的 TagGroup mGroup 系数
-  async function getMGroupForMaterial(materialId: string): Promise<number> {
-    const params = getIRScheduleParams();
-    if (!params.enableTagGroup) return 1.0;
+  function normalizeVaultPath(path?: string | null): string {
+    return path ? normalizePath(path) : '';
+  }
 
-    try {
-      const pluginAny = plugin as any;
-      const service: IRTagGroupService = pluginAny.irTagGroupService ?? new IRTagGroupService(plugin.app);
-      if (!pluginAny.irTagGroupService) {
-        await service.initialize();
-        pluginAny.irTagGroupService = service;
+  function getPointAssociatedNotePath(material: ScheduleItem): string {
+    return material.associatedNoteScope === 'point'
+      ? normalizeVaultPath(material.associatedNotePath)
+      : '';
+  }
+
+  function hasPointAssociatedNote(material: ScheduleItem): boolean {
+    return getPointAssociatedNotePath(material).length > 0;
+  }
+
+  function formatAssociatedNoteLabel(notePath?: string | null): string {
+    const normalized = normalizeVaultPath(notePath);
+    if (!normalized) return t('irSidebar.associatedNote.untitled');
+
+    const filename = normalized.split('/').pop() || normalized;
+    return filename.replace(/\.md$/i, '') || normalized;
+  }
+
+  function getAssociatedNoteActionLabel(material: ScheduleItem): string {
+    const noteLabel = formatAssociatedNoteLabel(getPointAssociatedNotePath(material));
+    return t('irSidebar.associatedNote.actionOpen', { name: noteLabel });
+  }
+
+  function getAssociatedNoteActionTooltip(material: ScheduleItem): string {
+    const noteLabel = formatAssociatedNoteLabel(getPointAssociatedNotePath(material));
+    return t('irSidebar.associatedNote.tooltipOpen', { name: noteLabel });
+  }
+
+  function withPointAssociatedNote(material: ScheduleItem, notePath: string | null): ScheduleItem {
+    const normalizedNotePath = notePath ? normalizeVaultPath(notePath) : '';
+    return {
+      ...material,
+      associatedNotePath: normalizedNotePath || undefined,
+      associatedNoteScope: normalizedNotePath ? 'point' : undefined
+    };
+  }
+
+  function patchAssociatedNoteInItems(items: ScheduleItem[], blockId: string, notePath: string | null): ScheduleItem[] {
+    let changed = false;
+    const nextItems = items.map((item) => {
+      if (item.id !== blockId) return item;
+      changed = true;
+      return withPointAssociatedNote(item, notePath);
+    });
+    return changed ? nextItems : items;
+  }
+
+  function patchAssociatedNoteInMap(
+    source: Map<string, ScheduleItem[]>,
+    blockId: string,
+    notePath: string | null
+  ): Map<string, ScheduleItem[]> {
+    let changed = false;
+    const next = new Map<string, ScheduleItem[]>();
+
+    for (const [key, items] of source.entries()) {
+      const patchedItems = patchAssociatedNoteInItems(items, blockId, notePath);
+      if (patchedItems !== items) {
+        changed = true;
       }
+      next.set(key, patchedItems);
+    }
 
-      let tagGroup = 'default';
-      if (isPdfBookmarkTaskId(materialId)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        const task = await pdfService.getTask(materialId);
-        tagGroup = task?.meta?.tagGroup || 'default';
-      } else {
-        const storage = await getStorage();
-        const chunk = await storage.getChunkData(materialId);
-        tagGroup = (chunk as any)?.meta?.tagGroup || 'default';
-      }
+    return changed ? next : source;
+  }
 
-      const profile = await service.getProfile(tagGroup);
-      return profile?.intervalFactorBase || 1.0;
-    } catch {
-      return 1.0;
+  function applyLocalAssociatedNoteUpdate(blockId: string, notePath: string | null): void {
+    materialsByDate = patchAssociatedNoteInMap(materialsByDate, blockId, notePath);
+    pinnedByDate = patchAssociatedNoteInMap(pinnedByDate, blockId, notePath);
+    siblingCache = patchAssociatedNoteInMap(siblingCache, blockId, notePath);
+
+    if (schedulingMenuTarget?.id === blockId) {
+      schedulingMenuTarget = withPointAssociatedNote(schedulingMenuTarget, notePath);
+    }
+
+    if (priorityMenuTarget?.id === blockId) {
+      priorityMenuTarget = withPointAssociatedNote(priorityMenuTarget, notePath);
     }
   }
 
+  async function persistPointAssociatedNotePath(material: ScheduleItem, notePath: string | null): Promise<boolean> {
+    const normalizedNotePath = notePath ? normalizeVaultPath(notePath) : undefined;
+
+    if (isPdfBookmarkTaskId(material.id)) {
+      const pdfService = await getPdfBookmarkTaskService();
+      const task = await pdfService.getTask(material.id);
+      if (!task) return false;
+      await pdfService.updateTask(material.id, {
+        meta: {
+          ...task.meta,
+          siblings: { ...(task.meta?.siblings || { prev: null, next: null }) },
+          associatedNotePath: normalizedNotePath
+        }
+      });
+      return true;
+    }
+
+    if (isEpubBookmarkTaskId(material.id)) {
+      const epubService = await getEpubBookmarkTaskService();
+      const task = await epubService.getTask(material.id);
+      if (!task) return false;
+      await epubService.updateTask(material.id, {
+        meta: {
+          ...task.meta,
+          siblings: { ...(task.meta?.siblings || { prev: null, next: null }) },
+          associatedNotePath: normalizedNotePath
+        }
+      });
+      return true;
+    }
+
+    const storage = await getStorage();
+    const chunk = await storage.getChunkData(material.id);
+    if (!chunk) return false;
+
+    await storage.saveChunkData({
+      ...chunk,
+      meta: {
+        ...chunk.meta,
+        siblings: { ...(chunk.meta?.siblings || { prev: null, next: null }) },
+        associatedNotePath: normalizedNotePath
+      }
+    });
+    return true;
+  }
+
+  async function setAssociatedNotePathForMaterial(material: ScheduleItem, notePath: string | null): Promise<void> {
+    const normalizedNotePath = notePath ? normalizeVaultPath(notePath) : null;
+    const currentNotePath = getPointAssociatedNotePath(material);
+
+    if ((normalizedNotePath || '') === currentNotePath) {
+      if (normalizedNotePath) {
+        new Notice(t('irSidebar.associatedNote.alreadyLinkedSame'), 2600);
+      }
+      return;
+    }
+
+    try {
+      const saved = await persistPointAssociatedNotePath(material, normalizedNotePath);
+
+      if (!saved) {
+        new Notice(t('irSidebar.associatedNote.recordNotFound'), 3200);
+        return;
+      }
+
+      applyLocalAssociatedNoteUpdate(material.id, normalizedNotePath);
+      new Notice(
+        normalizedNotePath
+          ? t('irSidebar.associatedNote.linked', { name: formatAssociatedNoteLabel(normalizedNotePath) })
+          : t('irSidebar.associatedNote.unlinked'),
+        2800
+      );
+      await recomputeAndBroadcastIRData(plugin.app, 'ui_refresh');
+    } catch (error) {
+      logger.error('[IRCalendarSidebar] 设置关联 md 笔记失败:', error);
+      new Notice(t('irSidebar.associatedNote.setFailed'), 3200);
+    }
+  }
+
+  async function chooseAssociatedNoteForMaterial(material: ScheduleItem): Promise<void> {
+    const picker = new MarkdownFileSuggestModal(plugin.app, {
+      placeholder: t('irSidebar.associatedNote.pickerPlaceholder')
+    });
+
+    const file = await picker.openAndSelect();
+    if (!file) return;
+
+    await setAssociatedNotePathForMaterial(material, file.path);
+  }
+
+  async function openAssociatedNoteInSidebar(material: ScheduleItem): Promise<void> {
+    const notePath = getPointAssociatedNotePath(material);
+    if (!notePath) {
+      new Notice(t('irSidebar.associatedNote.notLinked'), 2600);
+      return;
+    }
+
+    const abstractFile = plugin.app.vault.getAbstractFileByPath(notePath);
+    if (!(abstractFile instanceof TFile)) {
+      new Notice(t('irSidebar.associatedNote.missing'), 3200);
+      return;
+    }
+
+    const leaf = plugin.app.workspace.getRightLeaf(false) || plugin.app.workspace.getLeaf('tab');
+    await leaf.openFile(abstractFile, {
+      active: true,
+      state: { mode: 'source' }
+    });
+    await plugin.app.workspace.revealLeaf(leaf);
+  }
+
+  function handleAssociatedNoteClick(event: MouseEvent, material: ScheduleItem) {
+    event.preventDefault();
+    void openAssociatedNoteInSidebar(material);
+  }
+
+  // 获取材料的 TagGroup mGroup 系数
   const schedulingConfig = [
     { action: 'intensive' as const, label: '攻坚', color: 'var(--weave-error, #ef4444)', intervalMultiplier: 0.5 },
     { action: 'normal' as const, label: '正常', color: 'var(--weave-success, #10b981)', intervalMultiplier: 1.0 },
@@ -534,52 +1327,17 @@
 
   type SchedulingAction = typeof schedulingConfig[number]['action'];
 
-  const schedulingDefaultIntervals: Record<'intensive' | 'normal' | 'slow', number> = {
-    intensive: 1,
-    normal: 3,
-    slow: 10
-  };
-
-  function getSchedulingPrediction(action: SchedulingAction): string {
-    const target = schedulingMenuTarget;
-    if (!target) return '';
-    const cfg = schedulingConfig.find(c => c.action === action);
-    if (!cfg) return '';
-    if ((cfg as any).isPostpone) return '+2天';
-
-    const params = getIRScheduleParams();
-    const currentInterval = target.intervalDays || 1;
-
-    // 使用 V4 核心算法预测：I_next = I_curr × mBase × intervalMultiplier × Ψ(pEff)
-    const pEff = target.priority ?? 5;
-    const psi = calculatePsi(pEff);
-    let predictedDays: number;
-
-    if (currentInterval <= 1) {
-      const d = schedulingDefaultIntervals[action as 'intensive' | 'normal' | 'slow'] ?? 1;
-      predictedDays = d;
-    } else {
-      predictedDays = Math.round(currentInterval * params.mBase * (cfg as any).intervalMultiplier * psi);
-    }
-
-    predictedDays = Math.max(1, Math.min(predictedDays, params.maxInterval));
-
-    if (predictedDays === 1) return '明天';
-    if (predictedDays <= 7) return `${predictedDays}天后`;
-    if (predictedDays <= 30) return `${Math.round(predictedDays / 7)}周后`;
-    return `${Math.round(predictedDays / 30)}月后`;
-  }
-
   function closeSchedulingMenu() {
     schedulingMenuOpen = false;
     schedulingMenuTarget = null;
     schedulingMenuAnchor = null;
     schedulingMenuDateKey = '';
+    schedulingPreviewByAction = { intensive: null, normal: null, slow: null, postpone: null };
+    schedulingPreviewFocusAction = 'normal';
   }
 
   function openSchedulingMenu(event: MouseEvent, material: ScheduleItem) {
     event.preventDefault();
-    event.stopPropagation();
 
     const alreadyOpenForSame = schedulingMenuOpen && schedulingMenuTarget?.id === material.id;
     if (alreadyOpenForSame) {
@@ -591,6 +1349,7 @@
     schedulingMenuAnchor = event.currentTarget as HTMLElement;
     schedulingMenuDateKey = formatDateKey(selectedDate);
     schedulingMenuOpen = true;
+    void loadSchedulingPreviews(material);
   }
 
   function openSchedulingMenuForAnchor(anchor: HTMLElement, material: ScheduleItem) {
@@ -604,12 +1363,14 @@
     schedulingMenuAnchor = anchor;
     schedulingMenuDateKey = formatDateKey(selectedDate);
     schedulingMenuOpen = true;
+    void loadSchedulingPreviews(material);
   }
 
   function closePriorityMenu() {
     priorityMenuOpen = false;
     priorityMenuTarget = null;
     priorityMenuAnchor = null;
+    priorityPreviewDetails = null;
   }
 
   function openPriorityMenuForAnchor(anchor: HTMLElement, material: ScheduleItem) {
@@ -623,6 +1384,99 @@
     priorityMenuAnchor = anchor;
     prioritySliderExpanded = true;
     priorityMenuOpen = true;
+    priorityPreviewDetails = null;
+  }
+
+  function formatReviewDateTextFromTimestamp(timestamp?: number): string {
+    if (!timestamp || timestamp <= 0) return '今日待处理';
+    return new Date(timestamp).toLocaleDateString();
+  }
+
+  function buildPreviewDetails(
+    futurePlanPreview: any,
+    beforeBlock: IRBlockV4 | null,
+    afterBlock: IRBlockV4 | null,
+    title: string
+  ): PreviewDetails | null {
+    if (!afterBlock) return null;
+
+    const beforeDateText = formatReviewDateTextFromTimestamp(beforeBlock?.nextRepDate);
+    const afterDateText = formatReviewDateTextFromTimestamp(afterBlock.nextRepDate);
+    const changeSummary = futurePlanPreview?.changeSummary;
+    const impactedItems: ImpactedPreviewItem[] = (changeSummary?.movedItems || [])
+      .filter((item: any) => item.itemId !== afterBlock.id)
+      .slice(0, 3)
+      .map((item: any) => ({
+        id: item.itemId,
+        title: item.title || title,
+        beforeDateText: item.fromDateKey || '未进入视野',
+        afterDateText: item.toDateKey || '已移出视野'
+      }));
+    const dayDeltas: PreviewDayDelta[] = (changeSummary?.impactedDays || [])
+      .slice(0, 3)
+      .map((day: any) => ({
+        dateKey: day.dateKey,
+        beforeMinutes: day.beforeMinutes,
+        afterMinutes: day.afterMinutes
+      }));
+    const shiftedDays = dayDeltas.length;
+    const changedCount = changeSummary?.changedItemCount ?? 0;
+
+    return {
+      headline: `预计调整后：${beforeDateText} -> ${afterDateText}`,
+      beforeDateText,
+      afterDateText,
+      changedItemCount: changedCount,
+      impactedDays: shiftedDays,
+      impactedItems,
+      dayDeltas
+    };
+  }
+
+  async function handlePriorityPreview(nextUi: number) {
+    const target = priorityMenuTarget;
+    if (!target) return;
+    try {
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(target);
+      const deckId = await resolveDeckIdForScheduleItem(target);
+      const result = await scheduler.previewPriorityUpdateV4(
+        block,
+        Math.max(0, Math.min(10, nextUi)),
+        'calendar_sidebar_preview',
+        deckId
+      );
+      priorityPreviewDetails = buildPreviewDetails(result.futurePlanPreview, block, result.block, target.displayName || target.title || target.id);
+    } catch {
+      priorityPreviewDetails = null;
+    }
+  }
+
+  async function loadSchedulingPreviews(material: ScheduleItem) {
+    try {
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(material);
+      const deckId = await resolveDeckIdForScheduleItem(material);
+      const entries = await Promise.all(schedulingConfig.map(async cfg => {
+        const result = (cfg as any).isPostpone
+          ? await scheduler.previewPostponeBlockV4(block, 2, deckId)
+          : await scheduler.previewScheduleModeBlockV4(block, cfg.action as 'intensive' | 'normal' | 'slow', deckId);
+        return [
+          cfg.action,
+          buildPreviewDetails(result.futurePlanPreview, block, result.block, material.displayName || material.title || material.id)
+        ] as const;
+      }));
+
+      schedulingPreviewByAction = {
+        intensive: null,
+        normal: null,
+        slow: null,
+        postpone: null,
+        ...Object.fromEntries(entries)
+      };
+    } catch {
+      schedulingPreviewByAction = { intensive: null, normal: null, slow: null, postpone: null };
+    }
   }
 
   async function handlePriorityUiChange(nextUi: number) {
@@ -631,88 +1485,80 @@
 
     try {
       const ui = Math.max(0, Math.min(10, nextUi));
-      const { halfLifeDays } = getIRScheduleParams();
+      const oldPriorityUi = target.explanation?.manualPriority ?? target.priority ?? 5;
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(target);
+      const deckId = await resolveDeckIdForScheduleItem(target);
+      const oldEff = block.priorityEff ?? block.priorityUi ?? target.priority ?? 5;
+      const result = await scheduler.updatePriorityWithPreviewV4(block, ui, 'calendar_sidebar_slider', deckId);
+      const newEff = result.block.priorityEff ?? ui;
 
-      if (isPdfBookmarkTaskId(target.id)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        const task = await pdfService.getTask(target.id);
-        const oldEff = (task as any)?.priorityEff ?? (task as any)?.priorityUi ?? target.priority ?? 5;
-        const lastInteraction = (task as any)?.stats?.lastInteraction || (task as any)?.updatedAt || 0;
-        const eff = calculatePriorityEWMA(ui, oldEff, halfLifeDays, lastInteraction > 0 ? lastInteraction : undefined);
-        await pdfService.updateTask(target.id, { priorityUi: ui, priorityEff: eff });
-      } else {
-        const storage = await getStorage();
-        const chunk = await storage.getChunkData(target.id);
-        const oldEff = (chunk as any)?.priorityEff ?? (chunk as any)?.priorityUi ?? target.priority ?? 5;
-        const lastInteraction = (chunk as any)?.stats?.lastInteraction || (chunk as any)?.updatedAt || 0;
-        const eff = calculatePriorityEWMA(ui, oldEff, halfLifeDays, lastInteraction > 0 ? lastInteraction : undefined);
-
-        const adapter = await getChunkScheduleAdapter();
-        await adapter.updateChunkSchedule(target.id, { priorityUi: ui, priorityEff: eff });
-      }
+      const monitoring = await getMonitoringService();
+      monitoring.recordPriorityChange(target.id, oldPriorityUi, ui, oldEff, newEff);
+      monitoring.recordDecisionEvent({
+        itemId: target.id,
+        action: 'change_priority',
+        beforeDate: target.nextReviewDate ? target.nextReviewDate.toISOString() : undefined,
+        afterDate: target.nextReviewDate ? target.nextReviewDate.toISOString() : undefined,
+        beforePriority: oldPriorityUi,
+        afterPriority: ui,
+        sourceType: 'calendar_sidebar'
+      });
+      await monitoring.save();
 
       closePriorityMenu();
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+      await recomputeAndBroadcastIRData(plugin.app, 'change_priority');
     } catch (error) {
       logger.error('[IRCalendarSidebar] 设置优先级失败:', error);
-      new Notice('设置优先级失败');
+      new Notice(t('irSidebar.notices.prioritySetFailed'));
     }
   }
 
   async function suspendMaterial(material: ScheduleItem) {
     try {
-      if (isPdfBookmarkTaskId(material.id)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        await pdfService.updateTask(material.id, { status: 'suspended' });
-      } else {
-        const adapter = await getChunkScheduleAdapter();
-        await adapter.updateChunkSchedule(material.id, { scheduleStatus: 'suspended' as any });
-      }
-      new Notice('已搁置');
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(material);
+      const deckId = await resolveDeckIdForScheduleItem(material);
+      await scheduler.suspendBlockWithPreviewV4(block, deckId);
+      new Notice(t('irSidebar.notices.suspended'));
       closePriorityMenu();
       closeSchedulingMenu();
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+      await recomputeAndBroadcastIRData(plugin.app, 'suspend_block');
     } catch (error) {
       logger.error('[IRCalendarSidebar] 搁置失败:', error);
-      new Notice('搁置失败');
+      new Notice(t('irSidebar.notices.suspendFailed'));
     }
   }
 
   async function archiveMaterial(material: ScheduleItem) {
     try {
-      if (isPdfBookmarkTaskId(material.id)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        await pdfService.updateTask(material.id, { status: 'done' });
-      } else {
-        const adapter = await getChunkScheduleAdapter();
-        await adapter.updateChunkSchedule(material.id, { scheduleStatus: 'done' as any });
-      }
-      new Notice('已归档');
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(material);
+      const deckId = await resolveDeckIdForScheduleItem(material);
+      await scheduler.archiveBlockWithPreviewV4(block, deckId);
+      new Notice(t('irSidebar.notices.archived'));
       closePriorityMenu();
       closeSchedulingMenu();
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+      await recomputeAndBroadcastIRData(plugin.app, 'archive_block');
     } catch (error) {
       logger.error('[IRCalendarSidebar] 归档失败:', error);
-      new Notice('归档失败');
+      new Notice(t('irSidebar.notices.archiveFailed'));
     }
   }
 
   async function removeMaterial(material: ScheduleItem) {
     try {
-      if (isPdfBookmarkTaskId(material.id)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        await pdfService.updateTask(material.id, { status: 'removed' as any });
-      } else {
-        const adapter = await getChunkScheduleAdapter();
-        await adapter.updateChunkSchedule(material.id, { scheduleStatus: 'removed' as any });
-      }
-      new Notice('已移除');
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(material);
+      const deckId = await resolveDeckIdForScheduleItem(material);
+      await scheduler.removeBlockWithPreviewV4(block, deckId);
+      new Notice(t('irSidebar.notices.removed'));
       closePriorityMenu();
       closeSchedulingMenu();
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+      await recomputeAndBroadcastIRData(plugin.app, 'remove_block');
     } catch (error) {
       logger.error('[IRCalendarSidebar] 移除失败:', error);
-      new Notice('移除失败');
+      new Notice(t('irSidebar.notices.removeFailed'));
     }
   }
 
@@ -721,17 +1567,20 @@
       if (isPdfBookmarkTaskId(material.id)) {
         const pdfService = await getPdfBookmarkTaskService();
         await pdfService.deleteTask(material.id);
+      } else if (isEpubBookmarkTaskId(material.id)) {
+        const epubService = await getEpubBookmarkTaskService();
+        await epubService.deleteTask(material.id);
       } else {
         const storage = await getStorage();
         await storage.deleteChunkData(material.id);
       }
-      new Notice('已删除');
+      new Notice(t('irSidebar.notices.deleted'));
       closePriorityMenu();
       closeSchedulingMenu();
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+      await recomputeAndBroadcastIRData(plugin.app, 'remove_block');
     } catch (error) {
       logger.error('[IRCalendarSidebar] 删除失败:', error);
-      new Notice('删除失败');
+      new Notice(t('irSidebar.notices.deleteFailed'));
     }
   }
 
@@ -746,6 +1595,7 @@
 
       const allGroups = await service.getAllGroups();
       const isPdf = isPdfBookmarkTaskId(material.id);
+      const isEpub = isEpubBookmarkTaskId(material.id);
       const storage = await getStorage();
 
       // 获取当前标签组
@@ -753,6 +1603,12 @@
       if (isPdf) {
         const pdfService = await getPdfBookmarkTaskService();
         const task = await pdfService.getTask(material.id);
+        if (task?.meta?.tagGroup) {
+          currentGroupId = task.meta.tagGroup;
+        }
+      } else if (isEpub) {
+        const epubService = await getEpubBookmarkTaskService();
+        const task = await epubService.getTask(material.id);
         if (task?.meta?.tagGroup) {
           currentGroupId = task.meta.tagGroup;
         }
@@ -765,37 +1621,44 @@
 
       for (const group of allGroups) {
         sub.addItem((subItem: any) => {
-          const title = group.id === currentGroupId ? `${group.name} (当前)` : group.name;
+          const title = group.id === currentGroupId
+            ? `${group.name}${t('irSidebar.tagGroup.currentSuffix')}`
+            : group.name;
           subItem
             .setTitle(title)
             .setIcon(group.id === currentGroupId ? 'check' : 'tag')
             .setDisabled(group.id === currentGroupId)
             .onClick(async () => {
               try {
-                if (isPdf) {
-                  // PDF 书签：需要输入「我确认」
-                  const pdfService = await getPdfBookmarkTaskService();
-                  const task = await pdfService.getTask(material.id);
-                  const pdfPath = task?.pdfPath || '';
-                  const pdfName = pdfPath.split('/').pop() || 'PDF';
+                if (isPdf || isEpub) {
+                  // PDF/EPUB 书签：需要输入「我确认」
+                  const bookService = isPdf ? await getPdfBookmarkTaskService() : await getEpubBookmarkTaskService();
+                  const task = await bookService.getTask(material.id);
+                  const bookPath = isPdf ? (task as any)?.pdfPath || '' : (task as any)?.epubFilePath || '';
+                  const pdfName = bookPath.split('/').pop() || (isPdf ? 'PDF' : 'EPUB');
 
                   const inputVal = await showObsidianInput(
                     plugin.app,
-                    `切换「${pdfName}」的所有书签到标签组「${group.name}」，将影响该 PDF 下全部书签的调度参数。\n\n请输入「我确认」以继续：`,
+                    t('irSidebar.tagGroup.bulkSwitchPrompt', { name: pdfName, group: group.name }),
                     '',
-                    { title: '切换 PDF 标签组', placeholder: '我确认', confirmText: '切换' }
+                    {
+                      title: t('irSidebar.tagGroup.switchTitle'),
+                      placeholder: t('irSidebar.tagGroup.confirmPlaceholder'),
+                      confirmText: t('irSidebar.tagGroup.confirmText')
+                    }
                   );
-                  if (inputVal?.trim() !== '我确认') {
-                    if (inputVal !== null) new Notice('输入不匹配，已取消');
+                  if (inputVal?.trim() !== t('irSidebar.tagGroup.confirmPlaceholder')) {
+                    if (inputVal !== null) new Notice(t('irSidebar.tagGroup.inputMismatchCancelled'));
                     return;
                   }
 
-                  // 批量更新同一 PDF 下所有书签
-                  const allTasks = await pdfService.getAllTasks();
+                  // 批量更新同一文档下所有书签
+                  const allTasks = await bookService.getAllTasks();
                   let updatedCount = 0;
                   for (const t of allTasks) {
-                    if (t.pdfPath === pdfPath) {
-                      await pdfService.updateTask(t.id, {
+                    const tPath = isPdf ? (t as any).pdfPath : (t as any).epubFilePath;
+                    if (tPath === bookPath) {
+                      await bookService.updateTask(t.id, {
                         meta: { ...t.meta, tagGroup: group.id }
                       } as any);
                       updatedCount++;
@@ -803,17 +1666,25 @@
                   }
 
                   // 同步 documentMapCache
-                  if (pdfPath) {
-                    await service.updateDocumentGroupManual(pdfPath, group.id);
+                  if (bookPath) {
+                    await service.updateDocumentGroupManual(bookPath, group.id);
                   }
 
-                  new Notice(`已将「${pdfName}」的 ${updatedCount} 个书签切换到标签组「${group.name}」`);
+                  new Notice(t('irSidebar.tagGroup.bulkSwitched', {
+                    name: pdfName,
+                    count: String(updatedCount),
+                    group: group.name
+                  }));
                 } else {
                   // MD chunk：普通确认弹窗
                   const confirmed = await showObsidianConfirm(
                     plugin.app,
-                    `确定要将该材料及其同源内容切换到标签组「${group.name}」吗？\n此操作会影响后续的调度参数。`,
-                    { title: '切换标签组', confirmText: '切换', confirmClass: 'mod-warning' }
+                    t('irSidebar.tagGroup.switchPrompt', { group: group.name }),
+                    {
+                      title: t('irSidebar.tagGroup.switchTitle'),
+                      confirmText: t('irSidebar.tagGroup.confirmText'),
+                      confirmClass: 'mod-warning'
+                    }
                   );
                   if (!confirmed) return;
 
@@ -852,13 +1723,13 @@
                     }
                   }
 
-                  new Notice(`已切换到标签组「${group.name}」`);
+                  new Notice(t('irSidebar.tagGroup.switched', { group: group.name }));
                 }
 
-                window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+                await recomputeAndBroadcastIRData(plugin.app, 'tag_group_changed');
               } catch (error) {
                 logger.error('[IRCalendarSidebar] 设置标签组失败:', error);
-                new Notice('设置标签组失败');
+                new Notice(t('irSidebar.notices.tagGroupSetFailed'));
               }
             });
         });
@@ -872,16 +1743,19 @@
     try {
       let blockInfoTarget: any;
 
-      if (isPdfBookmarkTaskId(material.id)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        const task = await pdfService.getTask(material.id);
+      if (isPdfBookmarkTaskId(material.id) || isEpubBookmarkTaskId(material.id)) {
+        const isPdf = isPdfBookmarkTaskId(material.id);
+        const bookService = isPdf ? await getPdfBookmarkTaskService() : await getEpubBookmarkTaskService();
+        const task = await bookService.getTask(material.id);
         if (!task) {
-          new Notice('PDF 书签任务不存在');
+          new Notice(t(isPdf ? 'irSidebar.tagGroup.pdfTaskMissing' : 'irSidebar.tagGroup.epubTaskMissing'));
           return;
         }
+        const filePath = isPdf ? (task as any).pdfPath : (task as any).epubFilePath;
+        const totalReadingTime = await getStoredTimerTotalSeconds(material.id);
         blockInfoTarget = {
           id: task.id,
-          filePath: task.pdfPath ?? material.sourceFile ?? '',
+          filePath: filePath ?? material.sourceFile ?? '',
           state: task.status ?? 'new',
           priority: Math.round(task.priorityUi ?? task.priorityEff ?? material.priority ?? 5),
           priorityUi: task.priorityUi ?? material.priority ?? 5,
@@ -889,7 +1763,7 @@
           interval: task.intervalDays ?? 1,
           intervalFactor: 1.5,
           reviewCount: task.stats?.impressions ?? 0,
-          totalReadingTime: task.stats?.totalReadingTimeSec ?? 0,
+          totalReadingTime,
           createdAt: new Date(task.createdAt ?? Date.now()).toISOString(),
           updatedAt: new Date(task.updatedAt ?? Date.now()).toISOString(),
           nextReview: task.nextRepDate ? new Date(task.nextRepDate).toISOString() : null,
@@ -902,7 +1776,7 @@
         const chunk = await storage.getChunkData(material.id);
 
         if (!chunk) {
-          new Notice('内容块不存在');
+          new Notice(t('irSidebar.notices.blockMissing'));
           return;
         }
 
@@ -911,6 +1785,7 @@
         const nextRepDate = (chunk as any).nextRepDate as number;
         const priorityUi = (chunk as any).priorityUi as number | undefined;
         const priorityEff = (chunk as any).priorityEff as number;
+        const totalReadingTime = await getStoredTimerTotalSeconds(material.id);
 
         blockInfoTarget = {
           id: (chunk as any).chunkId ?? material.id,
@@ -922,7 +1797,7 @@
           interval: intervalDays ?? 1,
           intervalFactor: 1.5,
           reviewCount: (chunk as any).stats?.impressions ?? 0,
-          totalReadingTime: (chunk as any).stats?.totalReadingTimeSec ?? 0,
+          totalReadingTime,
           createdAt: new Date((chunk as any).createdAt ?? Date.now()).toISOString(),
           updatedAt: new Date((chunk as any).updatedAt ?? Date.now()).toISOString(),
           nextReview: nextRepDate ? new Date(nextRepDate).toISOString() : null,
@@ -941,52 +1816,51 @@
         target: blockInfoModalContainer,
         props: {
           block: blockInfoTarget as any,
+          app: plugin.app,
           position,
           onClose: () => closeBlockInfoModal()
         }
       });
     } catch (error) {
       logger.error('[IRCalendarSidebar] 打开内容块信息失败:', error);
-      new Notice('打开失败');
+      new Notice(t('irSidebar.notices.openFailed'));
     }
   }
 
   async function setReminderForMaterial(material: ScheduleItem, date: string, time: string) {
     if (!date || !time) {
-      new Notice('请选择有效的日期和时间');
+      new Notice(t('irSidebar.notices.invalidDateTime'));
       return;
     }
 
     try {
       const reviewDateTime = new Date(`${date}T${time}`);
       if (reviewDateTime <= new Date()) {
-        new Notice('复习时间必须是未来时间');
+        new Notice(t('irSidebar.notices.futureReviewTime'));
         return;
       }
 
-      if (isPdfBookmarkTaskId(material.id)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        await pdfService.updateTask(material.id, {
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(material);
+      const deckId = await resolveDeckIdForScheduleItem(material);
+      await scheduler.manualRescheduleBlockWithPreviewV4(
+        block,
+        {
           nextRepDate: reviewDateTime.getTime(),
-          status: 'queued'
-        });
-      } else {
-        const adapter = await getChunkScheduleAdapter();
-        await adapter.updateChunkSchedule(material.id, {
-          nextRepDate: reviewDateTime.getTime(),
-          scheduleStatus: 'queued' as any
-        });
-      }
+          scheduleStatus: 'queued'
+        },
+        deckId
+      );
 
-      new Notice(`复习时间已设置为：${reviewDateTime.toLocaleString()}`);
+      new Notice(t('irSidebar.notices.reviewTimeSet', { time: reviewDateTime.toLocaleString() }));
       closeReminderModal();
-      // ✅ 直接刷新本组件数据，确保月历和材料列表立即更新
+      await recomputeAndBroadcastIRData(plugin.app, 'manual_reschedule');
+      // 直接刷新本组件数据，确保月历和材料列表立即更新
       await loadData();
       await loadCalendarProgress();
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
     } catch (error) {
       logger.error('[IRCalendarSidebar] 设置复习时间失败:', error);
-      new Notice('设置复习时间失败');
+      new Notice(t('irSidebar.notices.reviewTimeSetFailed'));
     }
   }
 
@@ -1016,9 +1890,25 @@
   }
 
   onDestroy(() => {
+    clearTimerTicker();
     closeBlockInfoModal();
     closeReminderModal();
+    importModalInstance?.close();
+    importModalInstance = null;
+    analyticsModalInstance?.close();
+    analyticsModalInstance = null;
   });
+
+  function openAnalyticsModal() {
+    analyticsModalInstance?.close();
+    analyticsModalInstance = new IRAnalyticsModalObsidian(plugin.app, {
+      plugin,
+      onClose: () => {
+        analyticsModalInstance = null;
+      }
+    });
+    analyticsModalInstance.open();
+  }
 
   /**
    * 获取同源文档的其它书签/内容块（不在当前选中日期的调度列表中）
@@ -1027,39 +1917,37 @@
     const sourceFile = material.sourceFile;
     if (!sourceFile) return [];
 
-    const todayKey = formatDateKey(selectedDate);
-    const todayIds = new Set((materialsByDate.get(todayKey) || []).map(m => m.id));
-
+    const collectedIds = new Set<string>([material.id]);
     const siblings: ScheduleItem[] = [];
 
-    // 收集所有日期中同源的 items
+    // 收集所有日期中同源的 items（不排除当天项，以便形成完整目录结构）
     for (const [_dateKey, items] of materialsByDate) {
       for (const item of items) {
-        if (item.id === material.id) continue;
+        if (collectedIds.has(item.id)) continue;
         if (item.sourceFile !== sourceFile) continue;
-        if (todayIds.has(item.id)) continue;
+        collectedIds.add(item.id);
         siblings.push(item);
       }
     }
 
-    // 也查找未出现在 materialsByDate 中的同源 PDF 书签任务（done/suspended 状态已过滤掉的除外）
-    if (isPdfBookmarkTaskId(material.id)) {
+    // 查找同源 PDF 书签任务（无论当前项是否为 PDF 书签，只要 sourceFile 是 PDF 就查找）
+    if (sourceFile.toLowerCase().endsWith('.pdf')) {
       try {
         const pdfService = await getPdfBookmarkTaskService();
         const allTasks = await pdfService.getAllTasks();
-        const existingIds = new Set(siblings.map(s => s.id));
         for (const task of allTasks) {
-          if (task.id === material.id) continue;
+          if (collectedIds.has(task.id)) continue;
           if (task.pdfPath !== sourceFile) continue;
-          if (existingIds.has(task.id)) continue;
-          if (todayIds.has(task.id)) continue;
           const status = String(task.status || 'new');
           if (status === 'done' || status === 'removed') continue;
+          collectedIds.add(task.id);
           siblings.push({
             id: task.id,
             title: String(task.title || '').trim() || 'PDF',
             displayName: extractPdfHeading(String(task.title || '')),
             sourceFile: task.pdfPath,
+            associatedNotePath: task.meta?.associatedNotePath,
+            associatedNoteScope: task.meta?.associatedNotePath ? 'point' : undefined,
             resumeLink: task.link,
             priority: Number(task.priorityUi ?? task.priorityEff ?? 5),
             intervalDays: Number(task.intervalDays ?? 1),
@@ -1070,6 +1958,31 @@
         }
       } catch (e) {
         logger.warn('[IRCalendarSidebar] 查找同源 PDF 书签失败:', e);
+      }
+    } else if (isEpubBookmarkTaskId(material.id) || sourceFile.toLowerCase().endsWith('.epub')) {
+      try {
+        const epubService = await getEpubBookmarkTaskService();
+        const allTasks = await epubService.getTasksByEpub(sourceFile);
+        for (const task of allTasks) {
+          if (collectedIds.has(task.id)) continue;
+          const status = String(task.status || 'new');
+          if (status === 'done' || status === 'removed') continue;
+          collectedIds.add(task.id);
+          siblings.push({
+            id: task.id,
+            title: String(task.title || '').trim() || 'EPUB',
+            sourceFile: task.epubFilePath,
+            associatedNotePath: task.meta?.associatedNotePath,
+            associatedNoteScope: task.meta?.associatedNotePath ? 'point' : undefined,
+            priority: Number(task.priorityUi ?? task.priorityEff ?? 5),
+            intervalDays: Number(task.intervalDays ?? 1),
+            scheduleStatus: status,
+            nextRepDate: Number(task.nextRepDate || 0),
+            nextReviewDate: task.nextRepDate ? new Date(task.nextRepDate) : null,
+          });
+        }
+      } catch (e) {
+        logger.warn('[IRCalendarSidebar] 查找同源 EPUB 书签失败:', e);
       }
     }
 
@@ -1124,7 +2037,7 @@
 
       menu.addItem((item) => {
         item
-          .setTitle('查看')
+          .setTitle(t('irSidebar.menu.view'))
           .setIcon('eye')
           .onClick(() => {
             void openBlockInfo(material, popoverPosition);
@@ -1135,7 +2048,7 @@
 
       menu.addItem((item) => {
         item
-          .setTitle('设置优先级')
+          .setTitle(t('irSidebar.menu.setPriority'))
           .setIcon('star')
           .onClick(() => {
             openPriorityMenuForAnchor(anchor, material);
@@ -1144,7 +2057,7 @@
 
       menu.addItem((item) => {
         item
-          .setTitle('设置下次复习时间')
+          .setTitle(t('irSidebar.menu.setNextReviewTime'))
           .setIcon('calendar-clock')
           .onClick(() => {
             openReminderModal(material, popoverPosition);
@@ -1153,17 +2066,41 @@
 
       menu.addItem((item) => {
         item
-          .setTitle('设置标签组')
+          .setTitle(t('irSidebar.menu.setTagGroup'))
           .setIcon('tags');
         const sub = (item as any).setSubmenu();
         void loadTagGroupSubmenu(sub, material);
       });
 
+      menu.addItem((item) => {
+        item
+          .setTitle(
+            hasPointAssociatedNote(material)
+              ? t('irSidebar.associatedNote.menuRelink')
+              : t('irSidebar.associatedNote.menuLink')
+          )
+          .setIcon('link')
+          .onClick(() => {
+            void chooseAssociatedNoteForMaterial(material);
+          });
+      });
+
+      if (hasPointAssociatedNote(material)) {
+        menu.addItem((item) => {
+          item
+            .setTitle(t('irSidebar.associatedNote.menuUnlink'))
+            .setIcon('unlink')
+            .onClick(() => {
+              void setAssociatedNotePathForMaterial(material, null);
+            });
+        });
+      }
+
       menu.addSeparator();
 
       menu.addItem((item) => {
         item
-          .setTitle('搁置')
+          .setTitle(t('irSidebar.menu.suspend'))
           .setIcon('pause-circle')
           .onClick(() => {
             void suspendMaterial(material);
@@ -1172,7 +2109,7 @@
 
       menu.addItem((item) => {
         item
-          .setTitle('归档')
+          .setTitle(t('irSidebar.menu.archive'))
           .setIcon('archive')
           .onClick(() => {
             void archiveMaterial(material);
@@ -1181,7 +2118,7 @@
 
       menu.addItem((item) => {
         item
-          .setTitle('移除')
+          .setTitle(t('irSidebar.menu.remove'))
           .setIcon('x-circle')
           .onClick(() => {
             void removeMaterial(material);
@@ -1190,7 +2127,7 @@
 
       menu.addItem((item) => {
         item
-          .setTitle('删除')
+          .setTitle(t('irSidebar.menu.delete'))
           .setIcon('trash-2')
           .onClick(async () => {
             const confirmed = await showDeleteConfirm(
@@ -1204,32 +2141,52 @@
           });
       });
 
+      // 仅对 PDF 项显示「新增阅读点」
+      if (material.sourceFile?.toLowerCase().endsWith('.pdf')) {
+        menu.addSeparator();
+
+        menu.addItem((item) => {
+          item
+            .setTitle(t('irSidebar.menu.addReadingPoint'))
+            .setIcon('bookmark-plus')
+            .onClick(() => {
+              void openAddReadingPointModal(material);
+            });
+        });
+      }
+
       menu.addSeparator();
 
       menu.addItem((item) => {
         item
-          .setTitle('更多操作')
+          .setTitle(t('irSidebar.menu.moreActions'))
           .setIcon('settings');
         const sub = (item as any).setSubmenu();
 
         sub.addItem((subItem: any) => {
           subItem
-            .setTitle('连续阅读')
+            .setTitle(t('irSidebar.menu.continuousReading'))
             .setChecked(continuousReadingEnabled)
             .onClick(() => {
-              continuousReadingEnabled = !continuousReadingEnabled;
-              if (!continuousReadingEnabled) {
-                expandedMaterialIds = new Set();
-              }
+              void setContinuousReadingEnabled(!continuousReadingEnabled);
             });
         });
 
         sub.addItem((subItem: any) => {
           subItem
-            .setTitle('显示调度时间')
-            .setChecked(showScheduleTime)
+            .setTitle(t('irSidebar.menu.autoTimer'))
+            .setChecked(autoStartNextTimerEnabled)
             .onClick(() => {
-              showScheduleTime = !showScheduleTime;
+              void setAutoStartNextTimerEnabled(!autoStartNextTimerEnabled);
+            });
+        });
+
+        sub.addItem((subItem: any) => {
+          subItem
+            .setTitle(t('irSidebar.menu.showRealtimePreview'))
+            .setChecked(showSchedulingPreview)
+            .onClick(() => {
+              void setShowSchedulingPreviewEnabled(!showSchedulingPreview);
             });
         });
       });
@@ -1253,9 +2210,49 @@
     return `${diffDays}天后`;
   }
 
+  async function openAddReadingPointModal(material: ScheduleItem): Promise<void> {
+    try {
+      let resolvedDeckId = '';
+
+      if (isPdfBookmarkTaskId(material.id)) {
+        const pdfService = await getPdfBookmarkTaskService();
+        const task = await pdfService.getTask(material.id);
+        resolvedDeckId = task?.deckId || '';
+      }
+
+      if (!resolvedDeckId) {
+        // 尝试从 irDecks 中找到包含此 sourceFile 的牌组
+        for (const deck of irDecks) {
+          const blocks = Object.values(await (await getStorage()).getAllBlocks());
+          const match = blocks.find((b: any) => b.sourcePath === material.sourceFile && b.deckId === deck.id);
+          if (match) {
+            resolvedDeckId = deck.id;
+            break;
+          }
+        }
+      }
+
+      if (!resolvedDeckId && irDecks.length > 0) {
+        resolvedDeckId = irDecks[0].id;
+      }
+
+      if (!resolvedDeckId) {
+        new Notice(t('irSidebar.notices.noDecksAvailable'));
+        return;
+      }
+
+      arpDeckId = resolvedDeckId;
+      arpPdfPath = material.sourceFile;
+      arpParentTitle = material.displayName || material.title || 'PDF';
+      showAddReadingPointModal = true;
+    } catch (error) {
+      logger.error('[IRCalendarSidebar] 打开新增阅读点弹窗失败:', error);
+      new Notice(t('irSidebar.notices.actionFailedRetry'));
+    }
+  }
+
   function handleMaterialContextMenu(event: MouseEvent, anchor: HTMLElement, material: ScheduleItem) {
     event.preventDefault();
-    event.stopPropagation();
     showMaterialMenuAt(
       { x: event.pageX, y: event.pageY },
       { x: event.clientX, y: event.clientY },
@@ -1312,7 +2309,6 @@
     clearLongPressTimer();
     if (longPressTriggered) {
       event.preventDefault();
-      event.stopPropagation();
     }
     longPressTriggered = false;
   }
@@ -1324,64 +2320,30 @@
     try {
       const cfg = schedulingConfig.find(c => c.action === action);
       if (!cfg) return;
+      const isPostpone = Boolean((cfg as any).isPostpone);
+      const shouldAutoStartNextTimer =
+        !isPostpone &&
+        shouldAutoStartNextTimerAfterScheduling(target.id);
+      const shouldPauseTargetTimer = activeReadingTimer?.blockId === target.id;
 
-      const now = new Date();
-      now.setHours(0, 0, 0, 0);
+      const scheduler = await getV4SchedulerService();
+      const block = await resolveScheduleItemToBlockV4(target);
+      const deckId = await resolveDeckIdForScheduleItem(target);
 
-      let nextDate = new Date(now);
-      let nextRepDate = target.nextRepDate;
-      let intervalDays = target.intervalDays || 1;
-      let scheduleStatus = target.scheduleStatus;
+      const result = isPostpone
+        ? await scheduler.postponeBlockWithPreviewV4(block, 2, deckId)
+        : await scheduler.applyScheduleModeWithPreviewV4(block, action as 'intensive' | 'normal' | 'slow', deckId);
 
-      const updates: { intervalDays?: number; nextRepDate?: number; scheduleStatus?: any; status?: any } = {};
+      const updatedBlock = result.block;
+      const nextRepDate = updatedBlock.nextRepDate;
+      const intervalDays = updatedBlock.intervalDays || 1;
+      const scheduleStatus = updatedBlock.status;
 
-      // 读取 IR 调度参数
-      const params = getIRScheduleParams();
-      const pEff = target.priority ?? 5;
-
-      if ((cfg as any).isPostpone) {
-        nextDate.setDate(nextDate.getDate() + 2);
-        nextRepDate = nextDate.getTime();
-        updates.nextRepDate = nextRepDate;
-        new Notice(`已推迟2天，${nextDate.toLocaleDateString()}再见`);
+      if (isPostpone) {
+        new Notice(`已推迟2天，${new Date(nextRepDate).toLocaleDateString()}再见`);
       } else {
-        const currentInterval = target.intervalDays || 1;
-        // 获取 TagGroup mGroup 系数（异步）
-        const mGroup = await getMGroupForMaterial(target.id);
-
-        if (currentInterval <= 1) {
-          intervalDays = schedulingDefaultIntervals[action as 'intensive' | 'normal' | 'slow'];
-        } else {
-          // 使用 V4 核心公式: I_next = I_curr × mBase × mGroup × Ψ(pEff) × actionMultiplier
-          const psi = calculatePsi(pEff);
-          intervalDays = Math.round(currentInterval * params.mBase * mGroup * psi * (cfg as any).intervalMultiplier);
-        }
-
-        intervalDays = Math.max(1, Math.min(intervalDays, params.maxInterval));
-        nextRepDate = calculateNextRepDate(intervalDays);
-        scheduleStatus = 'queued';
-
-        updates.intervalDays = intervalDays;
-        updates.nextRepDate = nextRepDate;
-        updates.scheduleStatus = scheduleStatus as any;
-
         const actionLabel = { intensive: '攻坚', normal: '正常', slow: '放缓', postpone: '稍后' }[action] || action;
         new Notice(`${actionLabel}模式：${intervalDays}天后再见`);
-      }
-
-      // 持久化调度 + 记录交互
-      if (isPdfBookmarkTaskId(target.id)) {
-        const pdfService = await getPdfBookmarkTaskService();
-        await pdfService.updateTask(target.id, {
-          intervalDays: updates.intervalDays,
-          nextRepDate: updates.nextRepDate,
-          status: updates.scheduleStatus ?? undefined
-        });
-        await pdfService.recordTaskInteraction(target.id, 0, {});
-      } else {
-        const adapter = await getChunkScheduleAdapter();
-        await adapter.updateChunkSchedule(target.id, updates);
-        await adapter.recordChunkInteraction(target.id, 0, {});
       }
 
       processedChunkIds = new Set([...processedChunkIds, target.id]);
@@ -1390,6 +2352,7 @@
       const pinnedList = pinnedByDate.get(pinnedKey) || [];
       const updated: ScheduleItem = {
         ...target,
+        deckId,
         intervalDays,
         scheduleStatus,
         nextRepDate,
@@ -1414,18 +2377,56 @@
 
       closeSchedulingMenu();
 
-      // ✅ 关键修复：await 确保数据刷新完成后再执行后续操作
+      // await 确保数据刷新完成后再执行后续操作
+      await recomputeAndBroadcastIRData(plugin.app, isPostpone ? 'postpone_block' : 'complete_block');
+      const monitoring = await getMonitoringService();
+      monitoring.recordDecisionEvent({
+        itemId: target.id,
+        action: isPostpone ? 'postpone_block' : `schedule_${action}`,
+        beforeDate: target.nextReviewDate ? target.nextReviewDate.toISOString() : undefined,
+        afterDate: nextRepDate > 0 ? new Date(nextRepDate).toISOString() : undefined,
+        beforePriority: target.explanation?.manualPriority ?? target.priority ?? 5,
+        afterPriority: target.explanation?.manualPriority ?? target.priority ?? 5,
+        sourceType: 'calendar_sidebar'
+      });
+      monitoring.recordDecisionOutcome({
+        itemId: target.id,
+        outcomeType: isPostpone ? 'rescheduled' : 'scheduled',
+        completionSource: 'calendar_sidebar',
+        beforeDate: target.nextReviewDate ? target.nextReviewDate.toISOString() : undefined,
+        afterDate: nextRepDate > 0 ? new Date(nextRepDate).toISOString() : undefined
+      });
+      await monitoring.save();
+      if (shouldPauseTargetTimer) {
+        const paused = await pauseActiveReadingTimer(isPostpone ? 'skipped' : 'completed', target.id);
+        if (!paused) {
+          logger.warn('[IRCalendarSidebar] 当前阅读点计时暂停失败，继续尝试接力到下一个阅读点:', {
+            currentBlockId: target.id,
+            nextBlockId: nextMaterial?.id
+          });
+        }
+      }
+      if (!shouldAutoStartNextTimer || !nextMaterial) {
+        clearAutoTimerChain();
+      }
       await loadData();
       await loadCalendarProgress();
-      // 通知其他组件数据已更新
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
 
       if (nextMaterial) {
-        await openMaterial(nextMaterial);
+        const refreshedNextMaterial = findScheduleItemById(nextMaterial.id) ?? nextMaterial;
+        await openMaterial(refreshedNextMaterial);
+        if (shouldAutoStartNextTimer) {
+          const started = await startReadingTimerWithRetry(refreshedNextMaterial, { announceStart: false, retries: 4 });
+          if (!started) {
+            clearAutoTimerChain();
+          } else {
+            armAutoTimerChain(refreshedNextMaterial.id);
+          }
+        }
       }
     } catch (error) {
       logger.error('[IRCalendarSidebar] 调度失败:', error);
-      new Notice('操作失败，请重试');
+      new Notice(t('irSidebar.notices.actionFailedRetry'));
     }
   }
 
@@ -1436,7 +2437,6 @@
       const storage = await getStorage();
       irDecks = Object.values(await storage.getAllDecks());
       allBlocks = Object.values(await storage.getAllBlocks());
-
       const chunksStore = await storage.getAllChunkDataWithSync();
       const chunks = Object.values(chunksStore || {});
 
@@ -1449,6 +2449,44 @@
       } catch {
         readingMaterials = [];
       }
+
+      {
+        const kernel = await getScheduleKernel();
+        const schedule = await kernel.recomputeScheduleForDeck('ui_refresh');
+        const byDate = new Map<string, ScheduleItem[]>();
+
+        for (const [dateKey, items] of schedule.itemsByDate.entries()) {
+          byDate.set(
+            dateKey,
+            items.map((item: IRPlannedScheduleItem) => ({
+              id: item.id,
+              title: item.title,
+              displayName: item.displayName,
+              sourceFile: item.sourceFile,
+              associatedNotePath: item.associatedNotePath,
+              associatedNoteScope: item.associatedNoteScope,
+              deckId: item.deckId,
+              priority: item.priority,
+              intervalDays: item.intervalDays,
+              scheduleStatus: item.scheduleStatus,
+              nextRepDate: item.nextRepDate,
+              nextReviewDate: item.nextReviewDate,
+              resumeLink: item.resumeLink,
+              explanation: item.explanation
+            }))
+          );
+        }
+
+        materialsByDate = byDate;
+
+        logger.debug('[IRCalendarSidebar] 数据加载完成(统一调度内核):', {
+          decks: irDecks.length,
+          dates: materialsByDate.size,
+          generatedAt: schedule.generatedAt
+        });
+        return;
+      }
+
       const now = new Date();
       now.setHours(0, 0, 0, 0);
 
@@ -1474,7 +2512,7 @@
 
         if (nextRepDate > 0) {
           nextReviewDate = new Date(nextRepDate);
-          dateKey = formatDateKey(nextReviewDate);
+          dateKey = formatDateKey(nextReviewDate!);
         } else {
           // 新材料放在今天
           dateKey = formatDateKey(now);
@@ -1486,6 +2524,8 @@
           id: chunkId,
           title,
           sourceFile: filePath,
+          associatedNotePath: (chunk as any).meta?.associatedNotePath,
+          associatedNoteScope: (chunk as any).meta?.associatedNotePath ? 'point' : undefined,
           resumeLink: rm?.resumeLink,
           priority,
           intervalDays,
@@ -1512,7 +2552,7 @@
           const nextRepDate = Number(task.nextRepDate || 0);
           if (nextRepDate > 0) {
             nextReviewDate = new Date(nextRepDate);
-            dateKey = formatDateKey(nextReviewDate);
+            dateKey = formatDateKey(nextReviewDate!);
           } else {
             dateKey = formatDateKey(now);
           }
@@ -1523,6 +2563,8 @@
             title: pdfFullTitle,
             displayName: extractPdfHeading(pdfFullTitle),
             sourceFile: task.pdfPath,
+            associatedNotePath: task.meta?.associatedNotePath,
+            associatedNoteScope: task.meta?.associatedNotePath ? 'point' : undefined,
             resumeLink: task.link,
             priority: Number(task.priorityUi ?? task.priorityEff ?? 5),
             intervalDays: Number(task.intervalDays ?? 1),
@@ -1540,7 +2582,47 @@
         logger.warn('[IRCalendarSidebar] 加载 PDF 书签任务失败:', e);
       }
 
+      try {
+        const epubService = await getEpubBookmarkTaskService();
+        const epubTasks = await epubService.getAllTasks();
+        for (const task of epubTasks) {
+          const status = String(task.status || 'new');
+          if (status === 'done' || status === 'suspended' || status === 'removed') continue;
+
+          let dateKey: string;
+          let nextReviewDate: Date | null = null;
+          const nextRepDate = Number(task.nextRepDate || 0);
+          if (nextRepDate > 0) {
+            nextReviewDate = new Date(nextRepDate);
+            dateKey = formatDateKey(nextReviewDate!);
+          } else {
+            dateKey = formatDateKey(now);
+          }
+
+          const item: ScheduleItem = {
+            id: task.id,
+            title: String(task.title || '').trim() || 'EPUB',
+            sourceFile: task.epubFilePath,
+            associatedNotePath: task.meta?.associatedNotePath,
+            associatedNoteScope: task.meta?.associatedNotePath ? 'point' : undefined,
+            priority: Number(task.priorityUi ?? task.priorityEff ?? 5),
+            intervalDays: Number(task.intervalDays ?? 1),
+            scheduleStatus: status,
+            nextRepDate,
+            nextReviewDate
+          };
+
+          if (!byDate.has(dateKey)) {
+            byDate.set(dateKey, []);
+          }
+          byDate.get(dateKey)!.push(item);
+        }
+      } catch (e) {
+        logger.warn('[IRCalendarSidebar] 加载 EPUB 书签任务失败:', e);
+      }
+
       materialsByDate = byDate;
+      await loadTimerTotalsFromHistory();
 
       logger.debug('[IRCalendarSidebar] 数据加载完成:', {
         chunks: chunks.length,
@@ -1554,22 +2636,74 @@
   }
 
   onMount(() => {
-    loadData();
-    loadCalendarProgress();
+    applyCalendarSidebarSettingsFromPlugin();
+    restoreTimerRuntimeState();
+    void loadData();
+    void loadCalendarProgress();
 
     // 监听数据更新事件（防抖：避免短时间内重复加载）
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const handleDataUpdate = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        loadData();
+      debounceTimer = setTimeout(async () => {
+        const previouslyExpanded = new Set(expandedMaterialIds);
+        siblingCache = new Map();
+        await loadData();
         loadCalendarProgress();
+
+        // 重新加载已展开项的同源书签
+        if (previouslyExpanded.size > 0) {
+          const todayKey = formatDateKey(selectedDate);
+          const todayItems = materialsByDate.get(todayKey) || [];
+          for (const item of todayItems) {
+            if (previouslyExpanded.has(item.id)) {
+              const siblings = await getSiblingMaterials(item);
+              const next = new Map(siblingCache);
+              next.set(item.id, siblings);
+              siblingCache = next;
+            }
+          }
+        }
       }, 100);
     };
     window.addEventListener('Weave:ir-data-updated', handleDataUpdate);
+    const handleMaterialFinished = (event: Event) => {
+      const detail = (event as CustomEvent<IRMaterialFinishedEventDetail>).detail;
+      if (!detail?.blockId) return;
+      const currentBlockId = detail.blockId;
+
+      void (async () => {
+        const shouldAutoStartNextTimer =
+          autoStartNextTimerEnabled &&
+          detail.autoStartNextTimer === true &&
+          shouldContinueAutoTimerChainForBlock(currentBlockId);
+        await pauseActiveReadingTimer(detail.reason === 'skipped' ? 'skipped' : 'completed', currentBlockId);
+
+        if (!shouldAutoStartNextTimer || !detail.nextBlockId) {
+          clearAutoTimerChain();
+          return;
+        }
+
+        const nextMaterial = detail.nextMaterial ?? findScheduleItemById(detail.nextBlockId);
+        if (!nextMaterial) {
+          logger.warn('[IRCalendarSidebar] 自动接力计时失败：未找到下一个阅读点', detail);
+          clearAutoTimerChain();
+          return;
+        }
+
+        const started = await startReadingTimerWithRetry(nextMaterial, { announceStart: false, retries: 4 });
+        if (!started) {
+          clearAutoTimerChain();
+        } else {
+          armAutoTimerChain(nextMaterial.id);
+        }
+      })();
+    };
+    window.addEventListener('Weave:ir-material-finished', handleMaterialFinished as EventListener);
 
     return () => {
       window.removeEventListener('Weave:ir-data-updated', handleDataUpdate);
+      window.removeEventListener('Weave:ir-material-finished', handleMaterialFinished as EventListener);
     };
   });
 
@@ -1582,21 +2716,33 @@
 <div class="ir-calendar-sidebar">
   <!-- 头部 -->
   <div class="calendar-header">
-    {#if !hideCalendarTitle}
-      <h3 class="calendar-title">增量阅读</h3>
-    {/if}
+    <button
+      class="calendar-tool-btn clickable-icon"
+      type="button"
+      onclick={openAnalyticsModal}
+      title="查看增量阅读总体与单体文档分析图表"
+      aria-label="分析图表"
+    >
+      <ObsidianIcon name="bar-chart-2" size={16} />
+    </button>
     <div class="month-nav">
-      <button class="nav-btn" onclick={prevMonth} aria-label="上个月">
+      <button class="nav-btn" type="button" onclick={prevMonth} aria-label="上个月">
         <ObsidianIcon name="chevron-left" size={14} />
       </button>
       <span class="month-label">{monthLabel}</span>
-      <button class="nav-btn" onclick={nextMonth} aria-label="下个月">
+      <button class="nav-btn" type="button" onclick={nextMonth} aria-label="下个月">
         <ObsidianIcon name="chevron-right" size={14} />
       </button>
-      <button class="today-btn" onclick={goToToday}>今天</button>
+      <button class="today-btn" type="button" onclick={goToToday}>今天</button>
     </div>
-    <button class="import-btn" onclick={openImportModal} title="导入阅读材料">
-      <ObsidianIcon name="folder-input" size={14} />
+    <button
+      class="calendar-tool-btn clickable-icon"
+      type="button"
+      onclick={openImportModal}
+      title="导入阅读材料"
+      aria-label="导入阅读材料"
+    >
+      <ObsidianIcon name="folder-input" size={16} />
     </button>
   </div>
 
@@ -1662,18 +2808,22 @@
                 {/if}
               </button>
             {/if}
-            <button
-              class="reading-item-main"
-              onclick={() => handleMaterialClick(material)}
-              oncontextmenu={(e) => handleMaterialContextMenu(e, e.currentTarget as unknown as HTMLElement, material)}
-              onpointerdown={(e) => handleLongPressStart(e, e.currentTarget as unknown as HTMLElement, material)}
-              onpointermove={handleLongPressMove}
-              onpointerup={handleLongPressEnd}
-              onpointercancel={handleLongPressEnd}
-            >
-              <span class="item-rank" class:top={index < 3}>{index + 1}</span>
-              <span class="item-title" class:processed={processedChunkIds.has(material.id)}>{material.displayName || material.title || '未命名'}</span>
-            </button>
+            <div class="reading-item-content">
+              <button
+                class="reading-item-main"
+                onclick={() => handleMaterialClick(material)}
+                oncontextmenu={(e) => handleMaterialContextMenu(e, e.currentTarget as unknown as HTMLElement, material)}
+                onpointerdown={(e) => handleLongPressStart(e, e.currentTarget as unknown as HTMLElement, material)}
+                onpointermove={handleLongPressMove}
+                onpointerup={handleLongPressEnd}
+                onpointercancel={handleLongPressEnd}
+              >
+                <span class="item-rank" class:top={index < 3}>{index + 1}</span>
+                <span class="item-text">
+                  <span class="item-title" class:processed={processedChunkIds.has(material.id)}>{material.displayName || material.title || '未命名'}</span>
+                </span>
+              </button>
+            </div>
             <div class="reading-item-controls">
               <button
                 class="schedule-checkbox"
@@ -1682,6 +2832,44 @@
               >
                 <span class="checkbox-box" class:checked={processedChunkIds.has(material.id)} aria-hidden="true"></span>
               </button>
+              {#if hasPointAssociatedNote(material)}
+                <button
+                  type="button"
+                  class="associated-note-link"
+                  aria-label={getAssociatedNoteActionLabel(material)}
+                  title={getAssociatedNoteActionTooltip(material)}
+                  onclick={(event) => handleAssociatedNoteClick(event, material)}
+                >
+                  <span>笔记</span>
+                </button>
+              {/if}
+              <button
+                class="reading-timer-btn"
+                class:active={isTimerRunningForBlock(material.id)}
+                class:tracked={!isTimerRunningForBlock(material.id) && getDisplayedTimerSeconds(material.id) > 0}
+                aria-label={isTimerRunningForBlock(material.id) ? '暂停阅读计时' : '开始阅读计时'}
+                title={isTimerRunningForBlock(material.id)
+                  ? `暂停计时（已记录 ${formatTimerDuration(getDisplayedTimerSeconds(material.id))}）`
+                  : getDisplayedTimerSeconds(material.id) > 0
+                    ? `继续计时（已记录 ${formatTimerDuration(getDisplayedTimerSeconds(material.id))}）`
+                    : '开始计时'}
+                disabled={timerBusyBlockId === material.id}
+                onclick={(event) => {
+                  void toggleReadingTimer(material);
+                }}
+              >
+                <ObsidianIcon name={isTimerRunningForBlock(material.id) ? 'pause' : 'timer'} size={12} />
+              </button>
+              {#if getDisplayedTimerSeconds(material.id) > 0}
+                <span
+                  class="reading-timer-chip"
+                  class:active={isTimerRunningForBlock(material.id)}
+                  class:tracked={!isTimerRunningForBlock(material.id)}
+                  title={`已记录阅读时长 ${formatTimerDuration(getDisplayedTimerSeconds(material.id))}`}
+                >
+                  {formatCompactTimerDuration(getDisplayedTimerSeconds(material.id))}
+                </span>
+              {/if}
               <span class="priority-badge {priorityClass}">P{priority}</span>
             </div>
           </div>
@@ -1692,19 +2880,21 @@
                 {@const sPriorityClass = sPriority >= 8 ? 'high' : sPriority >= 4 ? 'medium' : 'low'}
                 {@const dueText = sibling.nextRepDate > 0 ? formatSiblingDueDate(sibling.nextRepDate) : '未调度'}
                 <div class="sibling-item">
-                  <button
-                    class="sibling-item-main"
-                    onclick={() => void openMaterial(sibling)}
-                    oncontextmenu={(e) => handleMaterialContextMenu(e, e.currentTarget as unknown as HTMLElement, sibling)}
-                    onpointerdown={(e) => handleLongPressStart(e, e.currentTarget as unknown as HTMLElement, sibling)}
-                    onpointermove={handleLongPressMove}
-                    onpointerup={handleLongPressEnd}
-                    onpointercancel={handleLongPressEnd}
-                    title={sibling.title || sibling.id}
-                  >
-                    <span class="sibling-title">{sibling.displayName || sibling.title || sibling.id}</span>
-                    <span class="sibling-due">{dueText}</span>
-                  </button>
+                  <div class="sibling-item-content">
+                    <button
+                      class="sibling-item-main"
+                      onclick={() => void openMaterial(sibling)}
+                      oncontextmenu={(e) => handleMaterialContextMenu(e, e.currentTarget as unknown as HTMLElement, sibling)}
+                      onpointerdown={(e) => handleLongPressStart(e, e.currentTarget as unknown as HTMLElement, sibling)}
+                      onpointermove={handleLongPressMove}
+                      onpointerup={handleLongPressEnd}
+                      onpointercancel={handleLongPressEnd}
+                      title={sibling.title || sibling.id}
+                    >
+                      <span class="sibling-title">{sibling.displayName || sibling.title || sibling.id}</span>
+                      <span class="sibling-due">{dueText}</span>
+                    </button>
+                  </div>
                   <div class="reading-item-controls">
                     <button
                       class="schedule-checkbox"
@@ -1713,6 +2903,44 @@
                     >
                       <span class="checkbox-box" class:checked={processedChunkIds.has(sibling.id)} aria-hidden="true"></span>
                     </button>
+                    {#if hasPointAssociatedNote(sibling)}
+                      <button
+                        type="button"
+                        class="associated-note-link sibling-associated-note-link"
+                        aria-label={getAssociatedNoteActionLabel(sibling)}
+                        title={getAssociatedNoteActionTooltip(sibling)}
+                        onclick={(event) => handleAssociatedNoteClick(event, sibling)}
+                      >
+                        <span>笔记</span>
+                      </button>
+                    {/if}
+                    <button
+                      class="reading-timer-btn"
+                      class:active={isTimerRunningForBlock(sibling.id)}
+                      class:tracked={!isTimerRunningForBlock(sibling.id) && getDisplayedTimerSeconds(sibling.id) > 0}
+                      aria-label={isTimerRunningForBlock(sibling.id) ? '暂停阅读计时' : '开始阅读计时'}
+                      title={isTimerRunningForBlock(sibling.id)
+                        ? `暂停计时（已记录 ${formatTimerDuration(getDisplayedTimerSeconds(sibling.id))}）`
+                        : getDisplayedTimerSeconds(sibling.id) > 0
+                          ? `继续计时（已记录 ${formatTimerDuration(getDisplayedTimerSeconds(sibling.id))}）`
+                          : '开始计时'}
+                      disabled={timerBusyBlockId === sibling.id}
+                      onclick={(event) => {
+                        void toggleReadingTimer(sibling);
+                      }}
+                    >
+                      <ObsidianIcon name={isTimerRunningForBlock(sibling.id) ? 'pause' : 'timer'} size={12} />
+                    </button>
+                    {#if getDisplayedTimerSeconds(sibling.id) > 0}
+                      <span
+                        class="reading-timer-chip"
+                        class:active={isTimerRunningForBlock(sibling.id)}
+                        class:tracked={!isTimerRunningForBlock(sibling.id)}
+                        title={`已记录阅读时长 ${formatTimerDuration(getDisplayedTimerSeconds(sibling.id))}`}
+                      >
+                        {formatCompactTimerDuration(getDisplayedTimerSeconds(sibling.id))}
+                      </span>
+                    {/if}
                     <span class="priority-badge {sPriorityClass}">P{sPriority}</span>
                   </div>
                 </div>
@@ -1727,6 +2955,27 @@
       {/each}
     {/if}
   </div>
+
+  {#if activeReadingTimer}
+    <div class="footer-timer-bar">
+      <div class="footer-timer-info">
+        <span class="footer-timer-kicker">正在计时</span>
+        <span class="footer-timer-title" title={getActiveReadingTimerLabel()}>{getActiveReadingTimerLabel()}</span>
+      </div>
+      <div class="footer-timer-meta">
+        <span class="footer-timer-value">{formatTimerDuration(getDisplayedTimerSeconds(activeReadingTimer.blockId))}</span>
+        <button
+          type="button"
+          class="footer-timer-pause"
+          onclick={() => void pauseActiveReadingTimer('manual')}
+          title="暂停当前计时"
+        >
+          <ObsidianIcon name="pause" size={12} />
+        </button>
+      </div>
+    </div>
+  {/if}
+
 </div>
 
 <FloatingMenu
@@ -1742,15 +2991,16 @@
         <button
           class="ir-calendar-scheduling-btn"
           style="--accent: {cfg.color}"
+          onmouseenter={() => schedulingPreviewFocusAction = cfg.action}
           onclick={() => handleSchedulingAction(cfg.action)}
         >
           <span class="ir-calendar-scheduling-label">{cfg.label}</span>
-          {#if showScheduleTime}
-            <span class="ir-calendar-scheduling-next">{getSchedulingPrediction(cfg.action)}</span>
-          {/if}
         </button>
       {/each}
     </div>
+    {#if showSchedulingPreview}
+      <IRScheduleImpactPreviewPanel preview={schedulingPreviewByAction[schedulingPreviewFocusAction]} />
+    {/if}
   {/snippet}
 </FloatingMenu>
 
@@ -1771,28 +3021,44 @@
             prioritySliderExpanded = !prioritySliderExpanded;
             if (!prioritySliderExpanded) closePriorityMenu();
           }}
+          onPreview={handlePriorityPreview}
           onChange={handlePriorityUiChange}
         />
+        <IRScheduleImpactPreviewPanel preview={priorityPreviewDetails} />
       </div>
     {/if}
   {/snippet}
 </FloatingMenu>
 
-<!-- 导入模态窗 -->
-<MaterialImportModal
-  {plugin}
-  bind:open={showImportModal}
-  onClose={() => showImportModal = false}
-  onImportComplete={handleImportComplete}
-/>
+<!-- 新增阅读点弹窗 -->
+{#if showAddReadingPointModal}
+  <AddReadingPointModal
+    {plugin}
+    deckId={arpDeckId}
+    pdfPath={arpPdfPath}
+    parentTitle={arpParentTitle}
+    onClose={() => { showAddReadingPointModal = false; }}
+    onCreated={() => { showAddReadingPointModal = false; }}
+  />
+{/if}
 
 <style>
+  :global(.workspace-leaf-content[data-type="weave-ir-calendar-view"] > .view-content) {
+    padding: 0;
+    overflow: hidden;
+    background: var(--weave-surface-background, var(--background-primary));
+  }
+
   .ir-calendar-sidebar {
+    /* 视图跟随 leaf 所在区域切换底色，但内部统一为同一层背景，避免出现额外色阶。 */
+    --weave-ir-sidebar-surface-background: var(--weave-surface-background, var(--background-primary));
+    --weave-ir-sidebar-elevated-background: var(--weave-surface-background, var(--background-primary));
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
     padding: 12px;
-    background: var(--background-primary);
+    background: var(--weave-ir-sidebar-surface-background);
     overflow: hidden;
   }
 
@@ -1804,39 +3070,32 @@
     margin-bottom: 12px;
   }
 
-  .calendar-title {
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-normal);
-    flex-shrink: 0;
-  }
-
-  :global(.is-mobile) .calendar-title,
-  :global(.is-phone) .calendar-title {
-    display: none;
-  }
-
-  .import-btn {
-    width: 24px;
-    height: 24px;
+  .calendar-tool-btn {
+    width: var(--clickable-icon-size, 32px);
+    height: var(--clickable-icon-size, 32px);
     padding: 0;
     border: none;
-    background: var(--background-modifier-hover);
+    background: transparent;
     color: var(--text-muted);
-    border-radius: 4px;
-    cursor: pointer;
+    border-radius: var(--clickable-icon-radius, 4px);
+    box-shadow: none;
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s ease;
     flex-shrink: 0;
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   }
 
-  .import-btn:hover {
-    background: var(--background-modifier-active-hover);
+  .calendar-tool-btn:hover {
     color: var(--text-normal);
   }
+
+  .calendar-tool-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus, rgba(var(--interactive-accent-rgb), 0.22));
+    outline-offset: 1px;
+  }
+
 
   .month-nav {
     display: flex;
@@ -1894,7 +3153,7 @@
 
   /* 月历网格 */
   .calendar-grid-container {
-    background: var(--background-primary);
+    background: var(--weave-ir-sidebar-elevated-background);
     border-radius: 8px;
     padding: 8px;
     margin-bottom: 8px;
@@ -1995,6 +3254,77 @@
     padding: 0;
   }
 
+  .footer-timer-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 8px 10px;
+    margin-top: 8px;
+    border-radius: 10px;
+    border: 1px solid color-mix(in srgb, var(--interactive-accent) 32%, var(--background-modifier-border));
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--interactive-accent) 8%, var(--weave-ir-sidebar-elevated-background)),
+      var(--weave-ir-sidebar-surface-background)
+    );
+  }
+
+  .footer-timer-info {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .footer-timer-kicker {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-faint);
+  }
+
+  .footer-timer-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-normal);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .footer-timer-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+
+  .footer-timer-value {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--interactive-accent);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .footer-timer-pause {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 7px;
+    background: var(--weave-ir-sidebar-elevated-background);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .footer-timer-pause:hover {
+    color: var(--text-normal);
+    border-color: var(--interactive-accent);
+  }
+
   .loading-state {
     display: flex;
     flex-direction: column;
@@ -2024,6 +3354,14 @@
     background: var(--background-modifier-hover);
   }
 
+  .reading-item-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
   .reading-item-main {
     display: flex;
     align-items: center;
@@ -2045,11 +3383,57 @@
     border-radius: 6px;
   }
 
+  .item-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+  }
+
   .reading-item-controls {
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0;
     flex-shrink: 0;
+  }
+
+  .associated-note-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 34px;
+    height: 18px;
+    padding: 0 6px;
+    border: 1px solid color-mix(in srgb, var(--interactive-accent) 38%, var(--background-modifier-border));
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--interactive-accent) 12%, var(--weave-ir-sidebar-surface-background));
+    box-shadow: none;
+    color: var(--interactive-accent);
+    cursor: pointer;
+    font-size: 10px;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .associated-note-link:hover {
+    color: var(--interactive-accent);
+    border-color: var(--interactive-accent);
+    background: color-mix(in srgb, var(--interactive-accent) 18%, var(--weave-ir-sidebar-surface-background));
+  }
+
+  .associated-note-link:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  .associated-note-link span {
+    display: block;
+    white-space: nowrap;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
   }
 
   .schedule-checkbox {
@@ -2086,7 +3470,7 @@
 
   .checkbox-box.checked {
     border-color: var(--interactive-accent);
-    background: color-mix(in srgb, var(--interactive-accent) 25%, var(--background-primary));
+    background: color-mix(in srgb, var(--interactive-accent) 25%, var(--weave-ir-sidebar-elevated-background));
   }
 
   .checkbox-box.checked::after {
@@ -2099,6 +3483,71 @@
     border-right: 2px solid var(--interactive-accent);
     border-bottom: 2px solid var(--interactive-accent);
     transform: rotate(45deg);
+  }
+
+  .reading-timer-btn {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+  }
+
+  .reading-timer-btn:hover:not(:disabled) {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+  }
+
+  .reading-timer-btn.tracked {
+    color: var(--interactive-accent);
+  }
+
+  .reading-timer-btn.active {
+    color: var(--color-red);
+    background: color-mix(in srgb, var(--color-red) 14%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-red) 20%, transparent);
+  }
+
+  .reading-timer-btn:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
+
+  .reading-timer-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 85%, transparent);
+    background: color-mix(in srgb, var(--weave-ir-sidebar-elevated-background) 92%, transparent);
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.4;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  .reading-timer-chip.tracked {
+    color: var(--interactive-accent);
+    border-color: color-mix(in srgb, var(--interactive-accent) 32%, var(--background-modifier-border));
+    background: color-mix(in srgb, var(--interactive-accent) 9%, var(--weave-ir-sidebar-surface-background));
+  }
+
+  .reading-timer-chip.active {
+    color: var(--color-red);
+    border-color: color-mix(in srgb, var(--color-red) 35%, var(--background-modifier-border));
+    background: color-mix(in srgb, var(--color-red) 10%, var(--weave-ir-sidebar-surface-background));
   }
 
   .item-rank {
@@ -2155,34 +3604,40 @@
   }
 
   .ir-calendar-scheduling-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border: none;
-    background: none;
-    border-radius: 6px;
-    padding: 10px;
+    border: 1px solid transparent;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--weave-ir-sidebar-elevated-background) 92%, white 8%),
+      var(--weave-ir-sidebar-elevated-background)
+    );
+    border-radius: 10px;
+    min-height: 54px;
+    padding: 12px 10px;
     cursor: pointer;
-    text-align: left;
+    text-align: center;
     position: relative;
     overflow: hidden;
-    box-shadow: none;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
     outline: none;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
   }
 
   .ir-calendar-scheduling-btn:hover {
     background: var(--background-modifier-hover);
+    border-color: color-mix(in srgb, var(--accent) 38%, var(--background-modifier-border));
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
   }
 
   .ir-calendar-scheduling-label {
     display: block;
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 15px;
+    font-weight: 700;
     color: var(--text-normal);
-    margin-bottom: 4px;
-  }
-
-  .ir-calendar-scheduling-next {
-    display: block;
-    font-size: 11px;
-    color: var(--text-muted);
   }
 
   .priority-badge {
@@ -2282,6 +3737,14 @@
     background: var(--background-modifier-hover);
   }
 
+  .sibling-item-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
   .sibling-item-main {
     display: flex;
     align-items: center;
@@ -2295,6 +3758,10 @@
     text-align: left;
     flex: 1;
     min-width: 0;
+  }
+
+  .sibling-associated-note-link {
+    min-width: 34px;
   }
 
   .sibling-title {

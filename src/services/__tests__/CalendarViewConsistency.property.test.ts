@@ -8,8 +8,6 @@
  * 
  * @module services/__tests__/CalendarViewConsistency.property.test
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import type { ReadingMaterial, ReadingProgress } from '../../types/incremental-reading-types';
 import { ReadingCategory } from '../../types/incremental-reading-types';

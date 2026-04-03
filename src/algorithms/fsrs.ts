@@ -10,9 +10,9 @@ import type { FSRSCard, FSRSParameters, ReviewLog } from "../data/types";
 import { CardState, Rating } from "../data/types";
 // 重新导出 FSRSData 以保持向后兼容
 export type { FSRSData } from "../types/card-types";
-import { FSRS6CoreAlgorithm } from "./fsrs6-core";
 import type { FSRS6Card, FSRS6Parameters } from "../types/fsrs6-types";
 import { FSRS6_DEFAULTS } from "../types/fsrs6-types";
+import { FSRS6CoreAlgorithm } from "./fsrs6-core";
 
 export class FSRS {
 	private core: FSRS6CoreAlgorithm;

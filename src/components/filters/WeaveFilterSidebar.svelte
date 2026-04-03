@@ -154,7 +154,7 @@
       {/if}
     </div>
 
-    <!-- 🆕 题型筛选 -->
+    <!-- 题型筛选 -->
     <div class="filter-group">
       <h4>题型</h4>
       {#each Object.entries(questionTypeCounts) as [type, count]}
@@ -176,7 +176,7 @@
       {/if}
     </div>
 
-    <!-- 🆕 错题集筛选 -->
+    <!-- 错题集筛选 -->
     <div class="filter-group">
       <h4>错题集</h4>
       {#each Object.entries(ERROR_LEVEL_CONFIG) as [level, config]}
@@ -429,7 +429,7 @@
   }
 
 
-  /* 🆕 错题集选项样式 */
+  /* 错题集选项样式 */
   .error-book-option {
     display: flex;
     align-items: center;

@@ -3,6 +3,7 @@
   import { MarkdownRenderer, Component } from 'obsidian';
   import type { WeavePlugin } from '../../main';
   import { logger } from '../../utils/logger';
+  import { shouldRevealClozeAnswersForRender } from '../../utils/cloze-mode';
 
   interface Props {
     plugin: WeavePlugin;
@@ -10,9 +11,10 @@
     sourcePath?: string;
     enableClozeProcessing?: boolean;
     showClozeAnswers?: boolean;
+    clozeMode?: import('../../utils/cloze-mode').ClozeMode;
     card?: any; // 卡片对象
-    studyInstance?: any; // 🆕 学习实例（支持渐进式挖空）
-    activeClozeOrdinal?: number; // 🆕 渐进式挖空：当前激活的挖空序号 (1-based)
+    studyInstance?: any; // 渐进式挖空学习实例
+    activeClozeOrdinal?: number; // 当前激活的挖空序号（1-based）
     onRenderComplete?: (element: HTMLElement) => void;
     onRenderError?: (error: Error) => void;
   }
@@ -23,18 +25,147 @@
     sourcePath = '',
     enableClozeProcessing = false,
     showClozeAnswers = false,
+    clozeMode = 'reveal',
     card,
-    studyInstance, // 🆕 渐进式挖空学习实例支持
-    activeClozeOrdinal, // 🆕 渐进式挖空序号
+    studyInstance, // 渐进式挖空学习实例
+    activeClozeOrdinal, // 渐进式挖空序号
     onRenderComplete,
     onRenderError
   }: Props = $props();
 
-  //  修复：自动从card.sourceFile获取sourcePath（如果未提供）
-  // 这对于内部链接点击和Ctrl+悬停浮窗功能至关重要
+  // 未显式传入 sourcePath 时，回退到卡片来源路径，保证内部链接与悬停预览可用
   const effectiveSourcePath = $derived(
     sourcePath || card?.sourceFile || ''
   );
+  const effectiveShowClozeAnswers = $derived.by(() =>
+    shouldRevealClozeAnswersForRender(clozeMode, showClozeAnswers)
+  );
+  const isInputClozeMode = $derived.by(() =>
+    clozeMode === 'input' &&
+    activeClozeOrdinal === undefined &&
+    !(studyInstance && typeof studyInstance === 'object' && 'activeClozeOrd' in studyInstance)
+  );
+
+  function getClozeAriaLabel(shouldReveal: boolean, hint?: string | null): string {
+    const baseLabel = shouldReveal
+      ? '答案已显示'
+      : isInputClozeMode
+        ? '请输入答案后确认'
+        : '点击或悬停显示答案';
+
+    return hint ? `${baseLabel}，提示: ${hint}` : baseLabel;
+  }
+
+  function normalizeClozeAnswer(value: string | null | undefined): string {
+    return String(value || '')
+      .normalize('NFKC')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  }
+
+  function computeClozeInputWidth(answerText: string, userAnswer: string): string {
+    const contentLength = Math.max(answerText.length, userAnswer.length, 3);
+    return `${Math.min(Math.max(contentLength + 1, 4), 28)}ch`;
+  }
+
+  function resetClozeStateClasses(markEl: HTMLElement): void {
+    markEl.classList.remove(
+      'weave-cloze-hidden',
+      'weave-cloze-revealed',
+      'weave-cloze-input-mode',
+      'weave-cloze-correct',
+      'weave-cloze-incorrect'
+    );
+  }
+
+  function renderClozeAsInput(markEl: HTMLElement): void {
+    const answerText = markEl.getAttribute('data-cloze-answer') || markEl.textContent || '';
+    const userAnswer = markEl.getAttribute('data-user-answer') || '';
+    const hint = markEl.getAttribute('data-hint');
+
+    resetClozeStateClasses(markEl);
+    markEl.classList.add('weave-cloze-input-mode');
+    markEl.replaceChildren();
+    markEl.style.cursor = 'text';
+    markEl.setAttribute('tabindex', '-1');
+    markEl.setAttribute('role', 'group');
+    markEl.setAttribute('aria-label', getClozeAriaLabel(false, hint));
+
+    const inputEl = document.createElement('input');
+    inputEl.type = 'text';
+    inputEl.className = 'weave-cloze-input';
+    inputEl.value = userAnswer;
+    inputEl.spellcheck = false;
+    inputEl.autocomplete = 'off';
+    inputEl.setAttribute('data-cloze-input', 'true');
+    inputEl.setAttribute('autocorrect', 'off');
+    inputEl.setAttribute('autocapitalize', 'off');
+    inputEl.setAttribute('aria-label', hint ? `输入答案，提示：${hint}` : '输入答案');
+    inputEl.style.width = computeClozeInputWidth(answerText, userAnswer);
+    inputEl.addEventListener('input', () => {
+      markEl.setAttribute('data-user-answer', inputEl.value);
+      inputEl.style.width = computeClozeInputWidth(answerText, inputEl.value);
+    });
+
+    markEl.appendChild(inputEl);
+  }
+
+  function renderClozeAsReveal(markEl: HTMLElement, shouldShow: boolean): void {
+    const answerText = markEl.getAttribute('data-cloze-answer') || markEl.textContent || '';
+    const hint = markEl.getAttribute('data-hint');
+
+    resetClozeStateClasses(markEl);
+    markEl.replaceChildren(document.createTextNode(answerText));
+    markEl.setAttribute('tabindex', '0');
+    markEl.setAttribute('role', 'button');
+    markEl.setAttribute('aria-label', getClozeAriaLabel(shouldShow, hint));
+    markEl.style.cursor = shouldShow ? 'default' : 'pointer';
+
+    if (shouldShow) {
+      markEl.classList.add('weave-cloze-revealed');
+      return;
+    }
+
+    markEl.classList.add('weave-cloze-hidden');
+  }
+
+  function renderClozeAsInputResult(markEl: HTMLElement): void {
+    const answerText = markEl.getAttribute('data-cloze-answer') || markEl.textContent || '';
+    const userAnswer = markEl.getAttribute('data-user-answer') || '';
+    const hint = markEl.getAttribute('data-hint');
+    const isCorrect = normalizeClozeAnswer(userAnswer) === normalizeClozeAnswer(answerText) && normalizeClozeAnswer(answerText) !== '';
+
+    resetClozeStateClasses(markEl);
+    markEl.classList.add('weave-cloze-revealed', isCorrect ? 'weave-cloze-correct' : 'weave-cloze-incorrect');
+    markEl.replaceChildren(document.createTextNode(answerText));
+    markEl.style.cursor = 'default';
+    markEl.setAttribute('tabindex', '0');
+    markEl.setAttribute('role', 'status');
+    markEl.setAttribute(
+      'aria-label',
+      isCorrect
+        ? `回答正确，${getClozeAriaLabel(true, hint)}`
+        : `回答错误，正确答案是 ${answerText}${hint ? `，提示: ${hint}` : ''}`
+    );
+
+    if (!isCorrect && userAnswer.trim()) {
+      markEl.setAttribute('title', `你的答案：${userAnswer}\n正确答案：${answerText}`);
+    }
+  }
+
+  function applyClozeDisplayState(markEl: HTMLElement, shouldShow: boolean): void {
+    if (isInputClozeMode) {
+      if (shouldShow) {
+        renderClozeAsInputResult(markEl);
+      } else {
+        renderClozeAsInput(markEl);
+      }
+      return;
+    }
+
+    renderClozeAsReveal(markEl, shouldShow);
+  }
 
 
   let container: HTMLDivElement;
@@ -44,21 +175,20 @@
   let isMounted = $state(false);  
   let pendingRender = $state(false);
 
-  // 预处理挖空内容
-  //  支持三种模式（优先级从高到低）：
-  // 1. activeClozeOrdinal参数：直接传递的挖空序号（1-based）- V2渐进式挖空
-  // 2. 渐进式挖空学习实例：根据activeClozeOrd区分当前挖空和其他挖空
-  // 3. 普通Anki挖空：全部转换为==高亮==
-  // 4. Obsidian格式: ==text== → 保留原样
+  // 按优先级预处理挖空内容：
+  // 1. 直接使用 activeClozeOrdinal 指定当前激活的挖空
+  // 2. 从渐进式挖空学习实例中读取 activeClozeOrd
+  // 3. 将普通 Anki 挖空转换为 ==高亮==
+  // 4. 已是 Obsidian 高亮格式时保持原样
   function preprocessClozeContent(rawContent: string): string {
     if (!rawContent) return rawContent;
     
     let processedContent = rawContent;
     
-    // 🆕 优先级1: 直接传递的 activeClozeOrdinal 参数 (1-based)
+    // 优先级 1：直接传入的 activeClozeOrdinal 参数（1-based）
     if (activeClozeOrdinal !== undefined) {
-      //  渐进式挖空：区分当前挖空和其他挖空
-      const activeClozeOrd = activeClozeOrdinal - 1; // 转换为0-based
+      // 渐进式挖空：区分当前挖空和其他挖空
+      const activeClozeOrd = activeClozeOrdinal - 1; // 转换为 0-based
       
       processedContent = processedContent.replace(
         /\{\{c(\d+)::([^}:]+)(?:::([^}]+))?\}\}/g,
@@ -78,8 +208,8 @@
       logger.debug('[ObsidianRenderer]',`✅ 渲染渐进式挖空（activeCloze: c${activeClozeOrdinal}）`);
       
     } else if (studyInstance && typeof studyInstance === 'object' && 'activeClozeOrd' in studyInstance) {
-      // 🆕 优先级2：检测渐进式挖空学习实例
-      //  渐进式挖空学习实例：区分当前挖空和其他挖空
+      // 优先级 2：从渐进式挖空学习实例中获取当前挖空
+      // 渐进式挖空学习实例：区分当前挖空和其他挖空
       const activeClozeOrd = studyInstance.activeClozeOrd;
       
       processedContent = processedContent.replace(
@@ -100,7 +230,7 @@
       logger.debug('[ObsidianRenderer]',`✅ 渲染渐进式挖空学习实例（activeCloze: c${activeClozeOrd + 1}）`);
       
     } else {
-      //  普通挖空：转换所有Anki格式为Obsidian高亮
+      // 普通挖空：将所有 Anki 格式转换为 Obsidian 高亮
       const ankiClozeRegex = /\{\{c(\d+)::([^:}]+)(?:::([^}]+))?\}\}/g;
       const hasAnkiCloze = ankiClozeRegex.test(rawContent);
       ankiClozeRegex.lastIndex = 0;
@@ -118,9 +248,8 @@
   }
 
   /**
-   *  修复：设置内部链接点击处理器
-   * Obsidian的MarkdownRenderer只渲染HTML，不会自动绑定点击事件
-   * 需要手动绑定点击事件来处理内部链接跳转
+   * 设置内部链接点击处理器。
+   * MarkdownRenderer 只负责渲染 HTML，需要额外绑定点击事件来处理内部跳转。
    */
   function setupInternalLinkHandlers(container: HTMLElement): void {
     if (!container) return;
@@ -184,17 +313,59 @@
   }
 
   /**
+   * 脚注弹窗状态
+   */
+  let activeFootnotePopover: HTMLElement | null = null;
+  let footnoteHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function removeFootnotePopover(): void {
+    if (footnoteHideTimer) {
+      clearTimeout(footnoteHideTimer);
+      footnoteHideTimer = null;
+    }
+    if (activeFootnotePopover) {
+      activeFootnotePopover.remove();
+      activeFootnotePopover = null;
+    }
+  }
+
+  function scheduleRemovePopover(delay = 200): void {
+    if (footnoteHideTimer) clearTimeout(footnoteHideTimer);
+    footnoteHideTimer = setTimeout(removeFootnotePopover, delay);
+  }
+
+  function cancelRemovePopover(): void {
+    if (footnoteHideTimer) {
+      clearTimeout(footnoteHideTimer);
+      footnoteHideTimer = null;
+    }
+  }
+
+  /**
+   * 查找脚注定义元素（兼容不同ID格式）
+   */
+  function findFootnoteElement(container: HTMLElement, footnoteId: string): Element | null {
+    return container.querySelector(`li[id="${footnoteId}"]`) ||
+           container.querySelector(`[id="${footnoteId}"]`) ||
+           container.querySelector(`[data-footnote-id="${footnoteId}"]`);
+  }
+
+  /**
    * 设置脚注处理器
    */
   function setupFootnoteHandlers(container: HTMLElement): void {
     if (!container) return;
 
-    const footnoteRefs = container.querySelectorAll('a.footnote-ref, sup a[href^="#fn"]');
-    const footnotesSection = container.querySelector('.footnotes, section.footnotes');
+    const footnoteRefs = container.querySelectorAll(
+      'a.footnote-ref, sup a[href^="#fn"], sup[class*="footnote"] a, a[data-footnote-ref], a[role="doc-noteref"]'
+    );
+    const footnotesSection = container.querySelector(
+      '.footnotes, section.footnotes, section[data-footnotes], [class*="footnote-list"]'
+    );
     
     if (footnoteRefs.length === 0 && !footnotesSection) return;
 
-    // 为脚注引用添加点击处理
+    // 为脚注引用添加悬停弹窗和点击处理
     footnoteRefs.forEach((ref) => {
       const refEl = ref as HTMLAnchorElement;
       const href = refEl.getAttribute('href');
@@ -210,17 +381,8 @@
 
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault();
-        // Svelte 5: 脚注点击不需要 stopPropagation
         
-        // 查找脚注内容
-        let footnoteContent = container.querySelector(`#${footnoteId}`) ||
-                             container.querySelector(`li[id="${footnoteId}"]`) ||
-                             container.querySelector(`[data-footnote-id="${footnoteId}"]`);
-        
-        if (!footnoteContent && footnoteId.startsWith('fn:')) {
-          const num = footnoteId.substring(3);
-          footnoteContent = container.querySelector(`#fnref\\:${num}`);
-        }
+        const footnoteContent = findFootnoteElement(container, footnoteId);
         
         if (footnoteContent) {
           footnoteContent.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -233,6 +395,41 @@
 
       refEl.addEventListener('click', clickHandler, { capture: true });
       (refEl as any)._weaveFootnoteHandler = clickHandler;
+
+      // 悬停弹窗
+      const oldEnter = (refEl as any)._weaveFootnoteEnter;
+      const oldLeave = (refEl as any)._weaveFootnoteLeave;
+      if (oldEnter) refEl.removeEventListener('mouseenter', oldEnter);
+      if (oldLeave) refEl.removeEventListener('mouseleave', oldLeave);
+
+      let hoverShowTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const enterHandler = (e: MouseEvent) => {
+        // 如果已有同一个弹窗，取消隐藏计时
+        if (activeFootnotePopover) {
+          cancelRemovePopover();
+          return;
+        }
+
+        // 延迟显示弹窗（避免快速掠过时闪烁）
+        hoverShowTimer = setTimeout(() => {
+          hoverShowTimer = null;
+          showFootnotePopover(refEl, container, footnoteId);
+        }, 300);
+      };
+
+      const leaveHandler = () => {
+        if (hoverShowTimer) {
+          clearTimeout(hoverShowTimer);
+          hoverShowTimer = null;
+        }
+        scheduleRemovePopover(300);
+      };
+
+      refEl.addEventListener('mouseenter', enterHandler);
+      refEl.addEventListener('mouseleave', leaveHandler);
+      (refEl as any)._weaveFootnoteEnter = enterHandler;
+      (refEl as any)._weaveFootnoteLeave = leaveHandler;
     });
 
     // 为脚注返回链接添加处理
@@ -253,10 +450,8 @@
 
       const clickHandler = (e: MouseEvent) => {
         e.preventDefault();
-        // Svelte 5: 脚注返回链接不需要 stopPropagation
         
-        // 查找脚注引用
-        let target = container.querySelector(`#${targetId}`);
+        let target = container.querySelector(`#${CSS.escape(targetId)}`);
         
         if (!target && targetId.startsWith('fnref:')) {
           const num = targetId.substring(6);
@@ -277,51 +472,82 @@
       backRefEl.addEventListener('click', clickHandler, { capture: true });
       (backRefEl as any)._weaveBackrefHandler = clickHandler;
     });
-
-    // 确保脚注区域可见
-    if (footnotesSection) {
-      (footnotesSection as HTMLElement).style.display = '';
-      (footnotesSection as HTMLElement).style.visibility = 'visible';
-    }
   }
 
-  // 后处理渲染内容，处理挖空占位符样式
+  /**
+   * 显示脚注弹窗
+   */
+  function showFootnotePopover(refEl: HTMLElement, container: HTMLElement, footnoteId: string): void {
+    removeFootnotePopover();
+
+    const footnoteLi = findFootnoteElement(container, footnoteId);
+    if (!footnoteLi) return;
+
+    const clone = footnoteLi.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('a.footnote-backref, a[href^="#fnref"]').forEach(el => el.remove());
+    clone.removeAttribute('id');
+
+    const popover = document.createElement('div');
+    popover.className = 'weave-footnote-popover';
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'weave-footnote-popover-content';
+    contentDiv.innerHTML = clone.innerHTML;
+    popover.appendChild(contentDiv);
+
+    popover.addEventListener('mouseenter', cancelRemovePopover);
+    popover.addEventListener('mouseleave', () => scheduleRemovePopover(300));
+
+    document.body.appendChild(popover);
+    activeFootnotePopover = popover;
+
+    const rect = refEl.getBoundingClientRect();
+    popover.style.left = `${rect.left}px`;
+    popover.style.top = `${rect.bottom + 6}px`;
+
+    requestAnimationFrame(() => {
+      if (!activeFootnotePopover) return;
+      const pr = popover.getBoundingClientRect();
+      if (pr.right > window.innerWidth - 16) {
+        popover.style.left = `${window.innerWidth - pr.width - 16}px`;
+      }
+      if (pr.bottom > window.innerHeight - 16) {
+        popover.style.top = `${rect.top - pr.height - 6}px`;
+      }
+    });
+  }
+
+  // 后处理渲染内容，补充挖空标记的样式和交互
   function postProcessRenderedContent(element: HTMLElement): void {
     if (!enableClozeProcessing) return;
 
-    // 
     const markElements = element.querySelectorAll('mark');
+    const shouldReveal = effectiveShowClozeAnswers;
     
     markElements.forEach((mark, index) => {
       const markEl = mark as HTMLElement;
-      
-      // 添加挖空样式类
-      markEl.classList.add('weave-cloze-mark');
-      
-      if (!showClozeAnswers) {
-        // 未显示答案时，添加隐藏类
-        markEl.classList.add('weave-cloze-hidden');
-      } else {
-        // 显示答案时，添加已显示类
-        markEl.classList.add('weave-cloze-revealed');
+      const answerText = markEl.textContent || '';
+      const previousHandler = (markEl as HTMLElement & { _weaveClozeClickHandler?: EventListener })._weaveClozeClickHandler;
+      if (previousHandler) {
+        markEl.removeEventListener('click', previousHandler);
       }
       
-      // 添加可访问性属性
-      markEl.setAttribute('tabindex', '0');
-      markEl.setAttribute('role', 'button');
-      markEl.setAttribute('aria-label', showClozeAnswers ? '答案已显示' : '点击或悬停显示答案');
+      markEl.classList.add('weave-cloze-mark');
+      markEl.setAttribute('data-cloze-answer', answerText);
       markEl.setAttribute('data-cloze-index', String(index));
-      
-      // 添加点击事件 - 切换单个挖空的显示状态
-      markEl.addEventListener('click', (e) => {
-        // Svelte 5: 挖空点击切换不需要 stopPropagation
-        const target = e.currentTarget as HTMLElement;
-        if (target.classList.contains('weave-cloze-hidden')) {
-          target.classList.remove('weave-cloze-hidden');
-          target.classList.add('weave-cloze-revealed');
-          target.setAttribute('aria-label', '答案已显示');
-        }
-      });
+
+      if (!isInputClozeMode) {
+        const clickHandler: EventListener = (e) => {
+          const target = e.currentTarget as HTMLElement;
+          if (target.classList.contains('weave-cloze-hidden')) {
+            target.classList.remove('weave-cloze-hidden');
+            target.classList.add('weave-cloze-revealed');
+            target.setAttribute('aria-label', getClozeAriaLabel(true, target.getAttribute('data-hint')));
+          }
+        };
+
+        markEl.addEventListener('click', clickHandler);
+        (markEl as HTMLElement & { _weaveClozeClickHandler?: EventListener })._weaveClozeClickHandler = clickHandler;
+      }
     });
     
     //  处理带hint的挖空（从Anki格式转换而来）
@@ -334,16 +560,14 @@
       const markEl = wrapperEl.querySelector('mark');
       
       if (markEl && hint) {
-        // 将hint信息添加到mark元素
         markEl.setAttribute('data-hint', hint);
         markEl.setAttribute('title', `💡 提示: ${hint}`);
-        
-        // 更新aria-label包含提示信息
-        const currentLabel = markEl.getAttribute('aria-label') || '';
-        markEl.setAttribute('aria-label', `${currentLabel}，提示: ${hint}`);
-        
         hintCount++;
       }
+    });
+
+    markElements.forEach((mark) => {
+      applyClozeDisplayState(mark as HTMLElement, shouldReveal);
     });
     
     logger.debug('[ObsidianRenderer]',`✅ 处理了 ${markElements.length} 个挖空标记 (其中 ${hintCount} 个带提示)`);
@@ -369,9 +593,9 @@
   }
 
 
-  // 渲染Markdown内容
+  // 渲染 Markdown 内容
   async function renderContent(): Promise<void> {
-    //  关键检查：防止组件卸载后继续渲染
+    // 防止组件卸载后继续渲染
     if (!isMounted || !container || !plugin?.app) {
       logger.debug('[ObsidianRenderer]','⚠️ 跳过渲染：组件未挂载或缺少依赖', {
         isMounted,
@@ -382,7 +606,7 @@
       return;
     }
     
-    //  防止并发渲染
+    // 避免并发渲染
     if (isRendering) {
       logger.debug('[ObsidianRenderer]','⚠️ 跳过渲染：上一次渲染尚未完成');
       pendingRender = true;
@@ -392,7 +616,9 @@
     logger.debug('[ObsidianRenderer]','✅ 开始渲染内容:', {
       contentLength: content?.length ?? 0,
       enableClozeProcessing,
-      showClozeAnswers
+      showClozeAnswers,
+      clozeMode,
+      effectiveShowClozeAnswers
     });
 
     isRendering = true;
@@ -405,12 +631,15 @@
         component = null;
       }
       
-      //  再次检查：在异步操作前确认组件仍然挂载
+      // 在异步操作前再次确认组件仍然挂载
       if (!isMounted || !container) {
         logger.debug('[ObsidianRenderer]','渲染中止：组件已卸载');
         return;
       }
       
+      // 防止切换卡片时答案闪烁：渲染期间隐藏容器，等待onRenderComplete处理后才显示
+      container.style.visibility = 'hidden';
+
       container.innerHTML = '';
 
       // 预处理内容
@@ -428,7 +657,7 @@
         component
       );
 
-      //  最终检查：在加载组件前确认组件仍然挂载
+      // 在加载组件前做最后一次挂载检查
       if (!isMounted || !component) {
         logger.debug('[ObsidianRenderer]','渲染完成但组件已卸载，跳过加载');
         if (component) {
@@ -441,8 +670,7 @@
       // 加载组件
       component.load();
 
-      //  修复：等待脚注渲染完成
-      // Obsidian的脚注需要Component加载后等待DOM更新才会完全渲染
+      // 脚注需要在 Component 加载后再等一个 DOM 更新周期才能完整渲染
       await new Promise(resolve => setTimeout(resolve, 50));
 
       // 后处理渲染内容
@@ -450,24 +678,31 @@
 
       wrapTablesForHorizontalScroll(container);
 
-      //  修复：注册内部链接点击事件处理器
+      // 注册内部链接点击事件处理器
       setupInternalLinkHandlers(container);
 
-      //  修复：设置脚注处理器
+      // 设置脚注处理器
       setupFootnoteHandlers(container);
 
-      // 触发完成回调
+      // 触发完成回调（父组件在此回调中分割DOM并隐藏答案区域）
       onRenderComplete?.(container);
+
+      // 回调完成后恢复可见（答案已被隐藏）
+      if (isMounted && container) {
+        container.style.visibility = '';
+      }
       
       logger.debug('[ObsidianRenderer]','✅ 渲染成功', {
         contentLength: content.length,
         enableClozeProcessing,
         showClozeAnswers,
+        clozeMode,
+        effectiveShowClozeAnswers,
         timestamp: new Date().toLocaleTimeString()
       });
 
     } catch (error) {
-      //  只在组件仍然挂载时处理错误
+      // 仅在组件仍然挂载时处理错误
       if (!isMounted || !container) {
         logger.debug('[ObsidianRenderer]','渲染错误但组件已卸载，忽略');
         return;
@@ -475,6 +710,9 @@
       
       logger.error('[ObsidianRenderer] 渲染失败:', error);
       renderError = error instanceof Error ? error.message : '未知渲染错误';
+      
+      // 错误时恢复可见
+      container.style.visibility = '';
       
       // 降级到简单HTML渲染
       container.innerHTML = `
@@ -499,22 +737,22 @@
     }
   }
 
-  //  使用安全的 $effect + 延迟执行，避免启动阻塞
+  // 使用安全的 $effect + 延迟执行，避免阻塞初始化
   
   // 跟踪上一次渲染的内容，用于检测变化
   let previousContent = $state<string>('');
-  let previousShowCloze = $state<boolean>(false);
-  let previousActiveClozeOrdinal = $state<number | undefined>(undefined); // 🆕 跟踪挖空序号
+  let previousShowCloze = $state<boolean | undefined>(undefined);
+  let previousClozeMode = $state<'reveal' | 'input' | undefined>(undefined);
+  let previousActiveClozeOrdinal = $state<number | undefined>(undefined); // 跟踪挖空序号
   
-  //  安全的内容变化监听（延迟执行，避免阻塞）
-  // 修复：同时监听 content 和 activeClozeOrdinal 变化
+  // 安全监听内容变化，并同时追踪 activeClozeOrdinal
   $effect(() => {
     // 读取依赖以触发追踪
     const currentContent = content;
     const currentActiveCloze = activeClozeOrdinal;
     const mounted = isMounted;
     
-    //  检测 content 或 activeClozeOrdinal 变化
+    // 检测 content 或 activeClozeOrdinal 变化
     const contentChanged = currentContent !== previousContent;
     const activeClozeChanged = currentActiveCloze !== previousActiveClozeOrdinal;
     
@@ -537,13 +775,22 @@
   // 安全的挖空显示状态监听（延迟执行，避免阻塞）
   $effect(() => {
     // 读取依赖以触发追踪
-    const shouldShow = showClozeAnswers;
+    const shouldShow = effectiveShowClozeAnswers;
+    const currentMode = clozeMode;
     const mounted = isMounted;
     const processingEnabled = enableClozeProcessing;
+    const showStateChanged = shouldShow !== previousShowCloze;
+    const modeChanged = currentMode !== previousClozeMode;
     
-    if (mounted && shouldShow !== previousShowCloze && processingEnabled) {
-      logger.debug('[ObsidianRenderer]','挖空显示状态变化:', shouldShow);
+    if (mounted && processingEnabled && (showStateChanged || modeChanged)) {
+      logger.debug('[ObsidianRenderer]','挖空显示状态变化:', {
+        shouldShow,
+        showClozeAnswers,
+        clozeMode,
+        modeChanged
+      });
       previousShowCloze = shouldShow;
+      previousClozeMode = currentMode;
       // 延迟执行，避免阻塞
       setTimeout(() => updateClozeDisplay(shouldShow), 100);
     }
@@ -557,39 +804,22 @@
     logger.debug('[ObsidianRenderer]',`更新 ${markElements.length} 个挖空的显示状态`);
     
     markElements.forEach((mark) => {
-      const markEl = mark as HTMLElement;
-      if (shouldShow) {
-        markEl.classList.remove('weave-cloze-hidden');
-        markEl.classList.add('weave-cloze-revealed');
-        markEl.setAttribute('aria-label', '答案已显示');
-        markEl.style.cursor = 'default';
-      } else {
-        markEl.classList.add('weave-cloze-hidden');
-        markEl.classList.remove('weave-cloze-revealed');
-        markEl.setAttribute('aria-label', '点击或悬停显示答案');
-        markEl.style.cursor = 'pointer';
-      }
+      applyClozeDisplayState(mark as HTMLElement, shouldShow);
     });
   }
 
   onMount(() => {
     isMounted = true;  //  标记组件已挂载
     logger.debug('[ObsidianRenderer]','onMount - 组件已挂载');
-    
-    //  安全的初次渲染：延迟执行避免阻塞启动
-    setTimeout(() => {
-      if (container && content !== undefined) {
-        previousContent = content;
-        previousShowCloze = showClozeAnswers;
-        previousActiveClozeOrdinal = activeClozeOrdinal; // 🆕 初始化挖空序号
-        renderContent();
-      }
-    }, 0);
+    // 初次渲染由 $effect 监听 content 变化自动触发（previousContent 初始为 ''，检测到变化后调度 renderContent）
+    // 不在此处重复调度，避免双重渲染导致卡片切换时内容抖动
   });
 
   onDestroy(() => {
     isMounted = false;  //  标记组件已卸载（防止异步渲染继续）
     
+    removeFootnotePopover();
+
     if (component) {
       component.unload();
       component = null;
@@ -687,7 +917,7 @@
     text-align: left;
   }
 
-  /*  新挖空样式 - 基于Obsidian的<mark>元素 */
+  /* 挖空样式，基于 Obsidian 的 <mark> 元素 */
   :global(.weave-cloze-mark) {
     padding: 2px 6px;
     margin: 0 2px;
@@ -696,6 +926,35 @@
     transition: all 0.3s ease;
     position: relative;
     display: inline-block;
+  }
+
+  :global(.weave-cloze-mark.weave-cloze-input-mode) {
+    padding: 0;
+    margin: 0 2px;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    vertical-align: baseline;
+  }
+
+  :global(.weave-cloze-input) {
+    min-width: 4ch;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1.5px dashed color-mix(in srgb, var(--interactive-accent, #3b82f6) 70%, transparent);
+    background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+    color: var(--text-normal);
+    font: inherit;
+    line-height: 1.4;
+    text-align: center;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  }
+
+  :global(.weave-cloze-input:focus) {
+    border-color: var(--interactive-accent, #3b82f6);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent, #3b82f6) 20%, transparent);
+    background: color-mix(in srgb, var(--background-primary) 88%, transparent);
   }
 
   /* 隐藏状态 - 使用半透明背景和模糊文本 */
@@ -739,6 +998,42 @@
     user-select: text;
     transform: none;
     animation: revealAnimation 0.3s ease-out;
+  }
+
+  .weave-obsidian-renderer :global(.weave-cloze-mark.weave-cloze-revealed.weave-cloze-correct),
+  .weave-obsidian-renderer :global(.weave-cloze-mark.weave-cloze-revealed.weave-cloze-correct:hover) {
+    background: linear-gradient(135deg,
+      rgba(16, 185, 129, 0.25) 0%,
+      rgba(16, 185, 129, 0.12) 100%);
+    border-color: #10b981;
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.18);
+  }
+
+  .weave-obsidian-renderer :global(.weave-cloze-mark.weave-cloze-revealed.weave-cloze-incorrect),
+  .weave-obsidian-renderer :global(.weave-cloze-mark.weave-cloze-revealed.weave-cloze-incorrect:hover) {
+    background: linear-gradient(135deg,
+      rgba(239, 68, 68, 0.22) 0%,
+      rgba(239, 68, 68, 0.1) 100%);
+    border-color: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.16);
+  }
+
+  :global(.weave-cloze-mark.weave-cloze-correct::after),
+  :global(.weave-cloze-mark.weave-cloze-incorrect::after) {
+    margin-left: 6px;
+    font-size: 0.8em;
+    font-weight: 700;
+    vertical-align: middle;
+  }
+
+  :global(.weave-cloze-mark.weave-cloze-correct::after) {
+    content: '✓';
+    color: #10b981;
+  }
+
+  :global(.weave-cloze-mark.weave-cloze-incorrect::after) {
+    content: '×';
+    color: #ef4444;
   }
 
   @keyframes revealAnimation {
@@ -830,7 +1125,7 @@
     }
   }
 
-  /*  修复：脚注样式 */
+  /* 脚注样式 */
   /* 脚注引用（上标数字） */
   :global(.footnote-ref) {
     color: var(--text-accent);
@@ -887,7 +1182,7 @@
     padding: 0.25rem;
   }
 
-  /*  修复：脚注引用高亮（上标数字） */
+  /* 脚注引用高亮（上标数字） */
   :global(a.footnote-ref.footnote-highlighted),
   :global(sup .footnote-highlighted) {
     background: color-mix(in srgb, var(--text-accent) 25%, transparent);
@@ -897,7 +1192,7 @@
     box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-accent) 15%, transparent);
   }
 
-  /*  移除 !important：脚注内容使用更具体的选择器 */
+  /* 脚注内容使用更具体的选择器，避免依赖 !important */
   .weave-obsidian-renderer :global(.weave-qa-content .footnotes),
   .weave-obsidian-renderer :global(.weave-cloze-content .footnotes),
   .weave-obsidian-renderer :global(.weave-choice-content .footnotes) {
@@ -905,7 +1200,44 @@
     visibility: visible;
   }
 
-  /*  P0修复：表格边框样式 - 确保Obsidian表格在预览中正确显示边框 */
+  /* Ctrl+hover 脚注弹窗样式 */
+  :global(.weave-footnote-popover) {
+    position: fixed;
+    z-index: var(--layer-popover, 400);
+    max-width: 420px;
+    min-width: 180px;
+    padding: 0;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    pointer-events: auto;
+    animation: footnotePopIn 0.15s ease-out;
+  }
+
+  :global(.weave-footnote-popover-content) {
+    padding: 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--text-normal);
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  :global(.weave-footnote-popover-content p) {
+    margin: 0 0 0.25rem;
+  }
+
+  :global(.weave-footnote-popover-content p:last-child) {
+    margin-bottom: 0;
+  }
+
+  @keyframes footnotePopIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* 表格边框样式，保证 Obsidian 表格在预览态显示一致 */
   .weave-obsidian-renderer :global(table) {
     border-collapse: collapse;
     margin: 1em 0;

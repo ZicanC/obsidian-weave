@@ -92,7 +92,7 @@
     return Array.from(new Set(names));
   }
   
-  //  修复：移动端禁用透明遮罩，避免事件穿透导致需要点击两次
+  // 移动端禁用透明遮罩，避免事件穿透导致需要点击两次
   let shouldEnableTransparentMask = $derived(!Platform.isMobile);
   
   //  数据已预加载，无需异步等待
@@ -167,7 +167,7 @@
     logger.debug('[EditCardModal] 牌组变更:', { selectedDeckNames, selectedDeckId });
   }
 
-  let deckButtonRef: HTMLButtonElement;
+  let deckButtonRef = $state<HTMLButtonElement | undefined>(undefined);
   let lastMenuPosition: { x: number; y: number } | null = null;
 
   function getDeckSelectorText(): string {

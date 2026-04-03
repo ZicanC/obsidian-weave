@@ -1,195 +1,193 @@
 /**
  * Callout 标注框转换层
  * 负责将 Obsidian Callouts 转换为带样式的 HTML
- * 
+ *
  * 转换规则：
  * > [!note] Title
  * > Content
- * 
+ *
  * →
- * 
+ *
  * <div class="obsidian-callout callout-note">
  *   <div class="callout-title"> Title</div>
  *   <div class="callout-content">Content</div>
  * </div>
  */
 
-import { BaseConversionLayer } from './ConversionLayer';
-import type { ConversionContext, LayerConversionResult } from '../../../types/ankiconnect-types';
+import type { ConversionContext, LayerConversionResult } from "../../../types/ankiconnect-types";
 import {
-  CONVERSION_REGEX,
-  CALLOUT_TYPES,
-  HtmlGenerator,
-  StringUtils
-} from '../utils/conversion-utils';
+	CALLOUT_TYPES,
+	CONVERSION_REGEX,
+	HtmlGenerator,
+	StringUtils,
+} from "../utils/conversion-utils";
+import { BaseConversionLayer } from "./ConversionLayer";
 
 export class CalloutLayer extends BaseConversionLayer {
-  name = 'CalloutLayer';
-  priority = 70; // 中高优先级
-  description = 'Callout 标注框转换（> [!type] → styled div）';
+	name = "CalloutLayer";
+	priority = 70; // 中高优先级
+	description = "Callout 标注框转换（> [!type] → styled div）";
 
-  convert(content: string, context: ConversionContext): LayerConversionResult {
-    const options = context.options.calloutConversion;
-    
-    if (!options.enabled) {
-      this.debug('Callout 转换已禁用');
-      return this.createResult(content, 0);
-    }
+	convert(content: string, context: ConversionContext): LayerConversionResult {
+		const options = context.options.calloutConversion;
 
-    this.debug('开始 Callout 转换');
+		if (!options.enabled) {
+			this.debug("Callout 转换已禁用");
+			return this.createResult(content, 0);
+		}
 
-    const warnings: string[] = [];
-    let convertedContent = content;
-    let totalChanges = 0;
+		this.debug("开始 Callout 转换");
 
-    // 转换 Callouts
-    const result = this.convertCallouts(convertedContent);
-    convertedContent = result.content;
-    totalChanges = result.count;
-    warnings.push(...result.warnings);
+		const warnings: string[] = [];
+		let convertedContent = content;
+		let totalChanges = 0;
 
-    this.debug('Callout 转换完成', { changeCount: totalChanges });
+		// 转换 Callouts
+		const result = this.convertCallouts(convertedContent);
+		convertedContent = result.content;
+		totalChanges = result.count;
+		warnings.push(...result.warnings);
 
-    return this.createResult(convertedContent, totalChanges, warnings);
-  }
+		this.debug("Callout 转换完成", { changeCount: totalChanges });
 
-  /**
-   * 转换 Callouts
-   */
-  private convertCallouts(content: string): {
-    content: string;
-    count: number;
-    warnings: string[];
-  } {
-    let count = 0;
-    const warnings: string[] = [];
+		return this.createResult(convertedContent, totalChanges, warnings);
+	}
 
-    const result = content.replace(CONVERSION_REGEX.CALLOUT_BLOCK, (match, type, title, contentLines) => {
-      try {
-        count++;
-        
-        // 获取 callout 类型配置
-        const calloutConfig = CALLOUT_TYPES[type.toLowerCase() as keyof typeof CALLOUT_TYPES] || {
-          icon: '📝',
-          color: '#6B7280',
-          label: type
-        };
+	/**
+	 * 转换 Callouts
+	 */
+	private convertCallouts(content: string): {
+		content: string;
+		count: number;
+		warnings: string[];
+	} {
+		let count = 0;
+		const warnings: string[] = [];
 
-        // 解析标题
-        const trimmedTitle = title.trim() || calloutConfig.label;
+		const result = content.replace(
+			CONVERSION_REGEX.CALLOUT_BLOCK,
+			(match, type, title, contentLines) => {
+				try {
+					count++;
 
-        // 解析内容（移除每行的 > 前缀）
-        const parsedContent = this.parseCalloutContent(contentLines);
+					// 获取 callout 类型配置
+					const calloutConfig = CALLOUT_TYPES[type.toLowerCase() as keyof typeof CALLOUT_TYPES] || {
+						icon: "📝",
+						color: "#6B7280",
+						label: type,
+					};
 
-        // 生成 HTML
-        const html = this.generateCalloutHtml(type, calloutConfig, trimmedTitle, parsedContent);
+					// 解析标题
+					const trimmedTitle = title.trim() || calloutConfig.label;
 
-        return html;
-      } catch (_error) {
-        warnings.push(`转换 Callout 失败: ${type}`);
-        return match;
-      }
-    });
+					// 解析内容（移除每行的 > 前缀）
+					const parsedContent = this.parseCalloutContent(contentLines);
 
-    return { content: result, count, warnings };
-  }
+					// 生成 HTML
+					const html = this.generateCalloutHtml(type, calloutConfig, trimmedTitle, parsedContent);
 
-  /**
-   * 解析 Callout 内容
-   * 移除每行的 > 前缀
-   */
-  private parseCalloutContent(contentLines: string): string {
-    const lines = contentLines.split('\n');
-    const parsedLines = lines.map(_line => {
-      // 移除 > 前缀和前导空格
-      return _line.replace(/^>\s?/, '');
-    });
+					return html;
+				} catch (_error) {
+					warnings.push(`转换 Callout 失败: ${type}`);
+					return match;
+				}
+			}
+		);
 
-    return parsedLines
-      .filter(line => !StringUtils.isBlank(line)) // 移除空行
-      .join('<br>'); // 使用 <br> 连接行
-  }
+		return { content: result, count, warnings };
+	}
 
-  /**
-   * 生成 Callout HTML
-   */
-  private generateCalloutHtml(
-    type: string,
-    config: { icon: string; color: string; label: string },
-    title: string,
-    content: string
-  ): string {
-    // 容器样式
-    const containerStyles = {
-      padding: '12px 16px',
-      margin: '8px 0',
-      'border-left': `4px solid ${config.color}`,
-      background: this.hexToRgba(config.color, 0.1),
-      'border-radius': '4px'
-    };
+	/**
+	 * 解析 Callout 内容
+	 * 移除每行的 > 前缀
+	 */
+	private parseCalloutContent(contentLines: string): string {
+		const lines = contentLines.split("\n");
+		const parsedLines = lines.map((_line) => {
+			// 移除 > 前缀和前导空格
+			return _line.replace(/^>\s?/, "");
+		});
 
-    // 标题样式
-    const titleStyles = {
-      'font-weight': '600',
-      'margin-bottom': '4px',
-      color: config.color
-    };
+		return parsedLines
+			.filter((line) => !StringUtils.isBlank(line)) // 移除空行
+			.join("<br>"); // 使用 <br> 连接行
+	}
 
-    // 生成标题 HTML
-    const titleHtml = HtmlGenerator.createDiv(
-      `${config.icon} ${StringUtils.escapeHtml(title)}`,
-      'callout-title',
-      titleStyles
-    );
+	/**
+	 * 生成 Callout HTML
+	 */
+	private generateCalloutHtml(
+		type: string,
+		config: { icon: string; color: string; label: string },
+		title: string,
+		content: string
+	): string {
+		// 容器样式
+		const containerStyles = {
+			padding: "12px 16px",
+			margin: "8px 0",
+			"border-left": `4px solid ${config.color}`,
+			background: this.hexToRgba(config.color, 0.1),
+			"border-radius": "4px",
+		};
 
-    // 生成内容 HTML
-    const contentHtml = HtmlGenerator.createDiv(
-      content,
-      'callout-content'
-    );
+		// 标题样式
+		const titleStyles = {
+			"font-weight": "600",
+			"margin-bottom": "4px",
+			color: config.color,
+		};
 
-    // 组合完整 HTML
-    return HtmlGenerator.createDiv(
-      titleHtml + contentHtml,
-      `obsidian-callout callout-${type.toLowerCase()}`,
-      containerStyles
-    );
-  }
+		// 生成标题 HTML
+		const titleHtml = HtmlGenerator.createDiv(
+			`${config.icon} ${StringUtils.escapeHtml(title)}`,
+			"callout-title",
+			titleStyles
+		);
 
-  /**
-   * 将十六进制颜色转换为 RGBA
-   */
-  private hexToRgba(hex: string, alpha: number): string {
-    // 移除 # 前缀
-    hex = hex.replace(/^#/, '');
+		// 生成内容 HTML
+		const contentHtml = HtmlGenerator.createDiv(content, "callout-content");
 
-    // 解析 RGB 值
-    const r = parseInt(hex.substring(0, 2), 16);
-    const g = parseInt(hex.substring(2, 4), 16);
-    const b = parseInt(hex.substring(4, 6), 16);
+		// 组合完整 HTML
+		return HtmlGenerator.createDiv(
+			titleHtml + contentHtml,
+			`obsidian-callout callout-${type.toLowerCase()}`,
+			containerStyles
+		);
+	}
 
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  }
+	/**
+	 * 将十六进制颜色转换为 RGBA
+	 */
+	private hexToRgba(hex: string, alpha: number): string {
+		// 移除 # 前缀
+		const normalizedHex = hex.replace(/^#/, "");
 
-  /**
-   * 统计 Callouts 数量（调试用）
-   */
-  private countCallouts(content: string): {
-    total: number;
-    byType: Record<string, number>;
-  } {
-    const matches = content.matchAll(CONVERSION_REGEX.CALLOUT_BLOCK);
-    const byType: Record<string, number> = {};
-    let total = 0;
+		// 解析 RGB 值
+		const r = parseInt(normalizedHex.substring(0, 2), 16);
+		const g = parseInt(normalizedHex.substring(2, 4), 16);
+		const b = parseInt(normalizedHex.substring(4, 6), 16);
 
-    for (const match of matches) {
-      total++;
-      const type = match[1].toLowerCase();
-      byType[type] = (byType[type] || 0) + 1;
-    }
+		return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+	}
 
-    return { total, byType };
-  }
+	/**
+	 * 统计 Callouts 数量（调试用）
+	 */
+	private countCallouts(content: string): {
+		total: number;
+		byType: Record<string, number>;
+	} {
+		const matches = content.matchAll(CONVERSION_REGEX.CALLOUT_BLOCK);
+		const byType: Record<string, number> = {};
+		let total = 0;
+
+		for (const match of matches) {
+			total++;
+			const type = match[1].toLowerCase();
+			byType[type] = (byType[type] || 0) + 1;
+		}
+
+		return { total, byType };
+	}
 }
-
-

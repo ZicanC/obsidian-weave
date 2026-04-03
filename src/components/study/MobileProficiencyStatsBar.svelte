@@ -9,6 +9,8 @@
    * @version 1.0.0
    */
 
+  import { tr } from '../../utils/i18n';
+
   interface DeckStats {
     newCards: number;      // 新卡片数量
     learningCards: number; // 学习中卡片数量
@@ -33,6 +35,7 @@
 
   // 计算总数
   let totalCards = $derived(stats.newCards + stats.learningCards + stats.reviewCards);
+  let t = $derived($tr);
 </script>
 
 {#if expanded}
@@ -40,19 +43,19 @@
     <div class="proficiency-stats-items">
       <div class="proficiency-stats-item new-cards">
         <span class="proficiency-stats-value">{stats.newCards}</span>
-        <span class="proficiency-stats-label">新卡片</span>
+        <span class="proficiency-stats-label">{t('study.proficiency.newCards')}</span>
       </div>
       <div class="proficiency-stats-item learning-cards">
         <span class="proficiency-stats-value">{stats.learningCards}</span>
-        <span class="proficiency-stats-label">学习中</span>
+        <span class="proficiency-stats-label">{t('study.progress.learning')}</span>
       </div>
       <div class="proficiency-stats-item review-cards">
         <span class="proficiency-stats-value">{stats.reviewCards}</span>
-        <span class="proficiency-stats-label">复习</span>
+        <span class="proficiency-stats-label">{t('study.progress.review')}</span>
       </div>
       <div class="proficiency-stats-item total-cards">
         <span class="proficiency-stats-value">{totalCards}</span>
-        <span class="proficiency-stats-label">总计</span>
+        <span class="proficiency-stats-label">{t('study.proficiency.total')}</span>
       </div>
     </div>
   </div>

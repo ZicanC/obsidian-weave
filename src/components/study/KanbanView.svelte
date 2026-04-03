@@ -3,13 +3,32 @@
   根据学习状态和题型对卡片进行分组展示
 -->
 <script lang="ts">
+  import { Notice } from 'obsidian';
   import { logger } from '../../utils/logger';
   import { vaultStorage } from '../../utils/vault-local-storage';
-  // 🆕 v2.2: 导入牌组信息获取和设置工具
+  import { showObsidianChoice } from '../../utils/obsidian-confirm';
+  // 导入牌组信息获取和设置工具
   import { getCardDeckIds, setCardProperty } from '../../utils/yaml-utils';
+  import {
+    applyDeckDragToCard,
+    applyQuestionBankDeckDragToCard,
+    applyPriorityUpdateToCard,
+    getQuestionBankDeckIdsForCard,
+    type KanbanCardUpdateContext,
+    type KanbanDeckDragMode
+  } from '../pages/kanban-card-update';
   import { generateUUID } from '../../utils/helpers';
+  import { detectCardQuestionType } from '../../utils/card-type-utils';
+  import { UnifiedCardType } from '../../types/unified-card-types';
+  import { getCardMetadataService } from '../../services/CardMetadataService';
+  import {
+    buildKanbanSelectionKey,
+    collectSelectedCardUUIDs,
+    usesGroupScopedSelection
+  } from './kanban-selection';
 
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
+  import { tr } from '../../utils/i18n';
   import type { Card, CardState, CardType, Deck } from "../../data/types";
   import type { WeaveDataStorage } from "../../data/storage";
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
@@ -46,42 +65,48 @@
     sortRules: SortConfig[];    // 多级排序规则
   }
 
-  // 🆕 卡片属性显示类型
-  type CardAttributeType = 'none' | 'uuid' | 'source' | 'priority' | 'retention' | 'modified';
+  // 卡片属性显示类型
+  type CardAttributeType = 'none' | 'uuid' | 'source' | 'priority' | 'retention' | 'modified' | 'accuracy' | 'question_type' | 'ir_state' | 'ir_priority';
 
   interface Props {
     cards: Card[]; // 必需：由父组件提供卡片数组
+    focusedCardUUIDs?: string[];
     dataStorage: WeaveDataStorage;
     plugin?: WeavePlugin; // 用于Markdown渲染
     decks?: Deck[]; // 牌组列表（用于显示牌组名称）
-    isMobile?: boolean; // 🆕 移动端状态
+    dataSourceType?: 'memory' | 'questionBank' | 'incremental-reading';
+    isMobile?: boolean; // 移动端状态
     onCardSelect?: (card: Card) => void;
-    onCardUpdate?: (card: Card) => void; // 新增：卡片更新回调
+    onCardUpdate?: (card: Card, context?: KanbanCardUpdateContext) => void | Promise<void>;
     onCardDelete?: (cardId: string) => void; // 新增：卡片删除回调
-    onCardView?: (cardId: string) => void; // 🆕 卡片查看回调（显示详情模态窗）
+    onCardView?: (cardId: string) => void; // 卡片查看回调（显示详情模态窗）
     onStartStudy?: (cards: Card[]) => void;
-    groupBy?: 'status' | 'type' | 'priority' | 'deck' | 'createTime';
+    groupBy?: 'status' | 'type' | 'priority' | 'deck' | 'createTime' | 'tag';
     showStats?: boolean;
     layoutMode?: 'compact' | 'comfortable' | 'spacious';
-    attributeType?: CardAttributeType; // 🆕 卡片属性显示类型
+    attributeType?: CardAttributeType; // 卡片属性显示类型
   }
 
   let {
     cards: externalCards,
+    focusedCardUUIDs = [],
     dataStorage,
     plugin,
     decks = [],
-    isMobile = false, // 🆕 移动端状态
+    dataSourceType = 'memory',
+    isMobile = false, // 移动端状态
     onCardSelect,
     onCardUpdate,
     onCardDelete,
-    onCardView, // 🆕 卡片查看回调
+    onCardView, // 卡片查看回调
     onStartStudy,
     groupBy = 'status',
     showStats = true,
     layoutMode = 'comfortable',
-    attributeType = 'uuid' // 🆕 默认显示唯一标识符
+    attributeType = 'uuid' // 默认显示唯一标识符
   }: Props = $props();
+
+  let t = $derived($tr);
 
   // 渐进式加载配置
   const INITIAL_CARDS_PER_COLUMN = 20;
@@ -98,16 +123,50 @@
   
   // 状态管理
   let selectedCards = $state<Set<string>>(new Set());
+  let focusedCardSet = $derived(new Set(focusedCardUUIDs));
   let draggedCard = $state<Card | null>(null);
+  let draggedCardSourceGroup = $state<string | null>(null);
   let cardStateManager = $state<CardStateManager | null>(null);
   let visibleCardsPerGroup = $state<Record<string, number>>({});
   let hoveredCardId = $state<string | null>(null);
   let dragOverColumn = $state<string | null>(null);
   let dragOverIndex = $state<number>(-1);
+  const metadataService = getCardMetadataService();
+
+  // 渲染状态检测
+  const RENDERING_OVERLAY_THRESHOLD = 30;
+  let isRendering = $state(false);
   
   // 列管理状态
   let columnConfig = $state<Record<string, ColumnVisibilityConfig>>({});
   let showColumnMenu = $state(false);
+
+  // 顶部滚动条同步
+  let topScrollbarRef = $state<HTMLElement | null>(null);
+  let topScrollbarContentRef = $state<HTMLElement | null>(null);
+  let kanbanBoardRef = $state<HTMLElement | null>(null);
+  let boardResizeObserver: ResizeObserver | null = null;
+
+  function openColumnMenu() {
+    menuView = 'main';
+    showColumnMenu = true;
+  }
+
+  function syncScroll(source: 'top' | 'board') {
+    if (!topScrollbarRef || !kanbanBoardRef) return;
+    if (source === 'top') {
+      kanbanBoardRef.scrollLeft = topScrollbarRef.scrollLeft;
+    } else {
+      topScrollbarRef.scrollLeft = kanbanBoardRef.scrollLeft;
+    }
+  }
+
+  function updateTopScrollbarWidth() {
+    if (kanbanBoardRef && topScrollbarContentRef) {
+      const scrollWidth = kanbanBoardRef.scrollWidth;
+      topScrollbarContentRef.style.width = `${scrollWidth}px`;
+    }
+  }
   
   // 菜单导航状态
   type MenuView = 'main' | 'groupby' | 'sort' | 'sort-add';
@@ -119,26 +178,27 @@
   let dragTarget = $state<string | null>(null);
 
   // 分组方式标签映射
-  const groupByLabels: Record<string, string> = {
-    status: '学习状态',
-    type: '题型',
-    priority: '优先级',
-    deck: '牌组',
-    createTime: '创建时间'
-  };
+  const groupByLabels = $derived<Record<string, string>>({
+    status: t('study.kanban.groupBy.status'),
+    type: t('study.kanban.groupBy.type'),
+    priority: t('study.kanban.groupBy.priority'),
+    deck: t('study.kanban.groupBy.deck'),
+    createTime: t('study.kanban.groupBy.createTime'),
+    tag: t('study.kanban.groupBy.tag')
+  });
 
   // 当前分组方式标签
   const currentGroupByLabel = $derived(groupByLabels[groupBy] || groupBy);
   
   // 排序选项定义
-  const sortOptions = {
-    created: { key: 'created', label: '创建时间', icon: 'calendar' },
-    due: { key: 'due', label: '到期时间', icon: 'clock' },
-    modified: { key: 'modified', label: '修改时间', icon: 'history' },
-    priority: { key: 'priority', label: '优先级', icon: 'flag' },
-    difficulty: { key: 'difficulty', label: '难度', icon: 'chart-bar' },
-    title: { key: 'title', label: '标题', icon: 'heading' }
-  };
+  const sortOptions = $derived({
+    created: { key: 'created', label: t('study.kanban.sort.created'), icon: 'calendar' },
+    due: { key: 'due', label: t('study.kanban.sort.due'), icon: 'clock' },
+    modified: { key: 'modified', label: t('study.kanban.sort.modified'), icon: 'history' },
+    priority: { key: 'priority', label: t('study.kanban.sort.priority'), icon: 'flag' },
+    difficulty: { key: 'difficulty', label: t('study.kanban.sort.difficulty'), icon: 'chart-bar' },
+    title: { key: 'title', label: t('study.kanban.sort.title'), icon: 'heading' }
+  });
   
   // 使用 $derived 同步外部数据
   let cards = $derived(externalCards);
@@ -149,65 +209,97 @@
     return cardStateManager.groupCards(externalCards, groupBy);
   });
 
+  // 渲染进度计算（依赖 cards/groupedCards，必须在其后声明）
+  const totalVisibleCards = $derived.by(() => {
+    let total = 0;
+    for (const key of Object.keys(groupedCards)) {
+      total += Math.min(
+        visibleCardsPerGroup[key] || INITIAL_CARDS_PER_COLUMN,
+        (groupedCards[key] || []).length
+      );
+    }
+    return total;
+  });
+  const totalRenderableCards = $derived.by(() => {
+    if (groupBy === 'deck') {
+      return Object.values(groupedCards).reduce((sum, groupCards) => sum + groupCards.length, 0);
+    }
+    return cards.length;
+  });
+  const renderingProgress = $derived(
+    totalRenderableCards > 0 ? Math.round((totalVisibleCards / totalRenderableCards) * 100) : 0
+  );
+
   // 分组配置
-  const groupConfigs = {
+  const groupConfigs = $derived({
     status: {
-      title: '按学习状态分组',
+      title: t('study.kanban.groupTitle.byStatus'),
       icon: 'layers',
       groups: [
-        { key: '0', label: '新卡片', color: '#6b7280', icon: 'plus-circle' },
-        { key: '1', label: '学习中', color: '#3b82f6', icon: 'book-open' },
-        { key: '2', label: '复习', color: '#10b981', icon: 'refresh-cw' },
-        { key: '3', label: '重新学习', color: '#f59e0b', icon: 'rotate-ccw' }
+        { key: '0', label: t('study.kanban.status.new'), color: '#6b7280', icon: 'plus-circle' },
+        { key: '1', label: t('study.kanban.status.learning'), color: '#3b82f6', icon: 'book-open' },
+        { key: '2', label: t('study.kanban.status.review'), color: '#10b981', icon: 'refresh-cw' },
+        { key: '3', label: t('study.kanban.status.relearning'), color: '#f59e0b', icon: 'rotate-ccw' }
       ]
     },
     type: {
-      title: '按题型分组',
+      title: t('study.kanban.groupTitle.byType'),
       icon: 'grid',
       groups: [
-        { key: 'basic', label: '基础问答', color: 'var(--interactive-accent)', icon: 'file-text' },
-        { key: 'cloze', label: '挖空填词', color: '#ec4899', icon: 'edit' },
-        { key: 'multiple', label: '多选题', color: '#06b6d4', icon: 'check-circle' },
-        { key: 'code', label: '代码题', color: '#84cc16', icon: 'code' }
+        { key: 'basic-qa', label: t('study.kanban.type.qa'), color: 'var(--interactive-accent)', icon: 'file-text' },
+        { key: 'single-choice', label: t('study.kanban.type.choice'), color: '#06b6d4', icon: 'check-circle' },
+        { key: 'cloze-deletion', label: t('study.kanban.type.cloze'), color: '#ec4899', icon: 'edit' }
       ]
     },
     priority: {
-      title: '按优先级分组',
+      title: t('study.kanban.groupTitle.byPriority'),
       icon: 'flag',
       groups: [
-        { key: '4', label: '高优先级', color: '#ef4444', icon: 'alert-triangle' },
-        { key: '3', label: '中优先级', color: '#f59e0b', icon: 'flag' },
-        { key: '2', label: '低优先级', color: '#10b981', icon: 'minus-circle' },
-        { key: '1', label: '无优先级', color: '#6b7280', icon: 'circle' }
+        { key: '4', label: t('study.kanban.priorityLevel.urgent'), color: '#ef4444', icon: 'alert-triangle' },
+        { key: '3', label: t('study.kanban.priorityLevel.high'), color: '#f59e0b', icon: 'flag' },
+        { key: '2', label: t('study.kanban.priorityLevel.medium'), color: '#3b82f6', icon: 'flag' },
+        { key: '1', label: t('study.kanban.priorityLevel.low'), color: '#fbbf24', icon: 'minus-circle' }
       ]
     },
     deck: {
-      title: '按牌组分组',
+      title: t('study.kanban.groupTitle.byDeck'),
       icon: 'folder',
-      groups: [] // 动态生成
+      groups: [] as { key: string; label: string; color: string; icon: string }[]
     },
     createTime: {
-      title: '按创建时间分组',
+      title: t('study.kanban.groupTitle.byCreateTime'),
       icon: 'calendar',
       groups: [
-        { key: 'today', label: '今天', color: '#3b82f6', icon: 'calendar' },
-        { key: 'yesterday', label: '昨天', color: '#10b981', icon: 'calendar' },
-        { key: 'last7days', label: '过去7天', color: '#f59e0b', icon: 'calendar' },
-        { key: 'last30days', label: '过去30天', color: '#ec4899', icon: 'calendar' },
-        { key: 'earlier', label: '更早', color: '#6b7280', icon: 'calendar' }
+        { key: 'today', label: t('study.kanban.time.today'), color: '#3b82f6', icon: 'calendar' },
+        { key: 'yesterday', label: t('study.kanban.time.yesterday'), color: '#10b981', icon: 'calendar' },
+        { key: 'last7days', label: t('study.kanban.time.last7days'), color: '#f59e0b', icon: 'calendar' },
+        { key: 'last30days', label: t('study.kanban.time.last30days'), color: '#ec4899', icon: 'calendar' },
+        { key: 'earlier', label: t('study.kanban.time.earlier'), color: '#6b7280', icon: 'calendar' }
       ]
+    },
+    tag: {
+      title: t('study.kanban.groupTitle.byTag'),
+      icon: 'tag',
+      groups: [] as { key: string; label: string; color: string; icon: string }[]
     }
-  };
+  });
 
-  // 当前分组配置（动态生成牌组分组）
+  // 当前分组配置（动态生成牌组/标签分组）
   const currentConfig = $derived.by(() => {
     if (groupBy === 'deck' && cardStateManager) {
-      // 动态生成牌组分组
       const deckGroups = cardStateManager.getDeckGroups(cards);
       return {
-        title: '按牌组分组',
+        title: t('study.kanban.groupTitle.byDeck'),
         icon: 'folder',
         groups: deckGroups
+      };
+    }
+    if (groupBy === 'tag' && cardStateManager) {
+      const tagGroups = cardStateManager.getTagGroups(cards);
+      return {
+        title: t('study.kanban.groupTitle.byTag'),
+        icon: 'tag',
+        groups: tagGroups
       };
     }
     return groupConfigs[groupBy];
@@ -294,7 +386,7 @@
         return new Date(a.modified).getTime() - new Date(b.modified).getTime();
       
       case 'priority':
-        return (b.priority || 0) - (a.priority || 0); // 高优先级在前
+        return (metadataService.getCardPriority(b) || 0) - (metadataService.getCardPriority(a) || 0); // 高优先级在前
       
       case 'difficulty':
         if (!a.fsrs || !b.fsrs) return 0;
@@ -395,10 +487,13 @@
       };
     }
     
-    // 如果是牌组分组，需要动态获取
-    const groups = groupByType === 'deck' && cardStateManager 
-      ? cardStateManager.getDeckGroups(cards)
-      : config.groups;
+    // 如果是牌组或标签分组，需要动态获取
+    let groups = config.groups;
+    if (groupByType === 'deck' && cardStateManager) {
+      groups = cardStateManager.getDeckGroups(cards);
+    } else if (groupByType === 'tag' && cardStateManager) {
+      groups = cardStateManager.getTagGroups(cards);
+    }
     
     return {
       hidden: [],
@@ -761,18 +856,30 @@
 
   // 切换分组方式
   function changeGroupBy(newGroupBy: typeof groupBy) {
+    if (usesGroupScopedSelection(groupBy) !== usesGroupScopedSelection(newGroupBy)) {
+      clearSelection();
+    }
     groupBy = newGroupBy;
     // groupedCards 会通过 $derived 自动更新
     // 重新初始化可见卡片数量
     initializeVisibleCards();
   }
 
+  function getCardSelectionKey(card: Card, groupKey: string): string {
+    return buildKanbanSelectionKey(card.uuid, groupBy, groupKey);
+  }
+
+  function isCardSelected(card: Card, groupKey: string): boolean {
+    return selectedCards.has(getCardSelectionKey(card, groupKey));
+  }
+
   // 选择卡片
-  function toggleCardSelection(card: Card) {
-    if (selectedCards.has(card.uuid)) {
-      selectedCards.delete(card.uuid);
+  function toggleCardSelection(card: Card, groupKey: string) {
+    const selectionKey = getCardSelectionKey(card, groupKey);
+    if (selectedCards.has(selectionKey)) {
+      selectedCards.delete(selectionKey);
     } else {
-      selectedCards.add(card.uuid);
+      selectedCards.add(selectionKey);
     }
     selectedCards = new Set(selectedCards);
   }
@@ -782,14 +889,14 @@
     const groupCards = groupedCards[groupKey] || [];
     
     // 检查是否所有卡片都已选中
-    const allSelected = groupCards.length > 0 && groupCards.every((card: Card) => selectedCards.has(card.uuid));
+    const allSelected = groupCards.length > 0 && groupCards.every((card: Card) => isCardSelected(card, groupKey));
     
     if (allSelected) {
       // 如果全部选中，则取消选中
-      groupCards.forEach((card: Card) => selectedCards.delete(card.uuid));
+      groupCards.forEach((card: Card) => selectedCards.delete(getCardSelectionKey(card, groupKey)));
     } else {
       // 否则全选
-      groupCards.forEach((card: Card) => selectedCards.add(card.uuid));
+      groupCards.forEach((card: Card) => selectedCards.add(getCardSelectionKey(card, groupKey)));
     }
     
     selectedCards = new Set(selectedCards);
@@ -803,7 +910,8 @@
 
   // 开始学习选中的卡片
   function startStudySelected() {
-    const selected = cards.filter(card => selectedCards.has(card.uuid));
+    const selectedCardUUIDs = new Set(collectSelectedCardUUIDs(selectedCards));
+    const selected = cards.filter(card => selectedCardUUIDs.has(card.uuid));
     if (selected.length > 0 && onStartStudy) {
       onStartStudy(selected);
     }
@@ -820,11 +928,11 @@
 
   // 复制卡片
   function duplicateCard(card: Card) {
-    // 🆕 v0.8: 导入新ID生成器
+    // 使用新 ID 生成器
     const newCard: Card = {
       ...card,
       // id字段已废弃，移除
-      uuid: generateUUID(), // 🆕 使用新格式UUID
+      uuid: generateUUID(), // 使用新格式 UUID
       created: new Date().toISOString(),
       modified: new Date().toISOString()
     };
@@ -863,19 +971,19 @@
       case 'status':
         return { 
           allowed: false, 
-          reason: '学习状态由FSRS6算法自动管理，无法手动修改。\n请通过学习功能来更新卡片状态。' 
+          reason: t('study.kanban.drag.statusRestriction') 
         };
         
       case 'type':
         return { 
           allowed: false, 
-          reason: '卡片类型无法通过拖拽修改' 
+          reason: t('study.kanban.drag.typeRestriction') 
         };
       
       case 'createTime':
         return { 
           allowed: false, 
-          reason: '创建时间无法修改' 
+          reason: t('study.kanban.drag.timeRestriction') 
         };
       
       case 'priority':
@@ -890,16 +998,45 @@
   // 显示拖拽限制提示
   function showDragRestrictionNotice(reason: string) {
     if (plugin?.app) {
-      // 使用Obsidian的Notice API
-      new (plugin.app as any).Notice(reason, 4000);
+      new Notice(reason, 4000);
     } else {
-      alert(reason);
+      logger.warn('[KanbanView] Drag restriction:', reason);
     }
   }
 
+  function getDeckGroupKeys(card: Card): string[] {
+    if (dataSourceType === 'questionBank') {
+      const questionBankDeckIds = getQuestionBankDeckIdsForCard(card);
+      return questionBankDeckIds.length > 0 ? questionBankDeckIds : ['_none'];
+    }
+
+    const { deckIds } = getCardDeckIds(card, decks);
+    return deckIds.length > 0 ? Array.from(new Set(deckIds)) : ['_none'];
+  }
+
+  function cardBelongsToGroup(card: Card, groupKey: string): boolean {
+    if (groupBy === 'deck') {
+      return getDeckGroupKeys(card).includes(groupKey);
+    }
+    return getCardGroupKey(card) === groupKey;
+  }
+
+  function getDraggedCardsForDeckDrop(card: Card, sourceGroupKey: string): Card[] {
+    if (!isCardSelected(card, sourceGroupKey)) {
+      return [card];
+    }
+
+    const sameGroupSelectedCards = cards.filter(candidate =>
+      isCardSelected(candidate, sourceGroupKey) && cardBelongsToGroup(candidate, sourceGroupKey)
+    );
+
+    return sameGroupSelectedCards.length > 0 ? sameGroupSelectedCards : [card];
+  }
+
   // 拖拽处理
-  function handleDragStart(e: DragEvent, card: Card) {
+  function handleDragStart(e: DragEvent, card: Card, sourceGroupKey: string) {
     draggedCard = card;
+    draggedCardSourceGroup = sourceGroupKey;
     
     // 设置看板拖拽标识，防止触发创建卡片
     if (e.dataTransfer) {
@@ -910,6 +1047,7 @@
 
   function handleDragEnd() {
     draggedCard = null;
+    draggedCardSourceGroup = null;
     dragOverColumn = null;
     dragOverIndex = -1;
   }
@@ -933,7 +1071,10 @@
       if (!card) return;
 
       // 获取源分组key
-      const sourceGroupKey = getCardGroupKey(card);
+      const sourceGroupKey = draggedCardSourceGroup || getCardGroupKey(card);
+      if (sourceGroupKey === targetGroupKey) {
+        return;
+      }
       
       // 检查是否允许拖拽
       const dragCheck = canDragToColumn(sourceGroupKey, targetGroupKey);
@@ -962,31 +1103,97 @@
           
         case 'priority':
           const newPriority = parseInt(targetGroupKey);
-          updatedCard = {
-            ...card,
-            priority: newPriority
-          };
+          updatedCard = applyPriorityUpdateToCard(card, newPriority);
           break;
         
         case 'deck':
           //  禁止将卡片拖到"无牌组"列（每张卡片必须属于一个牌组）
           if (targetGroupKey === '_none') {
-            showDragRestrictionNotice('卡片必须属于一个牌组，无法移动到"无牌组"');
+            showDragRestrictionNotice(t('study.kanban.drag.noDeckRestriction'));
             return;
           }
-          // 🆕 v2.2: 同时更新 deckId 和 content YAML 中的 we_decks
-          const targetDeck = decks.find(d => d.id === targetGroupKey);
-          let updatedContent = card.content;
-          if (targetDeck && updatedContent) {
-            // 更新 we_decks 为新牌组名称
-            updatedContent = setCardProperty(updatedContent, 'we_decks', [targetDeck.name]);
+          if (dataSourceType === 'incremental-reading') {
+            const targetDeck = decks.find(d => d.id === targetGroupKey);
+            let updatedContent = card.content;
+            if (targetDeck && updatedContent) {
+              // 更新 we_decks 为新牌组名称
+              updatedContent = setCardProperty(updatedContent, 'we_decks', [targetDeck.name]);
+            }
+            updatedCard = {
+              ...card,
+              deckId: targetGroupKey,
+              content: updatedContent
+            };
+            break;
           }
-          updatedCard = {
-            ...card,
-            deckId: targetGroupKey,
-            content: updatedContent
-          };
-          break;
+
+          if (!plugin?.app) {
+            showDragRestrictionNotice('当前环境无法打开牌组调整弹窗');
+            return;
+          }
+
+          const targetDeck = decks.find(d => d.id === targetGroupKey);
+          if (!targetDeck) {
+            showDragRestrictionNotice('目标牌组不存在');
+            return;
+          }
+
+          const sourceDeck = sourceGroupKey !== '_none'
+            ? decks.find(d => d.id === sourceGroupKey)
+            : undefined;
+          const draggedCards = getDraggedCardsForDeckDrop(card, sourceGroupKey);
+          let dragMode: KanbanDeckDragMode = 'add';
+
+          if (sourceDeck && sourceDeck.id !== targetDeck.id) {
+            const selectionLabel = draggedCards.length > 1
+              ? `这 ${draggedCards.length} 张卡片`
+              : '这张卡片';
+            const choice = await showObsidianChoice<KanbanDeckDragMode>(
+              plugin.app,
+              `${selectionLabel} 当前来自“${sourceDeck.name}”列，拖到了“${targetDeck.name}”列。\n请选择这次拖拽的牌组处理方式。`,
+              {
+                title: '调整牌组归属',
+                choices: [
+                  {
+                    value: 'replace-source',
+                    text: `移除“${sourceDeck.name}”，加入“${targetDeck.name}”`,
+                    description: '把当前来源列替换成目标列，其他牌组保持不变。',
+                    className: 'mod-cta'
+                  },
+                  {
+                    value: 'add',
+                    text: `保留“${sourceDeck.name}”，额外加入“${targetDeck.name}”`,
+                    description: '卡片会同时属于两个牌组，拖拽只新增目标牌组。',
+                    className: ''
+                  }
+                ],
+                cancelText: '取消'
+              }
+            );
+
+            if (!choice) {
+              return;
+            }
+
+            dragMode = choice;
+          }
+
+          if (dataSourceType === 'questionBank') {
+            updatedCard = applyQuestionBankDeckDragToCard(card, targetDeck.id, dragMode, sourceDeck?.id);
+          } else {
+            updatedCard = applyDeckDragToCard(card, decks, targetDeck.id, dragMode, sourceDeck?.id);
+          }
+
+          if (onCardUpdate) {
+            await onCardUpdate(updatedCard, {
+              kind: 'deck-drag',
+              cardIds: draggedCards.map(dragged => dragged.uuid),
+              sourceDeckId: sourceDeck?.id,
+              targetDeckId: targetDeck.id,
+              mode: dragMode
+            });
+          }
+          return;
       }
 
       // 通过回调通知父组件更新
@@ -998,6 +1205,7 @@
       logger.error('拖拽更新失败:', error);
     } finally {
       draggedCard = null;
+      draggedCardSourceGroup = null;
     }
   }
 
@@ -1006,16 +1214,22 @@
     switch (groupBy) {
       case 'status':
         return card.fsrs ? String(card.fsrs.state) : '0';
-      case 'type':
-        return card.type ?? 'basic';
+      case 'type': {
+        const detected = detectCardQuestionType(card);
+        if (detected === UnifiedCardType.MULTIPLE_CHOICE) return UnifiedCardType.SINGLE_CHOICE;
+        if (detected === UnifiedCardType.FILL_IN_BLANK || detected === UnifiedCardType.SEQUENCE || detected === UnifiedCardType.EXTENSIBLE) return UnifiedCardType.BASIC_QA;
+        return detected;
+      }
       case 'priority':
-        return String(card.priority || 1);
+        return String(metadataService.getCardPriority(card) || 1);
       case 'deck':
-        //  v2.2: 优先从 content YAML 的 we_decks 获取牌组ID
-        const { primaryDeckId } = getCardDeckIds(card);
-        return primaryDeckId || card.deckId || '_none';
+        return getDeckGroupKeys(card)[0];
       case 'createTime':
         return getTimeGroupKey(card.created);
+      case 'tag': {
+        const cardTags = card.tags || [];
+        return cardTags.length > 0 ? cardTags[0] : '_noTag';
+      }
       default:
         return '';
     }
@@ -1047,7 +1261,7 @@
   function getGroupStats(groupKey: string) {
     const groupCards = groupedCards[groupKey] || [];
     const total = groupCards.length;
-    const selected = groupCards.filter((card: Card) => selectedCards.has(card.uuid)).length;
+    const selected = groupCards.filter((card: Card) => isCardSelected(card, groupKey)).length;
     
     // 计算到期卡片数量
     const now = new Date();
@@ -1058,7 +1272,7 @@
 
   // 格式化卡片内容
   function getCardPreview(card: Card): string {
-    //  Content-Only 架构：从 card.content 解析
+    // 从 card.content 解析
     if (card.content) {
       const content = card.content.trim();
       const dividerIndex = content.indexOf('---div---');
@@ -1072,7 +1286,7 @@
 
   // 获取卡片内容用于渲染
   function getCardContentBySide(card: Card, side: 'front' | 'back'): string {
-    //  Content-Only 架构：从 card.content 解析
+    // 从 card.content 解析
     if (!card || !card.content) {
       return '';
     }
@@ -1126,7 +1340,12 @@
   }
 
   // 组件挂载时初始化
-  onMount(async () => {
+  onMount(() => {
+    const handleOpenColumnSettings = () => {
+      openColumnMenu();
+    };
+
+    window.addEventListener('Weave:open-kanban-column-settings-menu', handleOpenColumnSettings);
     // 初始化状态管理器
     cardStateManager = new CardStateManager(dataStorage);
     
@@ -1150,7 +1369,36 @@
     
     // 初始化可见卡片数量
     initializeVisibleCards();
-    
+
+    // 顶部滚动条：监听看板内容宽度变化
+    return () => {
+      window.removeEventListener('Weave:open-kanban-column-settings-menu', handleOpenColumnSettings);
+
+      if (boardResizeObserver) {
+        boardResizeObserver.disconnect();
+        boardResizeObserver = null;
+      }
+    };
+  });
+
+  // 看板board ref变化时设置ResizeObserver
+  $effect(() => {
+    if (kanbanBoardRef) {
+      boardResizeObserver?.disconnect();
+      boardResizeObserver = new ResizeObserver(() => {
+        updateTopScrollbarWidth();
+      });
+      boardResizeObserver.observe(kanbanBoardRef);
+      // 初始同步
+      updateTopScrollbarWidth();
+    }
+  });
+
+  // 分组变化时更新滚动条宽度
+  $effect(() => {
+    if (groupedCards) {
+      setTimeout(updateTopScrollbarWidth, 50);
+    }
   });
   
   // 监听decks变化，更新CardStateManager中的牌组列表
@@ -1159,15 +1407,54 @@
       cardStateManager.setDecks(decks);
     }
   });
+
+  // 渲染状态检测：卡片数据变化时显示遮罩
+  $effect(() => {
+    const totalCards = cards.length;
+    if (totalCards >= RENDERING_OVERLAY_THRESHOLD) {
+      isRendering = true;
+      tick().then(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            isRendering = false;
+          });
+        });
+      });
+    } else {
+      isRendering = false;
+    }
+  });
 </script>
 
 <div class="weave-kanban-view">
+  <!-- 渲染进度遮罩 -->
+  {#if isRendering}
+    <div class="weave-rendering-overlay"></div>
+    <div class="weave-rendering-progress-container">
+      {#if renderingProgress < 100}
+        <div class="weave-rendering-progress-bar" style="width: {renderingProgress}%"></div>
+      {:else}
+        <div class="weave-rendering-progress-bar weave-rendering-progress-bar--indeterminate"></div>
+      {/if}
+    </div>
+    <div class="weave-rendering-info">
+      <div class="weave-spinner-small"></div>
+      <span>{totalVisibleCards} / {cards.length} {t('study.kanban.cards.cardsUnit')}</span>
+    </div>
+  {/if}
+
   <!-- 隐藏的列管理按钮（通过父组件触发） -->
   <button
     class="weave-hidden-column-btn"
     class:active={showColumnMenu}
-    onclick={() => showColumnMenu = !showColumnMenu}
-    title="列设置"
+    onclick={() => {
+      if (showColumnMenu) {
+        closeMenu();
+      } else {
+        openColumnMenu();
+      }
+    }}
+    title={t('study.kanban.menu.viewOptions')}
     style="display: none;"
   >
     <EnhancedIcon name="sliders" size="16" />
@@ -1186,7 +1473,7 @@
       <div 
         class="weave-column-menu" 
         role="dialog"
-        aria-label="列设置"
+        aria-label={t('study.kanban.menu.viewOptions')}
         tabindex="-1"
       >
         <!-- 主菜单视图 -->
@@ -1195,7 +1482,7 @@
           <div class="notion-menu-header">
             <div class="notion-menu-title">
               <EnhancedIcon name="sliders" size="14" />
-              <span>视图选项</span>
+              <span>{t('study.kanban.menu.viewOptions')}</span>
             </div>
             <button class="notion-close-btn" onclick={closeMenu}>
               <EnhancedIcon name="x" size="14" />
@@ -1204,7 +1491,7 @@
 
           <!-- 分组方式选择器 -->
           <div 
-            class="notion-menu-row notion-menu-row--clickable" 
+            class="notion-menu-row notion-menu-row--clickable notion-menu-row--navigation" 
             role="button"
             tabindex="0"
             onclick={() => menuView = 'groupby'}
@@ -1215,7 +1502,7 @@
               }
             }}
           >
-            <span class="notion-menu-label">分组方式</span>
+            <span class="notion-menu-label">{t('study.kanban.menu.groupByLabel')}</span>
             <div class="notion-menu-value">
               <span>{currentGroupByLabel}</span>
               <EnhancedIcon name="chevron-right" size="12" />
@@ -1224,7 +1511,7 @@
 
           <!-- 排序方式选择器 -->
           <div 
-            class="notion-menu-row notion-menu-row--clickable" 
+            class="notion-menu-row notion-menu-row--clickable notion-menu-row--navigation" 
             role="button"
             tabindex="0"
             onclick={() => menuView = 'sort'}
@@ -1235,9 +1522,9 @@
               }
             }}
           >
-            <span class="notion-menu-label">排序</span>
+            <span class="notion-menu-label">{t('study.kanban.menu.sortLabel')}</span>
             <div class="notion-menu-value">
-              <span>{getCurrentColumnConfig().sortRules.length > 0 ? `${getCurrentColumnConfig().sortRules.length} 条规则` : '无'}</span>
+              <span>{getCurrentColumnConfig().sortRules.length > 0 ? t('study.kanban.menu.sortRulesCount', { n: getCurrentColumnConfig().sortRules.length }) : t('study.kanban.menu.noSort')}</span>
               <EnhancedIcon name="chevron-right" size="12" />
             </div>
           </div>
@@ -1246,13 +1533,13 @@
           <div class="notion-divider"></div>
 
           <!-- 配置选项 -->
-          <div class="notion-menu-row">
-            <span class="notion-menu-label">隐藏空白分组</span>
+          <div class="notion-menu-row notion-menu-row--toggle">
+            <span class="notion-menu-label">{t('study.kanban.menu.hideEmptyGroups')}</span>
             <div 
               class="notion-toggle-mini {getCurrentColumnConfig().hideEmptyGroups ? 'active' : ''}"
               onclick={handleToggleHideEmpty}
               role="switch"
-              aria-label="切换隐藏空白分组"
+              aria-label={t('study.kanban.menu.toggleHideEmpty')}
               aria-checked={getCurrentColumnConfig().hideEmptyGroups}
               tabindex="0"
               onkeydown={(e) => {
@@ -1266,13 +1553,13 @@
             </div>
           </div>
 
-          <div class="notion-menu-row">
-            <span class="notion-menu-label">填充列背景颜色</span>
+          <div class="notion-menu-row notion-menu-row--toggle">
+            <span class="notion-menu-label">{t('study.kanban.menu.fillColumnBg')}</span>
             <div 
               class="notion-toggle-mini {getCurrentColumnConfig().useColoredBackground ? 'active' : ''}"
               onclick={handleToggleColoredBackground}
               role="switch"
-              aria-label="切换填充列背景颜色"
+              aria-label={t('study.kanban.menu.toggleFillColumnBg')}
               aria-checked={getCurrentColumnConfig().useColoredBackground}
               tabindex="0"
               onkeydown={(e) => {
@@ -1291,7 +1578,7 @@
 
           <!-- 群组标题 -->
           <div class="notion-section-header">
-            <span class="notion-section-title">群组</span>
+            <span class="notion-section-title">{t('study.kanban.menu.groups')}</span>
             <div class="notion-action-group">
               <span 
                 class="notion-section-action" 
@@ -1304,7 +1591,7 @@
                     handleReset();
                   }
                 }}
-              >重置</span>
+              >{t('study.kanban.menu.reset')}</span>
               <span class="notion-separator">·</span>
               <span 
                 class="notion-section-action" 
@@ -1317,8 +1604,8 @@
                     handleToggleAllVisibility();
                   }
                 }}
-                title={isAllHidden ? '显示所有列' : '隐藏所有列'}
-              >{isAllHidden ? '全部显示' : '全部隐藏'}</span>
+                title={isAllHidden ? t('study.kanban.menu.showAllColumns') : t('study.kanban.menu.hideAllColumns')}
+              >{isAllHidden ? t('study.kanban.menu.showAll') : t('study.kanban.menu.hideAll')}</span>
             </div>
           </div>
 
@@ -1357,7 +1644,7 @@
             e.preventDefault();
             handleToggleVisibility(group.key);
           }}
-                    title={isHidden ? '显示列' : '隐藏列'}
+                    title={isHidden ? t('study.kanban.menu.showColumn') : t('study.kanban.menu.hideColumn')}
                   >
                     <EnhancedIcon name={isHidden ? 'eye-off' : 'eye'} size="12" />
                   </button>
@@ -1372,7 +1659,7 @@
           <div class="notion-menu-header">
             <button class="notion-back-btn" onclick={navigateBack}>
               <EnhancedIcon name="arrow-left" size="14" />
-              <span>分组方式</span>
+              <span>{t('study.kanban.menu.groupByLabel')}</span>
             </button>
             <button class="notion-close-btn" onclick={closeMenu}>
               <EnhancedIcon name="x" size="14" />
@@ -1395,7 +1682,7 @@
             >
               <div class="notion-option-content">
                 <EnhancedIcon name="layers" size="14" />
-                <span>学习状态</span>
+                <span>{t('study.kanban.groupBy.status')}</span>
               </div>
               {#if groupBy === 'status'}
                 <EnhancedIcon name="check" size="14" />
@@ -1417,7 +1704,7 @@
             >
               <div class="notion-option-content">
                 <EnhancedIcon name="grid" size="14" />
-                <span>题型</span>
+                <span>{t('study.kanban.groupBy.type')}</span>
               </div>
               {#if groupBy === 'type'}
                 <EnhancedIcon name="check" size="14" />
@@ -1439,7 +1726,7 @@
             >
               <div class="notion-option-content">
                 <EnhancedIcon name="flag" size="14" />
-                <span>优先级</span>
+                <span>{t('study.kanban.groupBy.priority')}</span>
               </div>
               {#if groupBy === 'priority'}
                 <EnhancedIcon name="check" size="14" />
@@ -1461,7 +1748,7 @@
             >
               <div class="notion-option-content">
                 <EnhancedIcon name="folder" size="14" />
-                <span>牌组</span>
+                <span>{t('study.kanban.groupBy.deck')}</span>
               </div>
               {#if groupBy === 'deck'}
                 <EnhancedIcon name="check" size="14" />
@@ -1483,9 +1770,31 @@
             >
               <div class="notion-option-content">
                 <EnhancedIcon name="calendar" size="14" />
-                <span>创建时间</span>
+                <span>{t('study.kanban.groupBy.createTime')}</span>
               </div>
               {#if groupBy === 'createTime'}
+                <EnhancedIcon name="check" size="14" />
+              {/if}
+            </div>
+
+            <div 
+              class="notion-menu-row notion-menu-row--option"
+              class:notion-menu-row--selected={groupBy === 'tag'}
+              role="button"
+              tabindex="0"
+              onclick={() => handleGroupByChange('tag')}
+              onkeydown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleGroupByChange('tag');
+                }
+              }}
+            >
+              <div class="notion-option-content">
+                <EnhancedIcon name="tag" size="14" />
+                <span>{t('study.kanban.groupBy.tag')}</span>
+              </div>
+              {#if groupBy === 'tag'}
                 <EnhancedIcon name="check" size="14" />
               {/if}
             </div>
@@ -1497,7 +1806,7 @@
           <div class="notion-menu-header">
             <button class="notion-back-btn" onclick={navigateBack}>
               <EnhancedIcon name="arrow-left" size="14" />
-              <span>排序</span>
+              <span>{t('study.kanban.menu.sortLabel')}</span>
             </button>
             <button class="notion-close-btn" onclick={closeMenu}>
               <EnhancedIcon name="x" size="14" />
@@ -1533,7 +1842,7 @@
             e.preventDefault();
             handleToggleSortDirection(index);
           }}
-                      title={rule.direction === 'asc' ? '升序' : '降序'}
+                      title={rule.direction === 'asc' ? t('study.kanban.sort.asc') : t('study.kanban.sort.desc')}
                     >
                       <EnhancedIcon name={rule.direction === 'asc' ? 'chevron-up' : 'chevron-down'} size="12" />
                     </button>
@@ -1543,7 +1852,7 @@
             e.preventDefault();
             handleRemoveSortRule(index);
           }}
-                      title="删除排序规则"
+                      title={t('study.kanban.menu.deleteSortRule')}
                     >
                       <EnhancedIcon name="x" size="12" />
                     </button>
@@ -1569,7 +1878,7 @@
             >
               <div class="notion-option-content">
                 <EnhancedIcon name="plus" size="14" />
-                <span>添加排序规则</span>
+                <span>{t('study.kanban.menu.addSortRule')}</span>
               </div>
               <EnhancedIcon name="chevron-right" size="12" />
             </div>
@@ -1592,7 +1901,7 @@
               >
                 <div class="notion-option-content">
                   <EnhancedIcon name="refresh-cw" size="14" />
-                  <span>清除所有排序</span>
+                  <span>{t('study.kanban.menu.clearAllSorts')}</span>
                 </div>
               </div>
             {/if}
@@ -1604,7 +1913,7 @@
           <div class="notion-menu-header">
             <button class="notion-back-btn" onclick={navigateBack}>
               <EnhancedIcon name="arrow-left" size="14" />
-              <span>选择属性</span>
+              <span>{t('study.kanban.menu.selectProperty')}</span>
             </button>
             <button class="notion-close-btn" onclick={closeMenu}>
               <EnhancedIcon name="x" size="14" />
@@ -1637,7 +1946,7 @@
             e.preventDefault();
             handleAddSortRule(option.key as SortConfig['property'], 'asc');
           }}
-                      title="升序"
+                      title={t('study.kanban.sort.asc')}
                     >
                       <EnhancedIcon name="chevron-up" size="10" />
                     </button>
@@ -1647,7 +1956,7 @@
             e.preventDefault();
             handleAddSortRule(option.key as SortConfig['property'], 'desc');
           }}
-                      title="降序"
+                      title={t('study.kanban.sort.desc')}
                     >
                       <EnhancedIcon name="chevron-down" size="10" />
                     </button>
@@ -1661,8 +1970,24 @@
     </div>
   {/if}
 
+  <!-- 顶部横向滚动条 -->
+  <div
+    class="weave-kanban-top-scrollbar"
+    bind:this={topScrollbarRef}
+    onscroll={() => syncScroll('top')}
+  >
+    <div class="weave-kanban-scrollbar-content" bind:this={topScrollbarContentRef}></div>
+  </div>
+
   <!-- 看板列 -->
-  <div class="weave-kanban-board" class:layout-compact={layoutMode === 'compact'} class:layout-comfortable={layoutMode === 'comfortable'} class:layout-spacious={layoutMode === 'spacious'}>
+  <div
+    class="weave-kanban-board"
+    class:layout-compact={layoutMode === 'compact'}
+    class:layout-comfortable={layoutMode === 'comfortable'}
+    class:layout-spacious={layoutMode === 'spacious'}
+    bind:this={kanbanBoardRef}
+    onscroll={() => syncScroll('board')}
+  >
     {#if cardStateManager}
       {#each renderedGroups as group (group.key)}
         {@const stats = getGroupStats(group.key)}
@@ -1671,7 +1996,7 @@
         <div
           class="weave-kanban-column"
           role="region"
-          aria-label={`${group.label}分组`}
+          aria-label={t('study.kanban.cards.ariaGroup', { label: group.label })}
           ondrop={() => handleDrop(group.key)}
           ondragover={(e) => e.preventDefault()}
         >
@@ -1687,14 +2012,19 @@
                 <span>{group.label}</span>
                 <span class="weave-column-count">({stats.total})</span>
               </div>
-              
-              <button
-                class="weave-column-action weave-select-all"
-                onclick={() => selectGroup(group.key)}
-                title="全选此分组"
-              >
-                <EnhancedIcon name="check-square" size="14" />
-              </button>
+
+              <div class="weave-column-title-actions">
+                {#if showStats && stats.due > 0}
+                  <span class="weave-due-badge weave-due-badge--header">{stats.due} {t('study.kanban.cards.due')}</span>
+                {/if}
+                <button
+                  class="weave-column-action weave-select-all"
+                  onclick={() => selectGroup(group.key)}
+                  title={t('study.kanban.cards.selectAll')}
+                >
+                  <EnhancedIcon name="check-square" size="14" />
+                </button>
+              </div>
             </div>
             
             {#if showStats}
@@ -1706,11 +2036,8 @@
                   ></div>
                 </div>
                 <div class="weave-stats-text">
-                  {#if stats.due > 0}
-                    <span class="weave-due-badge">{stats.due} 到期</span>
-                  {/if}
                   {#if stats.selected > 0}
-                    <span class="weave-selected-badge">{stats.selected} 已选</span>
+                    <span class="weave-selected-badge">{stats.selected} {t('study.kanban.cards.selected')}</span>
                   {/if}
                 </div>
               </div>
@@ -1755,18 +2082,19 @@
                 class:draggable={isCardDraggable()}
                 role="listitem"
                 draggable={isCardDraggable()}
-                ondragstart={(e) => isCardDraggable() && handleDragStart(e, card)}
+                ondragstart={(e) => isCardDraggable() && handleDragStart(e, card, group.key)}
                 ondragend={handleDragEnd}
                 ondragover={(e) => isCardDraggable() && handleDragOver(e, group.key, index)}
               >
                 <LazyGridCard
                   {card}
-                  selected={selectedCards.has(card.uuid)}
+                  selected={isCardSelected(card, group.key)}
+                  emphasized={focusedCardSet.has(card.uuid)}
                   plugin={plugin!}
                   layoutMode="masonry"
                   {attributeType}
                   {isMobile}
-                  onClick={() => toggleCardSelection(card)}
+                  onClick={() => toggleCardSelection(card, group.key)}
                   onEdit={() => onCardSelect?.(card)}
                   onDelete={() => deleteCard(card)}
                   onView={() => onCardView?.(card.uuid)}
@@ -1782,7 +2110,7 @@
                   onclick={() => loadMoreCards(group.key)}
                 >
                   <EnhancedIcon name="chevron-down" size={16} />
-                  加载更多 ({(groupedCards[group.key] || []).length - (visibleCardsPerGroup[group.key] || INITIAL_CARDS_PER_COLUMN)} 张剩余)
+                  {t('study.kanban.cards.loadMore', { n: (groupedCards[group.key] || []).length - (visibleCardsPerGroup[group.key] || INITIAL_CARDS_PER_COLUMN) })}
                 </button>
               </div>
             {/if}
@@ -1798,14 +2126,28 @@
 </div>
 
 <style>
+  @import '../views/styles/grid-common.css';
+
   .weave-kanban-view {
+    position: relative;
     display: flex;
     flex-direction: column;
     height: 100%;
     background: var(--background-primary);
   }
 
-  /* 工具栏样式已移除，功能迁移到父组件 */
+  /* 顶部横向滚动条 */
+  .weave-kanban-top-scrollbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 12px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  .weave-kanban-scrollbar-content {
+    height: 1px;
+  }
 
   .weave-kanban-board {
     flex: 1;
@@ -1859,6 +2201,13 @@
     flex: 1;
   }
 
+  .weave-column-title-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0;
+  }
+
   .weave-column-count {
     color: var(--text-muted);
     font-weight: normal;
@@ -1902,6 +2251,10 @@
   .weave-due-badge {
     background: color-mix(in srgb, var(--color-red) 20%, transparent);
     color: var(--color-red);
+  }
+
+  .weave-due-badge--header {
+    white-space: nowrap;
   }
 
   .weave-selected-badge {
@@ -2107,6 +2460,15 @@
       flex: 0 0 280px;
       min-width: 280px;
     }
+
+    .weave-column-menu-overlay {
+      padding: 3rem 0.5rem 0.5rem;
+    }
+
+    .weave-column-menu {
+      width: min(320px, calc(100vw - 12px));
+      max-height: calc(100vh - 12px);
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -2130,30 +2492,37 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: transparent;
+    background: color-mix(in srgb, var(--background-primary) 18%, transparent);
+    backdrop-filter: blur(1px);
     z-index: var(--weave-z-overlay);
     display: flex;
     justify-content: flex-end;
     align-items: flex-start;
-    padding: 3.5rem 1rem 1rem 1rem;
-    pointer-events: none;
+    padding: 3.25rem 0.9rem 0.9rem;
+    pointer-events: auto;
   }
 
   .weave-column-menu {
-    width: 280px;
-    max-height: calc(100vh - 6rem);
-    background: var(--background-primary);
-    border-radius: 8px;
+    width: 304px;
+    max-width: calc(100vw - 20px);
+    max-height: calc(100vh - 4.5rem);
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--background-primary) 94%, var(--background-secondary) 6%) 0%,
+      color-mix(in srgb, var(--background-primary) 98%, var(--background-secondary) 2%) 100%
+    );
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 88%, transparent);
     box-shadow: 
-      0 0 0 1px var(--background-modifier-border),
-      0 3px 6px rgba(0, 0, 0, 0.1),
-      0 9px 24px rgba(0, 0, 0, 0.2);
+      0 14px 36px rgba(0, 0, 0, 0.22),
+      0 2px 8px rgba(0, 0, 0, 0.12);
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    animation: slideIn 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    animation: slideIn 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+    font-family: var(--font-interface, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
     pointer-events: auto;
+    backdrop-filter: blur(12px);
   }
 
   @keyframes slideIn {
@@ -2172,18 +2541,20 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 8px 6px 14px;
-    border-bottom: 1px solid var(--background-modifier-border);
-    height: 38px;
+    padding: 8px 10px 8px 14px;
+    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
+    background: color-mix(in srgb, var(--background-secondary) 40%, transparent);
+    min-height: 42px;
     flex-shrink: 0;
   }
 
   .notion-menu-title {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 14px;
-    font-weight: 500;
+    gap: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
     color: var(--text-normal);
   }
 
@@ -2194,12 +2565,14 @@
     width: 24px;
     height: 24px;
     padding: 0;
-    background: none;
+    background: transparent;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     color: var(--text-muted);
     cursor: pointer;
-    transition: background 0.12s ease;
+    transition: background-color 0.12s ease, color 0.12s ease;
+    appearance: none;
+    box-shadow: none;
   }
 
   .notion-close-btn:hover {
@@ -2207,41 +2580,52 @@
     color: var(--text-normal);
   }
 
+  .notion-close-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
+  }
+
   /* Notion选项行 */
   .notion-menu-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 14px;
-    min-height: 32px;
+    padding: 7px 10px;
+    margin: 0 6px;
+    min-height: 34px;
+    border-radius: 8px;
+    border: 1px solid transparent;
     font-size: 13px;
-    transition: background 0.12s ease;
+    transition: background 0.16s ease, border-color 0.16s ease;
   }
 
   .notion-menu-row--clickable {
     cursor: pointer;
-    transition: background 0.12s ease;
+    transition: background 0.12s ease, border-color 0.12s ease;
   }
 
   .notion-menu-row--clickable:hover {
-    background: var(--background-modifier-hover);
+    background: color-mix(in srgb, var(--background-modifier-hover) 72%, transparent);
+    border-color: color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
   }
 
   .notion-menu-row--option {
     cursor: pointer;
-    padding: 6px 14px;
+    padding: 7px 10px;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    transition: background 0.12s ease;
+    transition: background 0.16s ease, border-color 0.16s ease;
   }
 
   .notion-menu-row--option:hover {
-    background: var(--background-modifier-hover);
+    background: color-mix(in srgb, var(--background-modifier-hover) 72%, transparent);
+    border-color: color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
   }
 
   .notion-menu-row--selected {
     background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 26%, transparent);
   }
 
   .notion-menu-row--danger {
@@ -2250,6 +2634,20 @@
 
   .notion-menu-row--danger:hover {
     background: color-mix(in srgb, var(--text-error) 10%, transparent);
+  }
+
+  .notion-menu-row--clickable:focus-visible,
+  .notion-menu-row--option:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: -1px;
+  }
+
+  .notion-menu-row--navigation .notion-menu-label {
+    font-weight: 500;
+  }
+
+  .notion-menu-row--toggle {
+    padding-right: 8px;
   }
 
   .notion-option-content {
@@ -2262,19 +2660,26 @@
   .notion-back-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 0;
+    gap: 7px;
+    padding: 4px 6px;
     background: none;
     border: none;
+    border-radius: 6px;
     color: var(--text-normal);
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
-    transition: color 0.12s ease;
+    transition: color 0.12s ease, background 0.12s ease;
   }
 
   .notion-back-btn:hover {
+    background: color-mix(in srgb, var(--background-modifier-hover) 70%, transparent);
     color: var(--text-accent);
+  }
+
+  .notion-back-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
   }
 
   .notion-menu-label {
@@ -2285,32 +2690,33 @@
   .notion-menu-value {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 6px;
     color: var(--text-muted);
-    font-size: 13px;
-    padding: 2px 6px;
-    border-radius: 4px;
-    transition: background 0.12s ease;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 3px 7px;
+    border-radius: 6px;
+    transition: background 0.12s ease, color 0.12s ease;
   }
 
   /* Notion分隔线 */
   .notion-divider {
     height: 1px;
-    background: var(--background-modifier-border);
-    margin: 4px 0;
+    background: color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+    margin: 6px 10px;
   }
 
   /* Notion Toggle开关（紧凑版） */
   .notion-toggle-mini {
     position: relative;
-    width: 28px;
-    height: 16px;
-    border-radius: 8px;
-    background: var(--interactive-normal);
+    width: 30px;
+    height: 18px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-secondary) 28%);
     cursor: pointer;
     transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     flex-shrink: 0;
-    border: none;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 80%, transparent);
     padding: 0;
   }
 
@@ -2320,6 +2726,7 @@
 
   .notion-toggle-mini.active {
     background: var(--interactive-accent);
+    border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
   }
 
   .notion-toggle-mini.active:hover {
@@ -2330,12 +2737,13 @@
     position: absolute;
     top: 2px;
     left: 2px;
-    width: 12px;
-    height: 12px;
+    width: 13px;
+    height: 13px;
     border-radius: 50%;
-    background: white;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    background: color-mix(in srgb, var(--background-primary) 78%, white 22%);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
     transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 62%, transparent);
   }
 
   .notion-toggle-mini.active .notion-toggle-thumb {
@@ -2347,8 +2755,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 14px 4px 14px;
-    margin-top: 4px;
+    padding: 10px 14px 6px;
+    margin-top: 2px;
   }
 
   .notion-section-title {
@@ -2362,15 +2770,20 @@
   .notion-section-action {
     font-size: 12px;
     color: var(--text-muted);
-    padding: 2px 6px;
-    border-radius: 4px;
+    padding: 3px 7px;
+    border-radius: 6px;
     cursor: pointer;
-    transition: background 0.12s ease;
+    transition: background 0.12s ease, color 0.12s ease;
   }
 
   .notion-section-action:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
+  }
+
+  .notion-section-action:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
   }
 
   .notion-action-group {
@@ -2389,7 +2802,26 @@
   .notion-menu-content {
     flex: 1;
     overflow-y: auto;
-    padding: 4px 6px;
+    padding: 6px 4px 8px;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--text-muted) 26%, transparent) transparent;
+  }
+
+  .notion-menu-content::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .notion-menu-content::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .notion-menu-content::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+    border-radius: 999px;
+  }
+
+  .notion-menu-content::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--text-muted) 34%, transparent);
   }
 
   /* Notion群组列表项 */
@@ -2397,16 +2829,18 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 8px 4px 4px;
+    padding: 6px 9px 6px 4px;
     margin: 0 2px;
-    border-radius: 4px;
+    border-radius: 8px;
+    border: 1px solid transparent;
     font-size: 13px;
     cursor: grab;
-    transition: background 0.12s ease;
+    transition: background 0.12s ease, border-color 0.12s ease;
   }
 
   .notion-group-item:hover {
-    background: var(--background-modifier-hover);
+    background: color-mix(in srgb, var(--background-modifier-hover) 72%, transparent);
+    border-color: color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
   }
 
   .notion-group-item.dragging {
@@ -2415,7 +2849,8 @@
   }
 
   .notion-group-item.drag-over {
-    border-top: 2px solid var(--interactive-accent);
+    border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 24%, transparent);
   }
 
   /* Notion拖拽手柄（文本符号） */
@@ -2445,7 +2880,7 @@
   .notion-group-name {
     flex: 1;
     color: var(--text-normal);
-    font-weight: 400;
+    font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2461,30 +2896,34 @@
 
   /* Notion图标按钮 */
   .notion-icon-btn {
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: var(--text-faint);
+    color: var(--text-muted);
     transition: all 0.12s ease;
-    opacity: 0.6;
+    opacity: 0.7;
     padding: 0;
     background: none;
     border: none;
     cursor: pointer;
+    appearance: none;
+    box-shadow: none;
   }
 
   .notion-icon-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-muted);
+    background: color-mix(in srgb, var(--background-modifier-hover) 72%, transparent);
+    color: var(--text-normal);
     opacity: 1;
   }
 
   .notion-icon-btn.active {
     color: var(--interactive-accent);
     opacity: 1;
+    background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 22%, transparent);
   }
 
   .notion-separator {
@@ -2497,7 +2936,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 4px 6px;
+    padding: 2px 6px 6px;
   }
 
   .notion-sort-rule-item {
@@ -2506,9 +2945,9 @@
     gap: 6px;
     padding: 6px 8px;
     margin: 0 2px;
-    border-radius: 4px;
-    background: var(--background-modifier-form-field);
-    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--background-modifier-form-field) 82%, var(--background-primary) 18%);
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, transparent);
     cursor: grab;
     transition: all 0.12s ease;
   }
@@ -2524,8 +2963,8 @@
   }
 
   .notion-sort-rule-item.drag-over {
-    border-top: 2px solid var(--interactive-accent);
-    margin-top: 4px;
+    border-color: color-mix(in srgb, var(--interactive-accent) 45%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 24%, transparent);
   }
 
   .notion-sort-rule-content {
@@ -2541,25 +2980,26 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
     padding: 0;
-    background: var(--background-modifier-form-field);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.12s ease;
+    transition: background-color 0.12s ease, color 0.12s ease;
+    appearance: none;
+    box-shadow: none;
   }
 
   .notion-sort-direction-btn:hover {
     background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
-    color: var(--interactive-accent);
+    color: var(--text-normal);
   }
 
   .notion-sort-option-group {
-    margin: 2px 0;
+    margin: 1px 0;
   }
 
   .notion-sort-direction-options {
@@ -2575,22 +3015,26 @@
     width: 20px;
     height: 20px;
     padding: 0;
-    background: none;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 3px;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.12s ease;
+    transition: background-color 0.12s ease, color 0.12s ease;
+    appearance: none;
+    box-shadow: none;
   }
 
   .notion-direction-btn:hover {
     background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
-    color: var(--interactive-accent);
+    color: var(--text-normal);
   }
 
-  .notion-direction-btn:active {
-    transform: scale(0.95);
+  .notion-direction-btn:focus-visible,
+  .notion-sort-direction-btn:focus-visible,
+  .notion-icon-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
   }
 
 </style>

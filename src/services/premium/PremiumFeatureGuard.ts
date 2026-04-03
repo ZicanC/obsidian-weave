@@ -19,6 +19,8 @@ export const PREMIUM_FEATURES = {
   QUESTION_BANK: 'question-bank',
   DECK_ANALYTICS: 'deck-analytics',
   PROGRESSIVE_CLOZE: 'progressive-cloze',
+  CSV_IMPORT: 'csv-import',
+  CLIPBOARD_IMPORT: 'clipboard-import',
   VIEW_SOURCE: 'view-source'
 } as const;
 
@@ -70,6 +72,16 @@ export const FEATURE_METADATA: Record<string, {
     description: '智能渐进式挖空学习，逐步掌握复杂知识点',
     icon: 'layers'
   },
+  [PREMIUM_FEATURES.CSV_IMPORT]: {
+    name: 'CSV 导入',
+    description: '通过 CSV 文件批量导入卡片',
+    icon: 'file-text'
+  },
+  [PREMIUM_FEATURES.CLIPBOARD_IMPORT]: {
+    name: '剪贴板导入',
+    description: '从剪贴板文本快速批量导入卡片',
+    icon: 'clipboard-paste'
+  },
   [PREMIUM_FEATURES.VIEW_SOURCE]: {
     name: '查看原文',
     description: '快速查看卡片来源文档和上下文',
@@ -89,6 +101,12 @@ export class PremiumFeatureGuard {
    * 用于响应式更新UI
    */
   public isPremiumActive: Writable<boolean>;
+
+  /**
+   * 是否显示高级功能预览入口
+   * 兼容新版 UI 的公开分支降级实现
+   */
+  public premiumFeaturesPreviewEnabled: Writable<boolean>;
   
   /**
    * 验证缓存
@@ -109,6 +127,7 @@ export class PremiumFeatureGuard {
    */
   private constructor() {
     this.isPremiumActive = writable(false);
+    this.premiumFeaturesPreviewEnabled = writable(false);
   }
 
   /**
@@ -141,6 +160,50 @@ export class PremiumFeatureGuard {
     // 验证新的许可证
     const isValid = await this.validateLicense(licenseInfo);
     this.isPremiumActive.set(isValid);
+  }
+
+  /**
+   * 设置是否显示高级功能预览入口
+   */
+  setPremiumFeaturesPreview(enabled: boolean): void {
+    this.premiumFeaturesPreviewEnabled.set(enabled);
+  }
+
+  /**
+   * 判断一个功能是否属于高级功能
+   */
+  isPremiumFeature(featureId: string): boolean {
+    if (featureId === PREMIUM_FEATURES.VIEW_SOURCE) {
+      return false;
+    }
+
+    const premiumFeatureIds = Object.values(PREMIUM_FEATURES) as string[];
+    return premiumFeatureIds.includes(featureId);
+  }
+
+  /**
+   * 判断当前 UI 是否应该展示某个功能入口
+   * 已激活用户始终展示；未激活用户仅在开启预览时展示高级功能入口。
+   */
+  shouldShowFeatureEntry(
+    featureId: string,
+    options?: {
+      isPremium?: boolean;
+      showPremiumPreview?: boolean;
+    }
+  ): boolean {
+    if (!this.isPremiumFeature(featureId)) {
+      return true;
+    }
+
+    const isPremium = options?.isPremium ?? get(this.isPremiumActive);
+    if (isPremium) {
+      return true;
+    }
+
+    const showPremiumPreview =
+      options?.showPremiumPreview ?? get(this.premiumFeaturesPreviewEnabled);
+    return showPremiumPreview;
   }
 
   /**
@@ -188,8 +251,7 @@ export class PremiumFeatureGuard {
     }
 
     // 检查是否为高级功能
-    const premiumFeatureIds = Object.values(PREMIUM_FEATURES) as string[];
-    if (premiumFeatureIds.includes(featureId)) {
+    if (this.isPremiumFeature(featureId)) {
       return isPremium;
     }
 
@@ -218,7 +280,6 @@ export class PremiumFeatureGuard {
  * 默认导出单例实例获取方法
  */
 export default PremiumFeatureGuard;
-
 
 
 

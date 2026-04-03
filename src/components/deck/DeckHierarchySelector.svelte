@@ -73,7 +73,21 @@
 		class:selected={data.isSelected}
 		style="padding-left: {data.depth * 20}px"
 	>
-		<div class="deck-row" onclick={() => handleSelect(data.node.deck.id)}>
+		<div
+			class="deck-row"
+			onclick={(event) => {
+				if (event.defaultPrevented) return;
+				handleSelect(data.node.deck.id);
+			}}
+			onkeydown={(event) => {
+				if (event.key === 'Enter' || event.key === ' ') {
+					event.preventDefault();
+					handleSelect(data.node.deck.id);
+				}
+			}}
+			role="button"
+			tabindex="0"
+		>
 			{#if data.hasChildren && expandable}
 				<button
 					class="expand-button"
@@ -81,6 +95,7 @@
             e.preventDefault();
             toggleExpand(data.node.deck.id);
           }}
+					type="button"
 				>
 					<span class="icon">{data.expanded ? '▼' : '▶'}</span>
 				</button>

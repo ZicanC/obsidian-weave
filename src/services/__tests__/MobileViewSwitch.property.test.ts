@@ -12,8 +12,6 @@
  * @version 1.0.0
  * @requirements 9.1, 9.2, 9.3, 9.4
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 
 // ===== 类型定义 =====

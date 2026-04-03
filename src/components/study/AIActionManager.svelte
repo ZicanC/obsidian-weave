@@ -1,7 +1,7 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
-  //  导入AI配置Store（Obsidian即时保存模式：直接操作Store）
-  import { aiConfigStore, allFormatActions, allSplitActions } from '../../stores/ai-config.store';
+  //  导入AI配置Store（用于读取和手动提交保存）
+  import { aiConfigStore } from '../../stores/ai-config.store';
   import type { AIAction, AIActionType, AIProvider } from '../../types/ai-types';
   import { TEMPLATE_VARIABLES } from '../../types/ai-types';
   import type { Deck } from '../../data/types';
@@ -13,6 +13,7 @@
   import EnhancedModal from '../ui/EnhancedModal.svelte';
   import ObsidianDropdown from '../ui/ObsidianDropdown.svelte';
   import { OFFICIAL_FORMAT_ACTIONS } from '../../constants/official-format-actions';
+  import { DEFAULT_SPLIT_ACTIONS } from '../../data/default-split-actions';
   import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   import { Notice } from 'obsidian';
   
@@ -21,36 +22,151 @@
     availableDecks: Deck[];
     plugin: WeavePlugin;
     onClose: () => void;
+    useObsidianModal?: boolean;
   }
   
-  let { show, availableDecks, plugin, onClose }: Props = $props();
+  let { show, availableDecks, plugin, onClose, useObsidianModal = false }: Props = $props();
+  const isModalOpen = $derived(useObsidianModal || show);
   
   // 状态管理
   let activeType = $state<AIActionType>('format');
   let selectedActionId = $state<string | null>(null);
   let showVariableHelp = $state(false);
-  
-  //  直接使用Store的数据（Obsidian模式：单一数据源）
-  const currentFormatActions = $derived($allFormatActions);
-  const currentSplitActions = $derived($allSplitActions);
-  
-  //  重置选中状态（切换标签页或打开模态窗时）
+  let draftFormatActions = $state<AIAction[]>([]);
+  let draftSplitActions = $state<AIAction[]>([]);
+  let hasUnsavedChanges = $state(false);
+  let saveState = $state<'idle' | 'saving' | 'saved'>('idle');
+  let initializedForCurrentOpen = $state(false);
+  let saveFeedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function cloneValue<T>(value: T): T {
+    try {
+      return structuredClone(value);
+    } catch {
+      return JSON.parse(JSON.stringify(value)) as T;
+    }
+  }
+
+  function cloneActions(actions: AIAction[]): AIAction[] {
+    return actions.map((action) => cloneValue(action));
+  }
+
+  function clearSaveFeedbackTimer() {
+    if (saveFeedbackTimer) {
+      clearTimeout(saveFeedbackTimer);
+      saveFeedbackTimer = null;
+    }
+  }
+
+  function markDirty() {
+    hasUnsavedChanges = true;
+    saveState = 'idle';
+    clearSaveFeedbackTimer();
+  }
+
+  function loadDraftsFromStore() {
+    const state = aiConfigStore.getState();
+    draftFormatActions = cloneActions(state.customFormatActions);
+    draftSplitActions = cloneActions(state.customSplitActions);
+    hasUnsavedChanges = false;
+    saveState = 'idle';
+    clearSaveFeedbackTimer();
+  }
+
+  function getDraftActions(type: AIActionType): AIAction[] {
+    if (type === 'format') return draftFormatActions;
+    if (type === 'split') return draftSplitActions;
+    return [];
+  }
+
+  function setDraftActions(type: AIActionType, actions: AIAction[], shouldMarkDirty = true) {
+    const clonedActions = cloneActions(actions);
+
+    if (type === 'format') {
+      draftFormatActions = clonedActions;
+    } else if (type === 'split') {
+      draftSplitActions = clonedActions;
+    }
+
+    if (shouldMarkDirty) {
+      markDirty();
+    }
+  }
+
+  function buildOfficialFormatActions(): AIAction[] {
+    return OFFICIAL_FORMAT_ACTIONS.map((action) => ({
+      ...cloneValue(action),
+      type: 'format' as const,
+      category: 'official' as const
+    })) as AIAction[];
+  }
+
+  function buildOfficialSplitActions(): AIAction[] {
+    return DEFAULT_SPLIT_ACTIONS.map((action) => ({
+      ...cloneValue(action),
+      type: 'split' as const,
+      category: 'official' as const
+    })) as AIAction[];
+  }
+
   $effect(() => {
-    if (show) {
-      selectedActionId = null;
+    if (isModalOpen && !initializedForCurrentOpen) {
+      loadDraftsFromStore();
       showVariableHelp = false;
+      initializedForCurrentOpen = true;
+      return;
+    }
+
+    if (!isModalOpen && initializedForCurrentOpen) {
+      initializedForCurrentOpen = false;
+      showVariableHelp = false;
+      clearSaveFeedbackTimer();
     }
   });
-  
-  // 当前显示的功能列表
-  const currentActions = $derived(
-    activeType === 'format' ? currentFormatActions : currentSplitActions
+
+  const currentFormatActions = $derived.by(() => [...buildOfficialFormatActions(), ...draftFormatActions]);
+  const currentSplitActions = $derived.by(() => [...buildOfficialSplitActions(), ...draftSplitActions]);
+  const currentActions = $derived(activeType === 'format' ? currentFormatActions : currentSplitActions);
+  const selectedAction = $derived(currentActions.find(a => a.id === selectedActionId) || null);
+
+  function getActionDisplayName(action: AIAction): string {
+    return action.name.trim() || '未命名功能';
+  }
+
+  function getActionCategoryLabel(action: AIAction): string {
+    return action.category === 'official' ? '官方模板' : '自定义功能';
+  }
+
+  const activeTypeDisplayName = $derived(
+    activeType === 'format' ? 'AI格式化' : activeType === 'split' ? 'AI拆分' : 'AI功能'
   );
-  
-  // 选中的功能
-  const selectedAction = $derived(
-    currentActions.find(a => a.id === selectedActionId) || null
+
+  const actionSelectorOptions = $derived(
+    currentActions.map((action) => ({
+      id: action.id,
+      label: getActionDisplayName(action),
+      description: getActionCategoryLabel(action)
+    }))
   );
+
+  const selectedActionValue = $derived(
+    selectedActionId ?? currentActions[0]?.id ?? ''
+  );
+
+  $effect(() => {
+    if (!isModalOpen) return;
+
+    if (currentActions.length === 0) {
+      if (selectedActionId !== null) {
+        selectedActionId = null;
+      }
+      return;
+    }
+
+    if (!selectedActionId || !currentActions.some((action) => action.id === selectedActionId)) {
+      selectedActionId = currentActions[0].id;
+    }
+  });
   
   // 可用的模板变量
   const availableVariables = $derived(TEMPLATE_VARIABLES);
@@ -81,13 +197,13 @@
     if (selectedAction && !selectedAction.model) {
       const computedDefaultModel = defaultModel;
       if (computedDefaultModel && selectedAction.category === 'custom') {
-        // 只为自定义action自动初始化model
+        // 只为自定义 action 补齐默认模型，不直接触发“未保存”提示
         logger.debug('[AIActionManager] 自动初始化model字段:', {
           actionId: selectedAction.id,
           provider: selectedAction.provider,
           model: computedDefaultModel
         });
-        updateSelectedAction({ model: computedDefaultModel });
+        updateSelectedAction({ model: computedDefaultModel }, false);
       }
     }
   });
@@ -95,6 +211,12 @@
   function handleTypeChange(type: AIActionType) {
     activeType = type;
     selectedActionId = null;
+    showVariableHelp = false;
+  }
+
+  function handleActionSelect(actionId: string) {
+    selectedActionId = actionId;
+    showVariableHelp = false;
   }
   
   function createNewAction() {
@@ -128,50 +250,36 @@
       };
     }
     
-    //  Obsidian模式：直接更新Store并立即保存
-    const currentCustomActions = currentActions.filter(a => a.category === 'custom');
-    const updatedActions = [...currentCustomActions, newAction];
-    
-    if (activeType === 'format') {
-      aiConfigStore.updateFormatActions(updatedActions);
-    } else {
-      aiConfigStore.updateSplitActions(updatedActions);
-    }
-    
+    const updatedActions = [...getDraftActions(activeType), newAction];
+    setDraftActions(activeType, updatedActions);
     selectedActionId = newAction.id;
-    new Notice(`已创建新的${actionTypeName}功能`);
+    new Notice(`已创建新的${actionTypeName}功能，点击保存后生效`);
   }
   
   function deleteAction(id: string) {
-    const actionName = currentActions.find(a => a.id === id)?.name || '此功能';
+    const action = currentActions.find(a => a.id === id);
+    const actionName = action ? getActionDisplayName(action) : '此功能';
     
-    //  使用 Obsidian Modal 代替 confirm()，避免焦点劫持问题
+    //  使用 Obsidian Modal 代替原生确认框，避免焦点劫持问题
     showObsidianConfirm(
       plugin.app,
       `确定要删除"${actionName}"吗？`,
       { title: '确认删除', confirmText: '删除' }
     ).then(confirmed => {
       if (confirmed) {
-        //  Obsidian模式：直接更新Store并立即保存
-        const customActions = currentActions.filter(a => a.category === 'custom');
-        const updatedActions = customActions.filter(a => a.id !== id);
-        
-        if (activeType === 'format') {
-          aiConfigStore.updateFormatActions(updatedActions);
-        } else {
-          aiConfigStore.updateSplitActions(updatedActions);
-        }
-        
+        const updatedActions = getDraftActions(activeType).filter(a => a.id !== id);
+        setDraftActions(activeType, updatedActions);
+
         if (selectedActionId === id) {
           selectedActionId = null;
         }
-        
-        new Notice(`已删除"${actionName}"`);
+
+        new Notice(`已删除"${actionName}"，点击保存后生效`);
       }
     });
   }
   
-  function updateSelectedAction(partial: Partial<AIAction>) {
+  function updateSelectedAction(partial: Partial<AIAction>, shouldMarkDirty = true) {
     if (!selectedAction) return;
     
     const updated = { 
@@ -179,19 +287,14 @@
       ...partial, 
       updatedAt: new Date().toISOString() 
     };
-    
-    //  Obsidian模式：直接更新Store并立即保存
-    const customActions = currentActions.filter(a => a.category === 'custom');
+
+    const customActions = getDraftActions(activeType);
     const index = customActions.findIndex(a => a.id === selectedAction.id);
-    
+
     if (index >= 0) {
-      customActions[index] = updated;
-      
-      if (activeType === 'format') {
-        aiConfigStore.updateFormatActions(customActions);
-      } else {
-        aiConfigStore.updateSplitActions(customActions);
-      }
+      const updatedActions = [...customActions];
+      updatedActions[index] = updated;
+      setDraftActions(activeType, updatedActions, shouldMarkDirty);
     }
   }
   
@@ -217,18 +320,10 @@
       updatedAt: new Date().toISOString()
     };
     
-    //  Obsidian模式：直接更新Store并立即保存
-    const customActions = currentActions.filter(a => a.category === 'custom');
-    const updatedActions = [...customActions, newAction];
-    
-    if (activeType === 'format') {
-      aiConfigStore.updateFormatActions(updatedActions);
-    } else {
-      aiConfigStore.updateSplitActions(updatedActions);
-    }
-    
+    const updatedActions = [...getDraftActions(activeType), newAction];
+    setDraftActions(activeType, updatedActions);
     selectedActionId = newAction.id;
-    new Notice(`已复制"${selectedAction.name}"为自定义功能`);
+    new Notice(`已复制"${selectedAction.name}"为自定义功能，点击保存后生效`);
   }
   
   /**
@@ -236,161 +331,226 @@
    * 将官方模板重新添加到功能列表中
    */
   async function restoreOfficialTemplates() {
-    const confirmMessage = `确定要恢复官方默认模板吗？\n\n这将在当前功能列表中添加官方预设的AI功能模板（不会删除您的自定义功能）。`;
-    
-    //  使用 Obsidian Modal 代替 confirm()，避免焦点劫持问题
-    const confirmed = await showObsidianConfirm(
-      plugin.app,
-      confirmMessage,
-      { title: '恢复官方模板', confirmText: '恢复' }
-    );
-    if (!confirmed) return;
-    
-    //  Obsidian模式：直接操作Store
     if (activeType === 'format') {
-      const existingIds = new Set(currentActions.map(a => a.id));
-      const newOfficialActions = OFFICIAL_FORMAT_ACTIONS.filter(a => !existingIds.has(a.id));
-      
-      if (newOfficialActions.length > 0) {
-        const customActions = currentActions.filter(a => a.category === 'custom');
-        aiConfigStore.updateFormatActions(customActions); // Store会自动合并官方模板
-        new Notice(`已添加 ${newOfficialActions.length} 个官方格式化模板`);
-      } else {
-        new Notice('所有官方格式化模板已存在');
-      }
+      new Notice('官方格式化模板始终显示在列表中，无需额外恢复');
     } else {
       new Notice('AI拆分功能暂无官方模板');
     }
   }
+
+  async function saveChanges() {
+    if (!hasUnsavedChanges || saveState === 'saving') return;
+
+    saveState = 'saving';
+    clearSaveFeedbackTimer();
+
+    try {
+      const currentState = aiConfigStore.getState();
+
+      if (!plugin.settings.aiConfig) {
+        plugin.settings.aiConfig = {
+          apiKeys: {},
+          defaultProvider: 'zhipu',
+          customFormatActions: [],
+          customTestGenActions: [],
+          customSplitActions: [],
+          officialFormatActions: {
+            choice: { enabled: true },
+            mathFormula: { enabled: true },
+            memoryAid: { enabled: true }
+          }
+        } as any;
+      }
+
+      const aiConfig = plugin.settings.aiConfig!;
+      aiConfig.defaultProvider = currentState.defaultProvider;
+      aiConfig.apiKeys = cloneValue(currentState.apiKeys);
+      aiConfig.customTestGenActions = cloneValue(currentState.customTestGenActions);
+      aiConfig.customFormatActions = cloneActions(draftFormatActions);
+      aiConfig.customSplitActions = cloneActions(draftSplitActions);
+
+      await plugin.saveSettings();
+      aiConfigStore.reloadFromPlugin();
+
+      hasUnsavedChanges = false;
+      saveState = 'saved';
+      new Notice('AI功能配置保存成功');
+
+      saveFeedbackTimer = setTimeout(() => {
+        saveState = 'idle';
+        saveFeedbackTimer = null;
+      }, 2000);
+    } catch (error) {
+      saveState = 'idle';
+      logger.error('[AIActionManager] 保存AI功能配置失败:', error);
+      new Notice('保存失败，请重试');
+    }
+  }
+
+  async function handleCloseRequest() {
+    if (!hasUnsavedChanges) {
+      onClose();
+      return;
+    }
+
+    const confirmed = await showObsidianConfirm(
+      plugin.app,
+      '当前有未保存的AI功能更改，关闭后这些更改会丢失。确定仍要关闭吗？',
+      { title: '放弃未保存更改', confirmText: '仍然关闭' }
+    );
+
+    if (!confirmed) return;
+
+    loadDraftsFromStore();
+    onClose();
+  }
 </script>
 
 <!-- 🆕 自定义强制背景虚化层 -->
-{#if show}
+{#if show && !useObsidianModal}
   <div 
     class="ai-config-backdrop" 
     role="button" 
     tabindex="0"
-    onclick={onClose}
-    onkeydown={(e) => e.key === 'Enter' && onClose()}
+    onclick={handleCloseRequest}
+    onkeydown={(e) => e.key === 'Enter' && void handleCloseRequest()}
   ></div>
 {/if}
 
-<EnhancedModal
-  open={show}
-  onClose={onClose}
-  size="xl"
-  title="AI功能配置"
-  zIndex={6000}
-  mask={false}
->
-  <div class="ai-action-manager">
-    <!--  顶部：标签页导航 + 操作按钮 -->
-    <div class="top-navigation">
-      <ActionTypeTabBar
-        activeType={activeType}
-        formatCount={currentFormatActions.length}
-        splitCount={currentSplitActions.length}
-        onTypeChange={handleTypeChange}
-      />
-      
-      <!--  右侧操作区 -->
-      <div class="top-actions">
-        <!--  恢复官方默认模板按钮 -->
-        <EnhancedButton
-          variant="ghost"
-          size="sm"
-          icon="refresh-cw"
-          onclick={restoreOfficialTemplates}
-          ariaLabel="恢复官方默认模板"
-        >
-          恢复官方模板
-        </EnhancedButton>
-        
-        <!--  即时保存提示 -->
-        <div class="save-indicator">
-          <span class="status saved">
-            <EnhancedIcon name="zap" size="sm" />
-            更改即时保存
-          </span>
-        </div>
+{#snippet modalHeader()}
+  <div class="modal-toolbar">
+    <div class="modal-toolbar-main">
+      <h3 id="modal-title" class="modal-toolbar-title">AI功能配置</h3>
+    </div>
+
+    <div class="modal-toolbar-center">
+      <div class="top-navigation-shell">
+        <ActionTypeTabBar
+          activeType={activeType}
+          formatCount={currentFormatActions.length}
+          splitCount={currentSplitActions.length}
+          onTypeChange={handleTypeChange}
+        />
       </div>
     </div>
-    
-    <div class="manager-layout">
-      <!-- 左侧：功能列表 -->
-      <div class="sidebar">
-        <!-- 功能列表 -->
-        <div class="actions-list">
-          <div class="list-header">
-            <span class="list-title">功能列表</span>
-            <span class="list-count">{currentActions.length}</span>
-          </div>
-          
-          <div class="list-content">
-            {#each currentActions as action}
-              <div 
-                class="action-item"
-                class:selected={selectedActionId === action.id}
-                onclick={() => selectedActionId = action.id}
-                role="button"
-                tabindex="0"
-                onkeydown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    selectedActionId = action.id;
-                  }
-                }}
+
+    <div class="top-actions">
+      <EnhancedButton
+        variant="ghost"
+        size="sm"
+        iconOnly
+        icon="times"
+        onclick={handleCloseRequest}
+        ariaLabel="关闭"
+      />
+    </div>
+  </div>
+{/snippet}
+
+{#snippet managerContent()}
+  <div class="manager-layout">
+      <div class="action-toolbar-card">
+        <div class="action-toolbar">
+          <div class="action-toolbar-actions setting-item-control">
+            <div class="action-selector-control">
+              <ObsidianDropdown
+                options={actionSelectorOptions}
+                value={selectedActionValue}
+                placeholder={`选择${activeTypeDisplayName}功能`}
+                className="action-selector-dropdown"
+                disabled={actionSelectorOptions.length === 0}
+                onchange={handleActionSelect}
+              />
+            </div>
+
+            <button
+              type="button"
+              class="toolbar-btn obsidian-action-btn"
+              onclick={createNewAction}
+              title={`新建${activeTypeDisplayName}功能`}
+            >
+              <EnhancedIcon name="plus" size="14" />
+              <span>新建</span>
+            </button>
+
+            {#if selectedAction?.category === 'official'}
+              <button
+                type="button"
+                class="toolbar-btn obsidian-action-btn"
+                onclick={duplicateAsCustom}
+                title="复制为自定义功能"
               >
-                <span class="action-name">{action.name}</span>
-                {#if action.category === 'official'}
-                  <span class="official-badge">官方</span>
-                {/if}
-                {#if action.category === 'custom'}
-                  <EnhancedButton
-                    variant="ghost"
-                    size="xs"
-                    icon="trash"
-                    iconOnly
-                    onclick={(e) => {
-            e.preventDefault();
-            deleteAction(action.id);
-          }}
-                    ariaLabel="删除功能"
-                    class="delete-btn"
-                  />
-                {/if}
+                <EnhancedIcon name="copy" size="14" />
+                <span>复制为自定义</span>
+              </button>
+            {:else if selectedAction?.category === 'custom'}
+              <button
+                type="button"
+                class="toolbar-btn obsidian-action-btn mod-warning"
+                onclick={() => deleteAction(selectedAction.id)}
+                title="删除当前功能"
+              >
+                <EnhancedIcon name="trash" size="14" />
+                <span>删除</span>
+              </button>
+            {/if}
+
+            <div class="toolbar-trailing-actions">
+              <button
+                type="button"
+                class="toolbar-btn obsidian-action-btn"
+                onclick={restoreOfficialTemplates}
+                title="恢复官方默认模板"
+              >
+                <EnhancedIcon name="refresh-cw" size="14" />
+                <span>恢复官方模板</span>
+              </button>
+
+              <div
+                class="toolbar-save-status"
+                class:dirty={hasUnsavedChanges}
+                class:saved={saveState === 'saved' && !hasUnsavedChanges}
+              >
+                <span>
+                  {#if saveState === 'saving'}
+                    正在保存...
+                  {:else if hasUnsavedChanges}
+                    有未保存更改
+                  {:else if saveState === 'saved'}
+                    保存成功
+                  {:else}
+                    当前已保存
+                  {/if}
+                </span>
               </div>
-            {/each}
-            
-            <!-- 新建功能按钮 - 参考AIConfigModal设计 -->
-            <div class="new-action-section">
-              <button 
-                class="new-action-btn" 
-                onclick={createNewAction}
-                title="新建自定义功能"
+
+              <button
+                type="button"
+                class="toolbar-btn obsidian-action-btn mod-primary"
+                onclick={saveChanges}
+                disabled={!hasUnsavedChanges || saveState === 'saving'}
+                title="保存当前AI功能配置"
               >
-                <EnhancedIcon name="plus" size="16" />
-                <span>新建{activeType === 'format' ? '格式化' : activeType === 'test-generator' ? '题库' : '拆分'}功能</span>
+                <EnhancedIcon name={saveState === 'saved' ? 'check' : 'save'} size="14" />
+                <span>
+                  {#if saveState === 'saving'}
+                    保存中...
+                  {:else if saveState === 'saved' && !hasUnsavedChanges}
+                    已保存
+                  {:else}
+                    保存
+                  {/if}
+                </span>
               </button>
             </div>
           </div>
         </div>
+
       </div>
       
-      <!-- 右侧：配置编辑器 -->
       <div class="config-editor">
         {#if selectedAction}
           <div class="edit-form">
-            {#if selectedAction.category === 'official'}
-              <div class="official-notice">
-                <EnhancedIcon name="info" size="sm" variant="primary" />
-                <div class="notice-content">
-                  <strong>官方模板说明</strong>
-                  <p>官方模板仅作为参考示例，不会显示在AI助手菜单中。请点击"复制为自定义"按钮创建您自己的AI功能。</p>
-                </div>
-              </div>
-            {/if}
-            
             <div class="form-section form-section-basic">
               <div class="section-header">
                 <h4 class="section-title">基础信息</h4>
@@ -408,10 +568,8 @@
                   class="form-input"
                 />
               </div>
-              
             </div>
             
-            <!-- AI拆分配置（仅拆分类型显示） -->
             {#if selectedAction.type === 'split' && selectedAction.splitConfig}
               <div class="form-section form-section-split">
                 <div class="section-header">
@@ -534,7 +692,6 @@
               {/if}
             </div>
             
-            <!-- AI提示词配置 -->
             <div class="form-section form-section-prompt">
               <div class="section-header">
                 <h4 class="section-title">AI提示词配置</h4>
@@ -591,25 +748,38 @@
                 </div>
               {/if}
             </div>
-            
-            <!--  底部操作按钮（仅官方模板显示复制按钮） -->
-            {#if selectedAction.category === 'official'}
-              <div class="form-actions">
-                <EnhancedButton 
-                  variant="primary" 
-                  icon="copy"
-                  onclick={duplicateAsCustom}
-                >
-                  复制为自定义
-                </EnhancedButton>
-              </div>
-            {/if}
+          </div>
+        {:else}
+          <div class="empty-editor-state">
+            <EnhancedIcon name="sparkles" size="48" variant="muted" />
+            <p>请先从上方选择一个AI功能模板</p>
+            <p class="hint-text">选中后即可在下方集中编辑名称、模型与提示词配置。</p>
           </div>
         {/if}
       </div>
     </div>
+{/snippet}
+
+{#if useObsidianModal}
+  <div class="ai-action-manager">
+    {@render modalHeader()}
+    {@render managerContent()}
   </div>
-</EnhancedModal>
+{:else}
+  <EnhancedModal
+    open={show}
+    onClose={handleCloseRequest}
+    size="xl"
+    title="AI功能配置"
+    header={modalHeader}
+    zIndex={6000}
+    mask={false}
+  >
+    <div class="ai-action-manager">
+      {@render managerContent()}
+    </div>
+  </EnhancedModal>
+{/if}
 
 <style>
   /*  CSS变量定义（确保在非.weave-app容器中也能使用） */
@@ -644,189 +814,236 @@
     flex-direction: column;
   }
   
-  /* 顶部标签页导航区域 */
-  .top-navigation {
+  .modal-toolbar {
     flex-shrink: 0;
-    background: var(--background-primary);
-    border-bottom: 1px solid var(--background-modifier-border);
-    padding: var(--weave-space-lg) var(--weave-space-lg) 0 var(--weave-space-lg);
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-    gap: var(--weave-space-md);
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--weave-space-lg);
+    min-width: 0;
   }
-  
-  /*  右侧操作区 */
+
+  .modal-toolbar-main {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    justify-self: start;
+  }
+
+  .modal-toolbar-center {
+    min-width: 0;
+    display: flex;
+    justify-content: center;
+    justify-self: center;
+  }
+
+  .modal-toolbar-title {
+    margin: 0;
+    font-size: 1.08rem;
+    font-weight: 700;
+    color: var(--text-normal, var(--weave-text-primary));
+    white-space: nowrap;
+  }
+
+  .top-navigation-shell {
+    display: inline-flex;
+    max-width: 100%;
+    padding: 4px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--background-secondary) 88%, transparent), color-mix(in srgb, var(--background-primary) 94%, transparent));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  }
+
   .top-actions {
     flex-shrink: 0;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: var(--weave-space-md);
+    justify-self: end;
   }
-  
-  /*  保存状态指示器 */
-  .save-indicator {
+
+  .toolbar-save-status {
     flex-shrink: 0;
-    padding: var(--weave-space-sm) var(--weave-space-md);
-    border-radius: var(--weave-radius-md);
-    font-size: 0.875rem;
+    min-height: 40px;
+    padding: 0 14px;
+    border-radius: 12px;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
+    background: color-mix(in srgb, var(--background-secondary) 84%, transparent);
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    font-size: 0.84rem;
     display: flex;
     align-items: center;
-    gap: var(--weave-space-xs);
+    color: var(--text-muted, var(--weave-text-secondary));
   }
-  
-  .save-indicator .status {
+
+  .toolbar-save-status span {
     display: flex;
     align-items: center;
-    gap: var(--weave-space-xs);
-    font-weight: 500;
-  }
-  
-  .save-indicator .saved {
-    color: var(--text-success, #4caf50);
-  }
-  
-  @keyframes spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-  }
-  
-  .manager-layout {
-    display: grid;
-    grid-template-columns: 320px 1fr;
-    gap: var(--weave-space-lg);
-    flex: 1;
-    height: calc(85vh - 160px); /* 减少高度给顶部导航留空间 */
-    min-height: 450px;
-    padding: var(--weave-space-lg); /* 统一使用较大的内边距 */
-  }
-  
-  .sidebar {
-    display: flex;
-    flex-direction: column;
-    background: var(--background-secondary, var(--weave-secondary-bg));
-    border-radius: var(--weave-radius-lg);
-    overflow: hidden;
-    border: 1px solid var(--background-modifier-border, var(--weave-border));
-  }
-  
-  .actions-list {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  
-  .list-header {
-    display: flex;
-    align-items: center;
-    gap: var(--weave-space-sm);
-    padding: var(--weave-space-md) var(--weave-space-lg);
-    border-bottom: 1px solid var(--background-modifier-border, var(--weave-border));
-    background: var(--background-primary, var(--weave-surface));
-  }
-  
-  .list-title {
-    font-size: 0.875rem;
     font-weight: 600;
-    color: var(--text-normal, var(--weave-text-primary));
-    flex: 1;
   }
-  
-  .list-count {
+
+  .toolbar-save-status.dirty {
+    color: var(--text-warning, #f59e0b);
+    border-color: color-mix(in srgb, var(--text-warning, #f59e0b) 35%, var(--background-modifier-border));
+    background: color-mix(in srgb, var(--text-warning, #f59e0b) 12%, var(--background-secondary));
+  }
+
+  .toolbar-save-status.saved {
+    color: var(--text-success, #4caf50);
+    border-color: color-mix(in srgb, var(--text-success, #4caf50) 30%, var(--background-modifier-border));
+    background: color-mix(in srgb, var(--text-success, #4caf50) 12%, var(--background-secondary));
+  }
+
+  .manager-layout {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: var(--weave-space-lg);
+    padding: 18px 24px 24px;
+  }
+
+  .action-toolbar-card {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--weave-space-lg);
+    padding: 18px 20px;
+    border-radius: var(--weave-radius-xl);
+    border: 1px solid var(--background-modifier-border, var(--weave-border));
+    background: var(--background-secondary, var(--weave-secondary-bg));
+    box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+  }
+
+  .action-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--weave-space-lg);
+  }
+
+  .action-selector-control {
+    flex: 1 1 360px;
+    min-width: 260px;
+    max-width: 640px;
+  }
+
+  :global(.action-selector-dropdown.obsidian-dropdown-trigger) {
+    width: 100%;
+    min-height: 40px;
+    padding: 0.625rem 0.875rem;
+    background: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+    box-shadow: none;
+  }
+
+  :global(.action-selector-dropdown.obsidian-dropdown-trigger:hover:not(.disabled)) {
+    background: var(--background-modifier-form-field);
+    border-color: var(--background-modifier-border-hover);
+  }
+
+  :global(.action-selector-dropdown.obsidian-dropdown-trigger:focus-visible) {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  }
+
+  :global(.action-selector-dropdown.obsidian-dropdown-trigger .dropdown-icon) {
+    color: var(--text-muted);
+    flex-shrink: 0;
+  }
+
+  .action-toolbar-actions {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .toolbar-btn.obsidian-action-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 1.5rem;
-    height: 1.5rem;
-    padding: 0 0.375rem;
-    background: var(--background-modifier-border, var(--weave-border));
-    color: var(--text-muted, var(--weave-text-secondary));
-    font-size: 0.75rem;
+    gap: 8px;
+    min-height: 40px;
+    padding: 10px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 0.84rem;
     font-weight: 600;
-    border-radius: var(--weave-radius-sm);
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+    white-space: nowrap;
   }
-  
-  
-  .list-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: var(--weave-space-sm);
+
+  .toolbar-btn.obsidian-action-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--interactive-accent);
+    background: var(--background-modifier-hover);
   }
-  
-  .action-item {
+
+  .toolbar-btn.obsidian-action-btn:focus-visible {
+    outline: none;
+    border-color: var(--interactive-accent);
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  }
+
+  .toolbar-btn.obsidian-action-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .toolbar-btn.obsidian-action-btn.mod-warning {
+    color: var(--text-error, #ef4444);
+  }
+
+  .toolbar-btn.obsidian-action-btn.mod-warning:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--text-error, #ef4444) 45%, transparent);
+    background: color-mix(in srgb, var(--text-error, #ef4444) 10%, transparent);
+  }
+
+  .toolbar-btn.obsidian-action-btn.mod-primary {
+    color: var(--text-on-accent, #ffffff);
+    background: var(--interactive-accent, #2563eb);
+    border-color: color-mix(in srgb, var(--interactive-accent, #2563eb) 88%, black 12%);
+  }
+
+  .toolbar-btn.obsidian-action-btn.mod-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--interactive-accent, #2563eb) 88%, white 12%);
+    border-color: color-mix(in srgb, var(--interactive-accent, #2563eb) 78%, black 22%);
+    color: var(--text-on-accent, #ffffff);
+  }
+
+  .toolbar-trailing-actions {
+    margin-left: auto;
     display: flex;
     align-items: center;
-    gap: var(--weave-space-sm);
-    padding: var(--weave-space-sm) var(--weave-space-md);
-    background: var(--background-primary, var(--weave-surface));
-    border: 1px solid transparent;
-    border-radius: var(--weave-radius-md);
-    margin-bottom: var(--weave-space-xs);
-    cursor: pointer;
-    transition: all 0.2s ease;
+    gap: 10px;
+    flex-wrap: wrap;
   }
-  
-  .action-item:hover {
-    border-color: var(--background-modifier-border, var(--weave-border));
-    background: var(--background-modifier-hover, var(--weave-hover));
-  }
-  
-  .action-item.selected {
-    border-color: var(--interactive-accent, var(--weave-accent-color));
-    background: var(--background-modifier-hover, var(--weave-hover));
-  }
-  
-  .action-item:focus-visible {
-    outline: 2px solid var(--interactive-accent, var(--weave-accent-color));
-    outline-offset: 2px;
-  }
-  
-  
-  .action-name {
-    flex: 1;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: var(--text-normal, var(--weave-text-primary));
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  
-  .official-badge {
-    padding: 0.125rem 0.375rem;
-    font-size: 0.625rem;
-    font-weight: 600;
-    border-radius: var(--weave-radius-sm);
-    white-space: nowrap;
-    background: var(--interactive-accent, var(--weave-accent-color));
-    color: var(--text-on-accent, var(--weave-text-on-accent));
-    flex-shrink: 0;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  
-  .action-item :global(.delete-btn) {
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-  
-  .action-item:hover :global(.delete-btn) {
-    opacity: 1;
-  }
-  
-  /* 🆕 自定义强制背景虚化层 */
+
   .ai-config-backdrop {
     position: fixed !important;
     inset: 0 !important;
-    background: rgba(0, 0, 0, 0.88) !important; /* 深色半透明 */
-    backdrop-filter: blur(16px) !important; /* 强烈模糊 */
-    -webkit-backdrop-filter: blur(16px) !important; /* Safari */
+    background: rgba(0, 0, 0, 0.88) !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
     z-index: calc(var(--weave-z-loading) - 1);
     animation: backdropFadeIn 0.3s ease !important;
     pointer-events: auto !important;
   }
-  
+
   @keyframes backdropFadeIn {
     from {
       opacity: 0;
@@ -835,56 +1052,42 @@
       opacity: 1;
     }
   }
-  
-  /* 🆕 底部操作按钮区域 */
-  .form-actions {
-    margin-top: var(--weave-space-xl);
-    padding-top: var(--weave-space-xl);
-    border-top: 2px solid var(--background-modifier-border);
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--weave-space-md);
-  }
-  
+
   .config-editor {
-    background: var(--background-secondary, var(--weave-secondary-bg));
-    border-radius: var(--weave-radius-lg);
-    overflow-y: auto;
-    padding: var(--weave-space-xl);
-    border: 1px solid var(--background-modifier-border, var(--weave-border));
-  }
-  
-  .edit-form {
-    max-width: 700px;
-  }
-  
-  .official-notice {
-    display: flex;
-    align-items: flex-start;
-    gap: var(--weave-space-md);
-    padding: var(--weave-space-md);
-    margin-bottom: var(--weave-space-lg);
-    background: var(--background-secondary);
-    border: 1px solid var(--interactive-accent);
-    border-radius: var(--weave-radius-md);
-  }
-  
-  .notice-content {
     flex: 1;
+    min-height: 0;
+    background: var(--background-secondary, var(--weave-secondary-bg));
+    border-radius: var(--weave-radius-xl);
+    overflow-y: auto;
+    padding: 24px 28px;
+    border: 1px solid var(--background-modifier-border, var(--weave-border));
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
   }
-  
-  .notice-content strong {
-    display: block;
-    margin-bottom: var(--weave-space-xs);
-    color: var(--text-normal);
-    font-weight: 600;
+
+  .edit-form {
+    max-width: 920px;
   }
-  
-  .notice-content p {
+
+  .empty-editor-state {
+    min-height: 320px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    text-align: center;
+    color: var(--text-muted, var(--weave-text-secondary));
+    padding: 40px 20px;
+  }
+
+  .empty-editor-state p {
     margin: 0;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    line-height: 1.5;
+    font-size: 0.92rem;
+  }
+
+  .empty-editor-state .hint-text {
+    font-size: 0.82rem;
+    color: var(--text-faint, var(--weave-text-faint));
   }
   
   .form-section {
@@ -1074,95 +1277,126 @@
     color: var(--text-muted, var(--weave-text-secondary));
   }
   
-  /* 响应式设计 */
   @media (max-width: 1024px) {
-    .manager-layout {
-      grid-template-columns: 280px 1fr;
-      gap: var(--weave-space-md);
+    .modal-toolbar {
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "title close"
+        "tabs tabs";
+      align-items: start;
     }
-  }
-  
-  @media (max-width: 768px) {
-    .top-navigation {
-      padding: var(--weave-space-md) var(--weave-space-md) 0 var(--weave-space-md); /* 保持顶部内边距 */
+
+    .modal-toolbar-main {
+      grid-area: title;
     }
-    
-    .manager-layout {
-      grid-template-columns: 1fr;
-      grid-template-rows: auto 1fr;
-      height: calc(85vh - 140px); /* 调整移动端高度 */
-      min-height: auto;
-      padding: var(--weave-space-md);
-      gap: var(--weave-space-md);
+
+    .modal-toolbar-center {
+      grid-area: tabs;
+      justify-self: stretch;
+      justify-content: flex-start;
     }
-    
-    .sidebar {
-      max-height: 300px;
+
+    .top-actions {
+      grid-area: close;
+      justify-self: end;
     }
-    
+
+    .action-selector-control {
+      max-width: none;
+    }
+
     .config-editor {
-      padding: var(--weave-space-lg);
+      padding: 22px 24px;
     }
-    
+
     .edit-form {
       max-width: 100%;
     }
   }
   
-  /* 滚动条样式 */
-  .list-content::-webkit-scrollbar,
-  .config-editor::-webkit-scrollbar {
-    width: 6px;
+  @media (max-width: 768px) {
+    .modal-toolbar {
+      gap: 10px;
+    }
+
+    .modal-toolbar-main {
+      width: auto;
+      justify-content: flex-start;
+      gap: 8px;
+    }
+
+    .modal-toolbar-title {
+      font-size: 1rem;
+    }
+
+    .top-navigation-shell {
+      max-width: 100%;
+      overflow-x: auto;
+    }
+
+    .top-actions {
+      justify-self: end;
+      gap: 10px;
+    }
+
+    .manager-layout {
+      padding: 16px;
+      gap: 14px;
+    }
+
+    .action-toolbar-card {
+      padding: 16px;
+      border-radius: 14px;
+    }
+
+    .action-toolbar-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
+
+    .toolbar-trailing-actions {
+      width: 100%;
+      margin-left: 0;
+      justify-content: flex-start;
+    }
+
+    .toolbar-btn.obsidian-action-btn {
+      flex: 1 1 140px;
+    }
+
+    .config-editor {
+      padding: 18px;
+      border-radius: 14px;
+    }
+
+    .label-with-help {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .variable-item {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
   }
   
-  .list-content::-webkit-scrollbar-track,
+  .config-editor::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
   .config-editor::-webkit-scrollbar-track {
     background: transparent;
   }
   
-  .list-content::-webkit-scrollbar-thumb,
   .config-editor::-webkit-scrollbar-thumb {
     background: var(--background-modifier-border, var(--weave-border));
     border-radius: 3px;
   }
   
-  .list-content::-webkit-scrollbar-thumb:hover,
   .config-editor::-webkit-scrollbar-thumb:hover {
     background: var(--text-faint, var(--weave-text-faint));
-  }
-  
-  /* 新建功能按钮样式 - 参考AIConfigModal设计 */
-  .new-action-section {
-    padding: 16px;
-    border-top: 1px solid var(--background-modifier-border);
-    margin-top: 8px;
-  }
-
-  .new-action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    width: 100%;
-    padding: 12px 16px;
-    background: var(--background-primary);
-    border: 2px dashed var(--background-modifier-border);
-    border-radius: 8px;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .new-action-btn:hover {
-    background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
-    color: var(--interactive-accent);
-    transform: translateY(-1px);
-  }
-
-  .new-action-btn:active {
-    transform: translateY(0);
   }
 </style>

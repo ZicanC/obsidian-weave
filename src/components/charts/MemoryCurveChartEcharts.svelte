@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { Platform } from 'obsidian';
   import echarts, { type EChartsType, type EChartsOption } from '../../utils/echarts-loader';
   import type { MemoryCurveData, TimeRange } from '../../types/view-card-modal-types';
   import { getRatingColor } from '../../utils/memory-curve-utils';
+  import { applyRetentionChartLayout } from './retentionChartStyle';
 
   interface Props {
     /** 曲线数据 */
@@ -14,6 +16,7 @@
   }
 
   let { data, timeRange = '30d', height = 400 }: Props = $props();
+  const isMobile = Platform.isMobile;
 
   let chartContainer = $state<HTMLDivElement>();
   let chartInstance = $state<EChartsType | null>(null);
@@ -22,11 +25,13 @@
   function getThemeColors() {
     const style = getComputedStyle(document.body);
     return {
-      textColor: style.getPropertyValue('--text-normal') || '#000',
-      mutedColor: style.getPropertyValue('--text-muted') || '#666',
-      accentColor: style.getPropertyValue('--interactive-accent') || '#3b82f6',
-      bgColor: style.getPropertyValue('--background-primary') || '#fff',
-      borderColor: style.getPropertyValue('--background-modifier-border') || '#ddd'
+      textColor: style.getPropertyValue('--text-normal').trim() || '#000',
+      mutedColor: style.getPropertyValue('--text-muted').trim() || '#666',
+      accentColor: style.getPropertyValue('--interactive-accent').trim() || '#3b82f6',
+      bgColor: style.getPropertyValue('--background-primary').trim() || '#fff',
+      borderColor: style.getPropertyValue('--background-modifier-border').trim() || '#ddd',
+      axisLineColor: style.getPropertyValue('--background-modifier-border').trim() || '#ddd',
+      splitLineColor: style.getPropertyValue('--background-modifier-border').trim() || '#ddd'
     };
   }
 
@@ -59,6 +64,12 @@
         color: getRatingColor(marker.rating)
       }
     }));
+
+    const maxDay = Math.max(
+      ...data.predicted.map(point => Math.ceil(point.day)),
+      ...data.actual.map(point => Math.ceil(point.day)),
+      1
+    );
 
     const option: EChartsOption = {
       tooltip: {
@@ -115,13 +126,13 @@
       },
       xAxis: {
         type: 'category',
-        data: Array.from({length: Math.max(...data.predicted.map(p => Math.ceil(p.day)), ...data.actual.map(a => Math.ceil(a.day)))}, (_, i) => i),
+        data: Array.from({length: maxDay + 1}, (_, i) => i),
         name: '天数',
         nameLocation: 'middle',
         nameGap: 30,
         axisLine: {
           show: true, symbol: ['none', 'arrow'], symbolSize: [8, 10],
-          lineStyle: { color: colors.borderColor }
+          lineStyle: { color: colors.axisLineColor }
         },
         axisLabel: {
           color: colors.mutedColor,
@@ -143,7 +154,7 @@
         },
         axisLine: {
           show: true, symbol: ['none', 'arrow'], symbolSize: [8, 10],
-          lineStyle: { color: colors.borderColor }
+          lineStyle: { color: colors.axisLineColor }
         },
         axisLabel: {
           color: colors.mutedColor,
@@ -151,7 +162,7 @@
           fontSize: 12
         },
         splitLine: {
-          lineStyle: { color: colors.borderColor, type: 'dashed' }
+          lineStyle: { color: colors.splitLineColor, type: 'dashed' }
         }
       },
       series: [
@@ -216,7 +227,7 @@
         {
           name: '风险阈值',
           type: 'line',
-          data: Array.from({length: Math.max(...data.predicted.map(p => Math.ceil(p.day)))}, (_, i) => [i, 80]),
+          data: Array.from({length: maxDay + 1}, (_, i) => [i, 80]),
           lineStyle: {
             color: '#f5576c',
             width: 2,
@@ -229,32 +240,10 @@
           silent: true
         }
       ],
-      dataZoom: [
-        {
-          type: 'inside',
-          xAxisIndex: 0,
-          start: 0,
-          end: 100
-        },
-        {
-          type: 'slider',
-          xAxisIndex: 0,
-          start: 0,
-          end: 100,
-          height: 20,
-          bottom: 10,
-          borderColor: colors.borderColor,
-          fillerColor: 'rgba(59, 130, 246, 0.1)',
-          handleStyle: {
-            color: colors.accentColor
-          },
-          textStyle: {
-            color: colors.mutedColor
-          }
-        }
-      ]
+      dataZoom: []
     };
 
+    applyRetentionChartLayout(option, colors, isMobile);
     chartInstance.setOption(option);
   }
 

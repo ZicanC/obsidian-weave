@@ -8,8 +8,6 @@
  * 
  * Validates: Requirements 12.2
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 
 // ==================== 类型定义 ====================

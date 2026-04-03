@@ -3,16 +3,32 @@
   import { vaultStorage } from '../../utils/vault-local-storage';
   import type { ColumnVisibility, ColumnKey, ColumnOrder, ColumnGroupType } from '../tables/types/table-types';
   import { COLUMN_GROUPS } from '../tables/types/table-types';
-  import EnhancedIcon from './EnhancedIcon.svelte';
 
   interface Props {
     visibility: ColumnVisibility;
     columnOrder: ColumnOrder;
     onVisibilityChange: (key: ColumnKey, value: boolean) => void;
     onOrderChange: (newOrder: ColumnOrder) => void;
+    quickPresets?: Array<{
+      id: string;
+      label: string;
+      description: string;
+    }>;
+    activePresetId?: string | null;
+    onApplyPreset?: (presetId: string) => void;
+    onResetToDefaults?: () => void;
   }
 
-  let { visibility, columnOrder, onVisibilityChange, onOrderChange }: Props = $props();
+  let {
+    visibility,
+    columnOrder,
+    onVisibilityChange,
+    onOrderChange,
+    quickPresets = [],
+    activePresetId = null,
+    onApplyPreset = () => {},
+    onResetToDefaults = () => {},
+  }: Props = $props();
 
   const columnLabels: Record<ColumnKey, string> = {
     front: "正面内容",
@@ -40,7 +56,6 @@
     test_attempts: "测试次数",
     last_test: "最后测试",
     error_level: "错题等级",
-    source_card: "关联记忆卡片",
     // 🆕 增量阅读专用列
     ir_title: "标题",
     ir_source_file: "源文档",
@@ -54,7 +69,7 @@
     ir_notes: "笔记",
     ir_extracted_cards: "已提取卡片",
     ir_created: "创建时间",
-    ir_decks: "所属牌组",
+    ir_decks: "专题",
   };
 
   // 高级选项展开状态
@@ -85,6 +100,13 @@
 
   const advancedColumns = $derived(
     safeColumnOrder.filter(key => COLUMN_GROUPS.advanced?.includes(key))
+  );
+
+  const basicSelectedCount = $derived(basicColumns.filter((key) => visibility[key]).length);
+  const reviewSelectedCount = $derived(reviewColumns.filter((key) => visibility[key]).length);
+  const advancedSelectedCount = $derived(advancedColumns.filter((key) => visibility[key]).length);
+  const totalSelectedCount = $derived(
+    (Object.keys(visibility) as ColumnKey[]).filter((key) => visibility[key]).length
   );
 
   /**
@@ -213,15 +235,42 @@
 <div class="column-manager">
   <!-- 头部 -->
   <div class="column-manager-header">
-    <span>显示字段</span>
-    <span class="drag-hint">拖拽调整顺序</span>
+    <div class="column-manager-title-block">
+      <div class="column-manager-title-row">
+        <span class="column-manager-title">显示字段</span>
+        <span class="column-count-chip summary">已选 {totalSelectedCount}</span>
+      </div>
+      <span class="drag-hint">拖拽可调整顺序，勾选即可立即生效</span>
+    </div>
+    <button type="button" class="column-reset-btn" onclick={onResetToDefaults}>
+      恢复默认
+    </button>
   </div>
+
+  {#if quickPresets.length > 0}
+    <div class="preset-toolbar">
+      {#each quickPresets as preset}
+        <button
+          type="button"
+          class="preset-chip"
+          class:is-active={activePresetId === preset.id}
+          title={preset.description}
+          onclick={() => onApplyPreset(preset.id)}
+        >
+          {preset.label}
+        </button>
+      {/each}
+    </div>
+  {/if}
 
   <!-- 两列布局 -->
   <div class="column-manager-grid">
     <!-- 左列：基础信息 -->
     <div class="column-group">
-      <div class="column-group-header">基础信息</div>
+      <div class="column-group-header">
+        <span>基础信息</span>
+        <span class="column-count-chip">{basicSelectedCount}/{basicColumns.length}</span>
+      </div>
       <ul class="column-group-list">
         {#each basicColumns as key}
           <li
@@ -255,7 +304,10 @@
 
     <!-- 右列：复习数据 -->
     <div class="column-group">
-      <div class="column-group-header">复习数据</div>
+      <div class="column-group-header">
+        <span>复习数据</span>
+        <span class="column-count-chip">{reviewSelectedCount}/{reviewColumns.length}</span>
+      </div>
       <ul class="column-group-list">
         {#each reviewColumns as key}
           <li
@@ -288,7 +340,10 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="advanced-section-header" onclick={toggleAdvanced}>
-      <span>高级选项（点击{showAdvanced ? '收起' : '展开'}）</span>
+      <div class="advanced-section-title">
+        <span>高级选项</span>
+        <span class="column-count-chip">{advancedSelectedCount}/{advancedColumns.length}</span>
+      </div>
       <span class="toggle-icon">{showAdvanced ? '▲' : '▼'}</span>
     </div>
     {#if showAdvanced}
@@ -322,52 +377,157 @@
 
 <style>
   .column-manager {
-    background: var(--background-secondary);
-    border-radius: var(--radius-m);
-    padding: 0.5rem;
-    min-width: 500px;
-    max-width: 600px;
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    min-width: min(560px, 100%);
+    max-width: 100%;
   }
 
   /* 头部 */
   .column-manager-header {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--text-muted);
-    padding: 0.25rem 0.5rem;
-    margin-bottom: 0.5rem;
+    gap: 12px;
+    margin-bottom: 0.75rem;
+    padding-right: 40px;
+  }
+
+  .column-manager-title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .column-manager-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-normal);
+  }
+
+  .column-manager-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
   .drag-hint {
-    font-size: 0.65rem;
-    color: var(--text-faint);
+    font-size: 0.72rem;
+    color: var(--text-muted);
     font-weight: 400;
+  }
+
+  .column-count-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 42px;
+    min-height: 22px;
+    padding: 0 8px;
+    border-radius: 999px;
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 600;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .column-count-chip.summary {
+    background: color-mix(in srgb, var(--interactive-accent) 12%, var(--background-primary));
+    border-color: color-mix(in srgb, var(--interactive-accent) 24%, var(--background-modifier-border));
+    color: var(--text-normal);
+  }
+
+  .column-reset-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 0.35rem 0.75rem;
+    background: var(--interactive-normal);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--button-radius, 8px);
+    color: var(--text-normal);
+    font-size: 0.76rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .column-reset-btn:hover {
+    background: var(--interactive-hover);
+    border-color: var(--background-modifier-border-hover);
+  }
+
+  .preset-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 1rem;
+  }
+
+  .preset-chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 30px;
+    padding: 0.35rem 0.8rem;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 0.76rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .preset-chip:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover);
+  }
+
+  .preset-chip.is-active {
+    background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
+    border-color: color-mix(in srgb, var(--interactive-accent) 34%, var(--background-modifier-border));
+    color: var(--text-normal);
   }
 
   /* 两列网格布局 */
   .column-manager-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 0.75rem;
-    margin-bottom: 0.5rem;
+    gap: 12px;
+    margin-bottom: 0.75rem;
   }
 
   /* 列分组 */
   .column-group {
     display: flex;
     flex-direction: column;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+    padding: 0.25rem;
   }
 
   .column-group-header {
-    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.78rem;
     font-weight: 600;
     color: var(--text-muted);
-    padding: 0.5rem 0.5rem 0.25rem;
+    padding: 0.5rem 0.6rem 0.4rem;
     border-bottom: 1px solid var(--background-modifier-border);
-    margin-bottom: 0.25rem;
+    margin-bottom: 0.35rem;
   }
 
   .column-group-list {
@@ -383,7 +543,7 @@
     border-radius: var(--radius-s);
     transition: all 0.2s ease;
     cursor: grab;
-    margin-bottom: 2px;
+    margin-bottom: 4px;
   }
 
   .column-manager-item:active {
@@ -396,17 +556,18 @@
   }
 
   .column-manager-item.drag-over {
-    border-top: 2px solid var(--color-accent);
-    margin-top: 2px;
+    outline: 1px solid var(--interactive-accent);
+    outline-offset: -1px;
+    background: color-mix(in srgb, var(--interactive-accent) 10%, transparent);
   }
 
   .column-manager-item label {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem;
+    padding: 0.55rem 0.6rem;
     flex: 1;
-    border-radius: var(--radius-s);
+    border-radius: 9px;
     cursor: pointer;
     transition: background-color 0.2s ease;
   }
@@ -439,10 +600,10 @@
 
   /* 高级选项区域 */
   .advanced-section {
-    border-top: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary-alt);
-    border-radius: var(--radius-s);
-    margin-top: 0.5rem;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-secondary);
+    border-radius: 12px;
+    margin-top: 0.25rem;
     overflow: hidden;
   }
 
@@ -450,12 +611,20 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem;
+    padding: 0.7rem 0.8rem;
     cursor: pointer;
-    font-size: 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 600;
     color: var(--text-muted);
     transition: background-color 0.2s ease;
     user-select: none;
+  }
+
+  .advanced-section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
   }
 
   .advanced-section-header:hover {
@@ -481,7 +650,6 @@
       min-width: unset;
       width: 100%;
       max-width: 100%;
-      padding: 0.75rem;
     }
 
     .column-manager-grid {
@@ -490,7 +658,9 @@
     }
     
     .column-manager-header {
-      padding: 0.5rem;
+      flex-direction: column;
+      align-items: stretch;
+      padding-right: 0;
     }
     
     .column-group-header {

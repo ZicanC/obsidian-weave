@@ -13,9 +13,10 @@
     app: App;
     onClear: () => void;
     onReload: () => void;
+    keyboardVisible?: boolean;
   }
 
-  let { content = $bindable(), selectedFile, app, onClear, onReload }: Props = $props();
+  let { content = $bindable(), selectedFile, app, onClear, onReload, keyboardVisible = false }: Props = $props();
 
   // 计算字符数
   let charCount = $derived(content.length);
@@ -29,6 +30,24 @@
   let lastSelectedFilePath = '';  // 追踪上次选择的文件路径
   let pendingContent: string | null = null;
   let editorInitToken = 0;
+  let layoutRefreshCleanup: (() => void) | null = null;
+
+  function refreshEmbeddedEditorLayout() {
+    if (!embeddedEditor || !editorInitialized) return;
+
+    const runRefresh = () => {
+      try {
+        embeddedEditor?.refresh();
+      } catch (error) {
+        logger.debug('[ContentEditor] 刷新编辑器布局失败:', error);
+      }
+    };
+
+    runRefresh();
+    window.requestAnimationFrame(runRefresh);
+    window.setTimeout(runRefresh, 60);
+    window.setTimeout(runRefresh, 180);
+  }
   
   // 销毁编辑器
   function destroyEditor() {
@@ -46,7 +65,7 @@
     
     try {
       // 清空容器
-      editorContainer.innerHTML = '';
+      editorContainer.replaceChildren();
       
       // 创建Obsidian原生编辑器
       const initToken = ++editorInitToken;
@@ -132,10 +151,53 @@
       createEditor();
     }
   });
+
+  $effect(() => {
+    keyboardVisible;
+    refreshEmbeddedEditorLayout();
+  });
+
+  $effect(() => {
+    if (!embeddedEditor || !editorInitialized) {
+      if (layoutRefreshCleanup) {
+        layoutRefreshCleanup();
+        layoutRefreshCleanup = null;
+      }
+      return;
+    }
+
+    const viewport = window.visualViewport;
+    const handleLayoutChange = () => {
+      refreshEmbeddedEditorLayout();
+    };
+
+    viewport?.addEventListener('resize', handleLayoutChange);
+    viewport?.addEventListener('scroll', handleLayoutChange);
+    window.addEventListener('resize', handleLayoutChange);
+    window.addEventListener('orientationchange', handleLayoutChange);
+
+    layoutRefreshCleanup = () => {
+      viewport?.removeEventListener('resize', handleLayoutChange);
+      viewport?.removeEventListener('scroll', handleLayoutChange);
+      window.removeEventListener('resize', handleLayoutChange);
+      window.removeEventListener('orientationchange', handleLayoutChange);
+    };
+
+    return () => {
+      if (layoutRefreshCleanup) {
+        layoutRefreshCleanup();
+        layoutRefreshCleanup = null;
+      }
+    };
+  });
   
   // 清理：组件卸载时销毁编辑器
   $effect(() => {
     return () => {
+      if (layoutRefreshCleanup) {
+        layoutRefreshCleanup();
+        layoutRefreshCleanup = null;
+      }
       if (embeddedEditor) {
         embeddedEditor.destroy();
         embeddedEditor = null;
@@ -145,39 +207,10 @@
   });
 </script>
 
-<div class="content-editor-container">
-  {#if selectedFile}
-    <!-- 文件信息栏 -->
-    <div class="file-info-bar">
-      <div class="file-meta">
-        <ObsidianIcon name="file-text" size={14} />
-        <span class="file-name">{selectedFile.name}</span>
-        <span class="file-stats">
-          {formatFileSize(selectedFile.size)} · {charCount} 字符 · {lineCount} 行
-        </span>
-      </div>
-      <div class="editor-actions">
-        <button 
-          class="action-btn" 
-          onclick={onReload}
-          title="重新加载文件"
-        >
-          <ObsidianIcon name="refresh-cw" size={14} />
-        </button>
-        <button 
-          class="action-btn" 
-          onclick={onClear}
-          title="清空内容"
-        >
-          <ObsidianIcon name="trash-2" size={14} />
-        </button>
-      </div>
-    </div>
-  {/if}
-
+<div class="content-editor-container inline-editor-container" class:mobile-keyboard-active={keyboardVisible}>
   <!-- Obsidian原生编辑器 -->
   <div 
-    class="obsidian-editor-wrapper" 
+    class="obsidian-editor-wrapper embedded-editor-host" 
     bind:this={editorContainer}
   ></div>
 </div>
@@ -186,87 +219,35 @@
   .content-editor-container {
     display: flex;
     flex-direction: column;
-    flex: 1 1 auto;  /* 🔧 允许扩展填充所有可用空间 */
-    min-height: 200px;  /* 🔧 防止折叠为一行 */
-    height: 100%;  /* 🔧 确保填满父容器 */
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
     background: var(--background-primary);
     border: 1px solid rgba(128, 128, 128, 0.3);
     border-radius: 8px;
     overflow: hidden;
   }
 
-  .file-info-bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: var(--background-secondary);
-    border-bottom: 1px solid var(--background-modifier-border);
-  }
-
-  .file-meta {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
-    min-width: 0;
-  }
-
-  .file-name {
-    font-size: 0.9em;
-    font-weight: 500;
-    color: var(--text-normal);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .file-stats {
-    font-size: 0.75em;
-    color: var(--text-muted);
-    white-space: nowrap;
-  }
-
-  .editor-actions {
-    display: flex;
-    gap: 4px;
-  }
-
-  .action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.2s ease;
-  }
-
-  .action-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-  }
-
-  /* Obsidian原生编辑器包装器 */
   .obsidian-editor-wrapper {
-    flex: 1 1 auto;  /* 🔧 允许扩展填充所有可用空间 */
-    min-height: 200px; /* 最小高度 */
-    height: 100%;  /* 🔧 填满父容器 */
-    overflow-y: auto;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
   }
 
-  /* Obsidian编辑器内部样式调整 */
   .obsidian-editor-wrapper :global(.markdown-source-view) {
+    display: flex;
+    flex-direction: column;
     padding: 16px;
     height: 100%;
+    min-height: 0;
+    flex: 1 1 auto;
   }
 
   .obsidian-editor-wrapper :global(.cm-editor) {
-    height: 100%;  /* 🔧 确保编辑器填满容器 */
-    min-height: 100%;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
   }
 
   .obsidian-editor-wrapper :global(.cm-content) {
@@ -274,9 +255,59 @@
   }
   
   .obsidian-editor-wrapper :global(.cm-scroller) {
+    flex: 1 1 auto;
+    height: 100%;
+    overflow: auto;
     font-family: var(--font-monospace);
     font-size: 0.9em;
     line-height: 1.6;
+  }
+
+  :global(body.is-mobile) .content-editor-container,
+  :global(body.is-phone) .content-editor-container {
+    min-height: 0 !important;
+    height: auto !important;
+  }
+
+  :global(body.is-mobile) .obsidian-editor-wrapper,
+  :global(body.is-phone) .obsidian-editor-wrapper {
+    min-height: 0 !important;
+    height: auto !important;
+  }
+
+  :global(body.is-mobile) .obsidian-editor-wrapper :global(.markdown-source-view),
+  :global(body.is-phone) .obsidian-editor-wrapper :global(.markdown-source-view) {
+    padding: 12px;
+    height: auto !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+  }
+
+  :global(body.is-mobile) .obsidian-editor-wrapper :global(.cm-editor),
+  :global(body.is-phone) .obsidian-editor-wrapper :global(.cm-editor),
+  :global(body.is-mobile) .obsidian-editor-wrapper :global(.cm-scroller),
+  :global(body.is-phone) .obsidian-editor-wrapper :global(.cm-scroller) {
+    min-height: 0 !important;
+    height: auto !important;
+    flex: 1 1 auto !important;
+  }
+
+  :global(body.is-mobile) .content-editor-container.mobile-keyboard-active,
+  :global(body.is-phone) .content-editor-container.mobile-keyboard-active {
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: hidden !important;
+  }
+
+  :global(body.is-mobile) .content-editor-container.mobile-keyboard-active :global(.markdown-source-view),
+  :global(body.is-phone) .content-editor-container.mobile-keyboard-active :global(.markdown-source-view),
+  :global(body.is-mobile) .content-editor-container.mobile-keyboard-active :global(.cm-editor),
+  :global(body.is-phone) .content-editor-container.mobile-keyboard-active :global(.cm-editor),
+  :global(body.is-mobile) .content-editor-container.mobile-keyboard-active :global(.cm-scroller),
+  :global(body.is-phone) .content-editor-container.mobile-keyboard-active :global(.cm-scroller) {
+    min-height: 0 !important;
+    height: auto !important;
+    flex: 1 1 auto !important;
   }
 </style>
 

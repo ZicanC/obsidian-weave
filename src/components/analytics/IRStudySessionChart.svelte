@@ -16,21 +16,17 @@
   import * as echarts from 'echarts/core';
   import type { EChartsCoreOption } from 'echarts/core';
   import {
-    TitleComponent,
     TooltipComponent,
     GridComponent,
-    VisualMapComponent,
-    DataZoomComponent
+    VisualMapComponent
   } from 'echarts/components';
   import { ScatterChart } from 'echarts/charts';
   import { CanvasRenderer } from 'echarts/renderers';
 
   echarts.use([
-    TitleComponent,
     TooltipComponent,
     GridComponent,
     VisualMapComponent,
-    DataZoomComponent,
     ScatterChart,
     CanvasRenderer
   ]);

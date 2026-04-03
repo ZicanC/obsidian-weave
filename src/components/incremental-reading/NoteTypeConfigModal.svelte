@@ -212,7 +212,7 @@
   
   // 阻止点击事件冒泡到背景
   function stopPropagation(e: MouseEvent) {
-    e.stopPropagation();
+    e.cancelBubble = true;
   }
 </script>
 

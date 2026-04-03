@@ -32,7 +32,7 @@
     currentFunction?: string;
     currentView?: 'table' | 'grid' | 'kanban';
     tableViewMode?: 'basic' | 'review' | 'questionBank';
-    gridLayout?: 'fixed' | 'masonry';
+    gridLayout?: 'fixed' | 'masonry' | 'timeline';
     kanbanLayoutMode?: 'compact' | 'comfortable' | 'spacious';
     enableCardLocationJump?: boolean;
     onClose: () => void;
@@ -90,7 +90,7 @@
         items: [
           { id: 'table-basic', icon: 'table', label: '基础信息模式', active: tableViewMode === 'basic' },
           { id: 'table-review', icon: 'history', label: '复习历史模式', active: tableViewMode === 'review' },
-          { id: 'table-question-bank', icon: 'edit-3', label: '考试牌组模式', active: tableViewMode === 'questionBank' },
+          { id: 'table-question-bank', icon: 'edit-3', label: '考试题组模式', active: tableViewMode === 'questionBank' },
           { id: 'column-manager', icon: 'columns', label: '字段管理' }
         ]
       });
@@ -103,6 +103,7 @@
         items: [
           { id: 'grid-fixed', icon: 'grid', label: '固定布局', active: gridLayout === 'fixed' },
           { id: 'grid-masonry', icon: 'layout-grid', label: '瀑布流布局', active: gridLayout === 'masonry' },
+          { id: 'grid-timeline', icon: 'history', label: '时间线布局', active: gridLayout === 'timeline' },
           { id: 'card-location-jump', icon: 'external-link', label: '定位跳转模式', active: enableCardLocationJump }
         ]
       });

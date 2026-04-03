@@ -4,14 +4,14 @@
  * 支持分步式配置流程：场景选择 -> 核心配置 -> 高级选项
  */
 
-import type { QuestionBankModeConfig, TestMode } from "../../types/question-bank-types";
+import type { QuestionBankModeConfig } from "../../types/question-bank-types";
 import { Notice } from "obsidian";
 
 interface Props {
   open: boolean;
   bankName: string;
   totalQuestions: number;
-  onSelect: (mode: TestMode, config?: QuestionBankModeConfig) => void;
+  onSelect: (mode: 'exam', config?: QuestionBankModeConfig) => void;
   onCancel: () => void;
 }
 
@@ -20,19 +20,10 @@ let { open, bankName, totalQuestions, onSelect, onCancel }: Props = $props();
 // 配置流程状态
 let currentStep = $state(2);
 let maxStep = 3;
-let selectedScenario = $state<TestMode>('exam');
 
 $effect(() => {
   if (open) {
-    // 仅剩 exam：跳过“模式/场景选择”步骤
     currentStep = 2;
-    selectedScenario = 'exam';
-  }
-});
-
-$effect(() => {
-  if (selectedScenario !== 'exam') {
-    selectedScenario = 'exam';
   }
 });
 
@@ -43,41 +34,26 @@ let config = $state<QuestionBankModeConfig>({
   questionSource: 'all',
   customQuestionCount: { exam: null },
   examTimeLimit: { exam: 60 },
-  options: { shuffleQuestions: true, shuffleOptions: true, autoSave: true }
+  options: { shuffleQuestions: true, shuffleOptions: true, autoSave: true, pureExamMode: false }
 });
 
 // 确保options总是存在
 function ensureOptions() {
   if (!config.options) {
-    config.options = { shuffleQuestions: true, shuffleOptions: true, autoSave: true };
+    config.options = { shuffleQuestions: true, shuffleOptions: true, autoSave: true, pureExamMode: false };
+    return;
   }
+
+  config.options = {
+    shuffleQuestions: config.options.shuffleQuestions ?? true,
+    shuffleOptions: config.options.shuffleOptions ?? true,
+    autoSave: config.options.autoSave ?? true,
+    pureExamMode: config.options.pureExamMode ?? false
+  };
 }
 
 // 初始化时确保options存在
 ensureOptions();
-
-// 预设场景配置
-const scenarioConfigs: Partial<Record<TestMode, Partial<QuestionBankModeConfig>>> = {
-  exam: {
-    questionSource: 'all',
-    customQuestionCount: { exam: 50 },
-    examTimeLimit: { exam: 60 },
-    questionTypeRatio: { single_choice: 60, multiple_choice: 30, cloze: 10, short_answer: 0 },
-    difficultyDistribution: { easy: 20, medium: 40, hard: 40 }
-  }
-};
-
-// 场景选择处理
-function selectScenario(scenario: TestMode) {
-  selectedScenario = scenario;
-  // 应用预设配置
-  const preset = scenarioConfigs[scenario];
-  if (preset) {
-    config = { ...config, ...preset };
-  }
-  // 自动切换到下一步
-  currentStep = 2;
-}
 
 // 步骤导航
 function nextStep() {
@@ -97,7 +73,15 @@ function prevStep() {
 }
 
 function handleComplete() {
-  onSelect(selectedScenario, config);
+  const selectedTimeLimitMinutes = config.examTimeLimit?.exam;
+  const normalizedConfig: QuestionBankModeConfig = {
+    ...config,
+    shuffleQuestions: config.options?.shuffleQuestions ?? config.shuffleQuestions,
+    shuffleOptions: config.options?.shuffleOptions ?? config.shuffleOptions,
+    timeLimit: selectedTimeLimitMinutes ? selectedTimeLimitMinutes * 60 * 1000 : undefined
+  };
+
+  onSelect('exam', normalizedConfig);
   new Notice('配置已应用，开始考试');
 }
 
@@ -118,7 +102,7 @@ function handleKeydown(_e: KeyboardEvent) {
 
 // 计算预览数据
 function getEstimatedCount(): number {
-  const modeCount = config.customQuestionCount?.[selectedScenario];
+  const modeCount = config.customQuestionCount?.exam;
   if (modeCount === null || modeCount === undefined) {
     return totalQuestions; // 全部题目
   }
@@ -144,7 +128,7 @@ function getEstimatedTime(): string {
 
 {#if open}
 <div class="modal-overlay" onclick={handleOverlayClick} onkeydown={handleKeydown} role="dialog" aria-modal="true" tabindex="-1">
-  <div class="modal-container" onclick={(e) => { e.stopPropagation(); }} onkeydown={handleKeydown} role="dialog" tabindex="0">
+  <div class="modal-container" onkeydown={handleKeydown} role="dialog" tabindex="0">
     
     <!-- 模态窗头部 -->
     <header class="modal-header">
@@ -166,28 +150,6 @@ function getEstimatedTime(): string {
     <!-- 主内容区域 -->
     <main class="modal-content">
 
-      <!-- 第一步：场景选择 -->
-      {#if currentStep === 1}
-      <section class="config-step active">
-        <div class="scenario-grid">
-          <button class="scenario-card" class:selected={selectedScenario === 'exam'} onclick={() => selectScenario('exam')} onkeydown={(e) => e.key === 'Enter' && selectScenario('exam')} type="button">
-            <div class="scenario-icon">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14,2 14,8 20,8"/>
-                <path d="M9 15l2 2 4-4"/>
-              </svg>
-            </div>
-            <div class="scenario-content">
-              <div class="scenario-title-row">
-                <h3 class="scenario-title">考试模式</h3>
-              </div>
-            </div>
-          </button>
-        </div>
-      </section>
-      {/if}
-
       <!-- 第二步：核心配置 -->
       {#if currentStep === 2}
       <section class="config-step active">
@@ -197,11 +159,11 @@ function getEstimatedTime(): string {
               <h3 class="section-title">题目数量</h3>
             </div>
             <div class="option-buttons">
-              <button class="option-btn" class:active={config.customQuestionCount?.[selectedScenario] === null} onclick={() => config.customQuestionCount = {...config.customQuestionCount, [selectedScenario]: null}}>智能推荐</button>
-              <button class="option-btn" class:active={config.customQuestionCount?.[selectedScenario] === 20} onclick={() => config.customQuestionCount = {...config.customQuestionCount, [selectedScenario]: 20}}>20题</button>
-              <button class="option-btn" class:active={config.customQuestionCount?.[selectedScenario] === 30} onclick={() => config.customQuestionCount = {...config.customQuestionCount, [selectedScenario]: 30}}>30题</button>
-              <button class="option-btn" class:active={config.customQuestionCount?.[selectedScenario] === 50} onclick={() => config.customQuestionCount = {...config.customQuestionCount, [selectedScenario]: 50}}>50题</button>
-              <button class="option-btn" class:active={config.customQuestionCount?.[selectedScenario] === totalQuestions} onclick={() => config.customQuestionCount = {...config.customQuestionCount, [selectedScenario]: totalQuestions}}>全部</button>
+              <button class="option-btn" class:active={config.customQuestionCount?.exam === null} onclick={() => config.customQuestionCount = {...config.customQuestionCount, exam: null}}>智能推荐</button>
+              <button class="option-btn" class:active={config.customQuestionCount?.exam === 20} onclick={() => config.customQuestionCount = {...config.customQuestionCount, exam: 20}}>20题</button>
+              <button class="option-btn" class:active={config.customQuestionCount?.exam === 30} onclick={() => config.customQuestionCount = {...config.customQuestionCount, exam: 30}}>30题</button>
+              <button class="option-btn" class:active={config.customQuestionCount?.exam === 50} onclick={() => config.customQuestionCount = {...config.customQuestionCount, exam: 50}}>50题</button>
+              <button class="option-btn" class:active={config.customQuestionCount?.exam === totalQuestions} onclick={() => config.customQuestionCount = {...config.customQuestionCount, exam: totalQuestions}}>全部</button>
             </div>
           </div>
 
@@ -222,10 +184,10 @@ function getEstimatedTime(): string {
               <h3 class="section-title">时间限制</h3>
             </div>
             <div class="option-buttons">
-              <button class="option-btn" class:active={!config.examTimeLimit?.[selectedScenario === 'practice' ? 'exam' : selectedScenario]} onclick={() => config.examTimeLimit = {...config.examTimeLimit, [selectedScenario === 'practice' ? 'exam' : selectedScenario]: undefined}}>不限时</button>
-              <button class="option-btn" class:active={config.examTimeLimit?.[selectedScenario === 'practice' ? 'exam' : selectedScenario] === 15} onclick={() => config.examTimeLimit = {...config.examTimeLimit, [selectedScenario === 'practice' ? 'exam' : selectedScenario]: 15}}>15分钟</button>
-              <button class="option-btn" class:active={config.examTimeLimit?.[selectedScenario === 'practice' ? 'exam' : selectedScenario] === 30} onclick={() => config.examTimeLimit = {...config.examTimeLimit, [selectedScenario === 'practice' ? 'exam' : selectedScenario]: 30}}>30分钟</button>
-              <button class="option-btn" class:active={config.examTimeLimit?.[selectedScenario === 'practice' ? 'exam' : selectedScenario] === 60} onclick={() => config.examTimeLimit = {...config.examTimeLimit, [selectedScenario === 'practice' ? 'exam' : selectedScenario]: 60}}>60分钟</button>
+              <button class="option-btn" class:active={!config.examTimeLimit?.exam} onclick={() => config.examTimeLimit = {...config.examTimeLimit, exam: undefined}}>不限时</button>
+              <button class="option-btn" class:active={config.examTimeLimit?.exam === 15} onclick={() => config.examTimeLimit = {...config.examTimeLimit, exam: 15}}>15分钟</button>
+              <button class="option-btn" class:active={config.examTimeLimit?.exam === 30} onclick={() => config.examTimeLimit = {...config.examTimeLimit, exam: 30}}>30分钟</button>
+              <button class="option-btn" class:active={config.examTimeLimit?.exam === 60} onclick={() => config.examTimeLimit = {...config.examTimeLimit, exam: 60}}>60分钟</button>
             </div>
           </div>
         </div>
@@ -342,6 +304,14 @@ function getEstimatedTime(): string {
                 <div class="checkbox-content">
                   <span class="checkbox-title">自动保存进度</span>
                   <span class="checkbox-desc">自动保存答题进度</span>
+                </div>
+              </label>
+              <label class="checkbox-item">
+                <input type="checkbox" class="config-checkbox" bind:checked={config.options!.pureExamMode}>
+                <span class="checkbox-custom"></span>
+                <div class="checkbox-content">
+                  <span class="checkbox-title">启用纯考试模式</span>
+                  <span class="checkbox-desc">关闭功能栏并隐藏即时正误反馈，提交后直接进入下一题</span>
                 </div>
               </label>
             </div>
@@ -554,107 +524,6 @@ function getEstimatedTime(): string {
     opacity: 1;
     transform: translateX(0);
   }
-}
-
-/* 场景网格 - 横跨整个模态窗宽度 */
-.scenario-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--space-lg);
-  max-width: none;
-  margin: 0;
-  width: 100%;
-  padding: 0;
-}
-
-/* 场景卡片 - 横跨整个模态窗的舒适显示宽度 */
-.scenario-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: var(--space-xl) var(--space-2xl);
-  cursor: pointer;
-  transition: all var(--transition-base);
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  text-align: left;
-  min-height: 100px;
-  width: 100%;
-  font: inherit;
-  color: inherit;
-  box-sizing: border-box;
-}
-
-.scenario-card:hover {
-  background: var(--bg-hover);
-  border-color: var(--color-primary);
-}
-
-.scenario-card.selected {
-  background: var(--bg-hover);
-  border-color: var(--color-primary);
-}
-
-/* 右侧箭头指示器 */
-.scenario-card::after {
-  content: '';
-  position: absolute;
-  right: var(--space-lg);
-  top: 50%;
-  transform: translateY(-50%);
-  width: 0;
-  height: 0;
-  border-left: 6px solid var(--text-muted);
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  transition: border-left-color var(--transition-base);
-}
-
-.scenario-card:hover::after {
-  border-left-color: var(--color-primary);
-}
-
-.scenario-icon {
-  color: var(--color-primary);
-  margin-right: var(--space-xl);
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  width: 48px;
-  height: 48px;
-  justify-content: center;
-  background: var(--color-primary-light);
-  border-radius: var(--radius-md);
-}
-
-.scenario-icon svg {
-  width: 28px;
-  height: 28px;
-}
-
-.scenario-content {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.scenario-title-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.scenario-title {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-  letter-spacing: -0.025em;
 }
 
 /* 配置网格 */
@@ -1021,10 +890,6 @@ function getEstimatedTime(): string {
     grid-template-columns: 1fr 1.5fr 1fr;
   }
   
-  .scenario-grid {
-    max-width: none;
-    padding: 0;
-  }
 }
 
 /* 响应式设计 */
@@ -1061,11 +926,6 @@ function getEstimatedTime(): string {
     right: var(--space-lg);
   }
   
-  .scenario-grid {
-    max-width: none;
-    padding: 0;
-  }
-  
   .checkbox-group {
     flex-direction: column;
   }
@@ -1091,15 +951,6 @@ function getEstimatedTime(): string {
   
   .bank-name {
     font-size: 1rem;
-  }
-  
-  .scenario-card {
-    padding: var(--space-md);
-    min-height: 60px;
-  }
-  
-  .scenario-title {
-    font-size: 0.9rem;
   }
   
   .config-group {
@@ -1217,7 +1068,7 @@ function getEstimatedTime(): string {
   white-space: nowrap;
 }
 
-/* 核心修复：移动端内容区域统一样式 */
+/* 移动端内容区域统一样式 */
 :global(body.is-mobile) .modal-content {
   padding: var(--space-md);
   flex: 1 1 auto;
@@ -1229,62 +1080,10 @@ function getEstimatedTime(): string {
   box-sizing: border-box;
 }
 
-/* 核心修复：所有步骤容器统一占满宽度 */
+/* 所有步骤容器统一占满宽度 */
 :global(body.is-mobile) .config-step {
   width: 100%;
   box-sizing: border-box;
-}
-
-/* 场景卡片移动端适配 - 左对齐，图标使用内容区背景色 */
-:global(body.is-mobile) .scenario-grid {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  width: 100%;
-  padding: 0;
-  margin: 0;
-  box-sizing: border-box;
-}
-
-:global(body.is-mobile) .scenario-card {
-  width: 100%;
-  padding: var(--space-md) var(--space-lg);
-  min-height: 56px;
-  justify-content: flex-start;
-  background: var(--bg-card);
-  box-sizing: border-box;
-}
-
-:global(body.is-mobile) .scenario-icon {
-  width: 36px;
-  height: 36px;
-  margin-right: var(--space-md);
-  background: transparent;
-  border-radius: var(--radius-sm);
-}
-
-:global(body.is-mobile) .scenario-icon svg {
-  width: 20px;
-  height: 20px;
-}
-
-:global(body.is-mobile) .scenario-content {
-  flex: 1;
-  justify-content: flex-start;
-}
-
-:global(body.is-mobile) .scenario-title-row {
-  justify-content: flex-start;
-}
-
-:global(body.is-mobile) .scenario-title {
-  font-size: 0.9375rem;
-  text-align: left;
-}
-
-/* 移除场景卡片右侧箭头 */
-:global(body.is-mobile) .scenario-card::after {
-  display: none;
 }
 
 /* 第二步：配置网格移动端适配 */
@@ -1299,7 +1098,7 @@ function getEstimatedTime(): string {
   box-sizing: border-box;
 }
 
-/* 第三步：高级配置移动端适配 - 关键修复 */
+/* 第三步：高级配置移动端适配 */
 :global(body.is-mobile) .advanced-config {
   display: flex;
   flex-direction: column;
@@ -1367,7 +1166,7 @@ function getEstimatedTime(): string {
   font-size: 1.1rem;
 }
 
-/* 滑块组移动端适配 - 关键修复 */
+/* 滑块组移动端适配 */
 :global(body.is-mobile) .slider-group {
   display: flex;
   flex-direction: column;
@@ -1420,7 +1219,7 @@ function getEstimatedTime(): string {
   height: 24px;
 }
 
-/* 复选框移动端适配 - 关键修复 */
+/* 复选框移动端适配 */
 :global(body.is-mobile) .checkbox-group {
   display: flex;
   flex-direction: column;

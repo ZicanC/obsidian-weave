@@ -9,7 +9,7 @@
 
   import { onMount, onDestroy } from 'svelte';
   import type { Snippet } from 'svelte';
-  import { MODAL_SIZE_PRESETS, MODAL_SIZE_LIMITS } from '../settings/constants/settings-constants';
+  import { getModalSizePresets, MODAL_SIZE_LIMITS } from '../settings/constants/settings-constants';
   import type { WeavePlugin } from '../../main';
 
   interface Props {
@@ -55,10 +55,10 @@
     /** 标题栏彩色条颜色变体 */
     accentColor?: 'blue' | 'green' | 'purple' | 'orange' | 'cyan' | 'pink' | 'red';
     
-    /** 🆕 初始宽度（优先级高于设置存储） */
+    /** 初始宽度（优先级高于设置存储） */
     initialWidth?: number;
     
-    /** 🆕 初始高度（优先级高于设置存储） */
+    /** 初始高度（优先级高于设置存储） */
     initialHeight?: number;
 
   }
@@ -85,7 +85,7 @@
   let modalElement = $state<HTMLElement>();
   let isDragging = $state(false);
   let dragHandle = $state('');
-  let justFinishedDragging = $state(false); // 🆕 防止拖拽结束时触发遮罩层点击
+  let justFinishedDragging = $state(false); // 防止拖拽结束时触发遮罩层点击
   let startX = $state(0);
   let startY = $state(0);
   let startWidth = $state(0);
@@ -119,12 +119,10 @@
 
   // 动态获取当前尺寸设置（默认启用尺寸记忆）
   let modalSettings = $derived(plugin.settings[modalSizeKey] || {
-    preset: 'large',
-    customWidth: 800,
-    customHeight: 600,
     rememberLastSize: true,  //  默认启用尺寸记忆
     enableResize: true
   });
+  let persistedModalSize = $state(plugin.getEditorModalSizeState());
 
   // 当前模态窗尺寸 - 响应式更新
   let currentWidth = $state(800);
@@ -132,22 +130,15 @@
   
   // 监听设置变化，动态更新尺寸
   $effect(() => {
-    // 🆕 优先使用传入的初始尺寸
+    // 优先使用传入的初始尺寸
     if (initialWidth && initialHeight) {
       currentWidth = initialWidth;
       currentHeight = initialHeight;
       return;
     }
     
-    const settings = plugin.settings[modalSizeKey];
-    if (settings) {
-      currentWidth = settings.customWidth || 800;
-      currentHeight = settings.customHeight || 600;
-    } else {
-      // 使用默认值
-      currentWidth = 800;
-      currentHeight = 600;
-    }
+    currentWidth = persistedModalSize.customWidth || 800;
+    currentHeight = persistedModalSize.customHeight || 600;
   });
 
   //  性能优化：仅初始化必要的尺寸，延迟初始化拖拽功能
@@ -179,14 +170,15 @@
       };
     }
     
-    const presetKey = modalSettings.preset as keyof typeof MODAL_SIZE_PRESETS;
-    if (modalSettings.preset !== 'custom' && MODAL_SIZE_PRESETS[presetKey]) {
-      const preset = MODAL_SIZE_PRESETS[presetKey];
+    const sizePresets = getModalSizePresets();
+    const presetKey = persistedModalSize.preset as keyof ReturnType<typeof getModalSizePresets>;
+    if (persistedModalSize.preset !== 'custom' && sizePresets[presetKey]) {
+      const preset = sizePresets[presetKey];
       currentWidth = preset.width;
       currentHeight = preset.height;
     }
 
-    //  修复：如果启用窗口拖拽，初始化时就计算居中位置
+    // 如果启用窗口拖拽，初始化时就计算居中位置
     // （确保窗口打开时就在正确位置，而不是左上角）
     if (enableWindowDrag && !isMobile) {
       windowX = Math.max(0, (window.innerWidth - currentWidth) / 2);
@@ -212,13 +204,16 @@
   // 保存当前尺寸到设置
   async function saveCurrentSize() {
     try {
-      plugin.settings[modalSizeKey] = {
-        ...modalSettings,
+      if (modalSettings.rememberLastSize === false) {
+        return;
+      }
+
+      persistedModalSize = {
         customWidth: currentWidth,
         customHeight: currentHeight,
         preset: 'custom'
       };
-      await plugin.saveSettings();
+      await plugin.saveEditorModalSizeState(persistedModalSize);
       logger.debug(`[ResizableModal] 保存${modalSizeKey}尺寸:`, { width: currentWidth, height: currentHeight });
     } catch (error) {
       logger.error(`保存${modalSizeKey}尺寸失败:`, error);
@@ -331,7 +326,7 @@
     isDragging = false;
     dragHandle = '';
     
-    // 🆕 设置标志防止立即触发遮罩层点击关闭
+    // 设置标志，防止立即触发遮罩层点击关闭
     justFinishedDragging = true;
     setTimeout(() => {
       justFinishedDragging = false;
@@ -712,7 +707,7 @@
     max-width: 90vw;
     max-height: 90vh;
     overflow: hidden;
-    /*  关键修复：模态窗本体恢复事件接收 */
+    /* 模态窗本体恢复事件接收 */
     pointer-events: auto;
     /*  确保模态窗内容在遮罩层之上 */
     z-index: 1;
@@ -739,7 +734,7 @@
       min-width: 100%;
       max-width: 100%;
       width: 100% !important;
-      /*  P0修复：使用固定高度而非 auto，确保滚动条能正常显示 */
+      /* 使用固定高度而非 auto，确保滚动条能正常显示 */
       /* height: auto 会导致内容无限撑大，滚动条永远不会出现 */
       height: calc(100vh - 32px) !important;
       max-height: calc(100vh - 32px); /* 减去上下 padding */
@@ -752,7 +747,7 @@
       box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
       /*  确保内容不溢出 */
       overflow: hidden;
-      /*  关键修复：模态窗本体必须接收事件 */
+      /* 模态窗本体必须接收事件 */
       pointer-events: auto !important;
     }
     
@@ -780,7 +775,7 @@
   .resizable-modal-overlay.transparent {
     background: transparent !important;
     backdrop-filter: none !important;
-    /*  修复：透明遮罩不拦截事件，允许点击外部区域 */
+    /* 透明遮罩不拦截事件，允许点击外部区域 */
     pointer-events: none;
   }
 
@@ -957,13 +952,13 @@
   }
 
   .modal-close-btn:hover {
-    /*  修复：不显示背景框，仅改变颜色，与Obsidian原生关闭按钮一致 */
+    /* 不显示背景框，仅改变颜色，与 Obsidian 原生关闭按钮一致 */
     color: var(--text-normal);
   }
 
   .modal-content {
     flex: 1;
-    /*  关键修复：使用 overflow: hidden 配合 flex 布局 */
+    /* 使用 overflow: hidden 配合 flex 布局 */
     /* 让内部编辑器组件正确计算高度并启用滚动 */
     overflow: hidden;
     padding: 0;
@@ -979,7 +974,7 @@
   /*  移动端：内容区域使用 flex 布局，让内部编辑器处理滚动 */
   @media (max-width: 768px) {
     .modal-content {
-      /*  P1修复：移除 overflow-y: auto，让内部 .cm-scroller 处理滚动 */
+      /* 移除 overflow-y: auto，让内部 .cm-scroller 处理滚动 */
       /* 之前的 overflow-y: auto 会与编辑器内部滚动冲突 */
       overflow: hidden !important;
       -webkit-overflow-scrolling: touch;

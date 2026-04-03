@@ -1,8 +1,13 @@
 <script lang="ts">
+  import { normalizePath } from "obsidian";
   import type { Card } from "../../data/types";
   import type { WeavePlugin } from "../../main";
   import { getCardMetadataService } from "../../services/CardMetadataService";
+  import type { ReadingMaterial } from "../../types/incremental-reading-types";
   import { logger } from "../../utils/logger";
+  import { normalizePathForComparison } from "../../utils/source-path-matcher";
+  import { tr } from '../../utils/i18n';
+  import { parseSourceInfo } from "../../utils/yaml-utils";
 
   interface Props {
     card: Card;
@@ -12,6 +17,8 @@
   }
 
   let { card, plugin, studyQueue, onOpenSource }: Props = $props();
+
+  let t = $derived($tr);
 
   const metadataService = getCardMetadataService();
 
@@ -47,6 +54,38 @@
   });
 
   let sourceDocName = $derived(sourceParsed?.fileName || null);
+
+  function hasExplicitExtension(path: string): boolean {
+    return /\.[^/.]+$/i.test(path);
+  }
+
+  function normalizeMarkdownPath(path: string | undefined): string | null {
+    if (!path) return null;
+    const normalized = normalizePath(path.trim());
+    if (!normalized) {
+      return null;
+    }
+
+    if (!normalized.toLowerCase().endsWith('.md') && hasExplicitExtension(normalized)) {
+      return null;
+    }
+
+    return normalized;
+  }
+
+  function normalizeMarkdownNoteKey(path: string | undefined): string | null {
+    const normalized = normalizeMarkdownPath(path);
+    if (!normalized) {
+      return null;
+    }
+
+    return normalizePathForComparison(normalized) || null;
+  }
+
+  let sourceMarkdownKey = $derived.by(() => {
+    const parsed = parseSourceInfo(card.content || '');
+    return normalizeMarkdownNoteKey(parsed.sourceFile || card.sourceFile);
+  });
 
   // -- 最小标题（从 Obsidian metadataCache 获取）--
   let smallestHeading = $derived.by(() => {
@@ -129,6 +168,42 @@
     return count;
   });
 
+  let linkedReadingMaterials = $derived.by(() => {
+    const notePath = sourceMarkdownKey;
+    const manager = plugin.readingMaterialManager;
+    if (!notePath || !manager?.getAllMaterials) {
+      return [] as ReadingMaterial[];
+    }
+
+    return manager
+      .getAllMaterials()
+      .filter((material) => normalizeMarkdownNoteKey(material.associatedNotePath) === notePath);
+  });
+
+  let linkedReadingCount = $derived(linkedReadingMaterials.length);
+
+  let linkedReadingPreview = $derived.by(() => {
+    if (linkedReadingMaterials.length === 0) {
+      return null;
+    }
+
+    const labels = linkedReadingMaterials
+      .slice(0, 2)
+      .map((material) => material.title || material.filePath.replace(/^.*[\\/]/, ''));
+    const remaining = linkedReadingMaterials.length - labels.length;
+    return remaining > 0 ? `${labels.join(' / ')} +${remaining}` : labels.join(' / ');
+  });
+
+  let linkedReadingTooltip = $derived.by(() => {
+    if (linkedReadingMaterials.length === 0) {
+      return t('study.sourceInfo.noLinkedIrMaterials');
+    }
+
+    return linkedReadingMaterials
+      .map((material, index) => `${index + 1}. ${material.title || material.filePath}`)
+      .join('\n');
+  });
+
   function handleSourceClick() {
     if (onOpenSource && sourceDocName) {
       onOpenSource();
@@ -144,6 +219,19 @@
 </script>
 
 <div class="source-info-cards">
+  <div class="stat-card linked-reading-card" title={linkedReadingTooltip}>
+    <div class="stat-header">
+      <span class="stat-title">{t('study.sourceInfo.linkedIrMaterials')}</span>
+      <span class="stat-status">{t('study.sourceInfo.linkedByNote')}</span>
+    </div>
+    <div class="stat-content">
+      <span class="stat-value">{linkedReadingCount}<span class="stat-unit">{t('study.sourceInfo.unitMaterials')}</span></span>
+      {#if linkedReadingPreview}
+        <span class="source-heading">{linkedReadingPreview}</span>
+      {/if}
+    </div>
+  </div>
+
   <!-- 来源文档 -->
   <div
     class="stat-card source-card"
@@ -155,7 +243,7 @@
     title={metadataService.getCardSource(card) || ''}
   >
     <div class="stat-header">
-      <span class="stat-title">来源文档</span>
+      <span class="stat-title">{t('study.sourceInfo.sourceDoc')}</span>
     </div>
     <div class="stat-content">
       <span class="stat-value source-doc-name">{sourceDocName || '--'}</span>
@@ -168,11 +256,11 @@
   <!-- 同源卡片 -->
   <div class="stat-card sibling-card">
     <div class="stat-header">
-      <span class="stat-title">同源卡片</span>
-      <span class="stat-status">本次学习</span>
+      <span class="stat-title">{t('study.sourceInfo.siblingCards')}</span>
+      <span class="stat-status">{t('study.sourceInfo.thisSession')}</span>
     </div>
     <div class="stat-content">
-      <span class="stat-value">{siblingCount}<span class="stat-unit">张</span></span>
+      <span class="stat-value">{siblingCount}<span class="stat-unit">{t('study.sourceInfo.unitCards')}</span></span>
     </div>
   </div>
 </div>
@@ -180,7 +268,7 @@
 <style>
   .source-info-cards {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 0.75rem;
     margin: 0 1.5rem 0.375rem 1.5rem;
     animation: slideDown 0.3s ease-out;
@@ -390,7 +478,7 @@
 
   /* 平板端 */
   :global(body.is-tablet) .source-info-cards {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 0.75rem;
     margin: 0 1rem 0.5rem 1rem;
   }

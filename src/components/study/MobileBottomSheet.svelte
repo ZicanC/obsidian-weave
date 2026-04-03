@@ -10,10 +10,10 @@
   import type { WeavePlugin } from "../../main";
   import { tr } from '../../utils/i18n';
   import { logger } from '../../utils/logger';
-  // 🆕 导入AI配置Store
+  // 导入 AI 配置 Store
   import { customActionsForMenu } from '../../stores/ai-config.store';
   import type { AIAction } from '../../types/ai-types';
-  // 🆕 v2.2: 导入牌组信息获取工具
+  // 导入牌组信息获取工具
   import { getCardDeckIds } from '../../utils/yaml-utils';
   // 🔧 v2.3: 使用 CardMetadataService 统一获取卡片元数据（带缓存 + 向后兼容）
   import { getCardMetadataService } from '../../services/CardMetadataService';
@@ -39,7 +39,7 @@
     onChangeDeck?: (deckId: string) => void;
     onRecycleCard?: () => void;
     onAIAssistant?: (evt: MouseEvent) => void;
-    // 🆕 AI功能回调
+    // AI 功能回调
     onAIFormatCustom?: (actionId: string) => void;
     onTestGenerate?: (actionId: string) => void;
     onSplitCard?: (actionId: string) => void;
@@ -74,7 +74,7 @@
     onChangeDeck,
     onRecycleCard,
     onAIAssistant,
-    // 🆕 AI功能回调
+    // AI 功能回调
     onAIFormatCustom,
     onTestGenerate,
     onSplitCard,
@@ -90,17 +90,17 @@
 
   let t = $derived($tr);
   
-  // 🆕 从Store获取AI功能列表
+  // 从 Store 获取 AI 功能列表
   let customActions = $derived($customActionsForMenu);
 
   // 子面板状态
   let activePanel = $state<string | null>(null);
   let selectedDeckId = $state<string>('');
   
-  // 🆕 优先级选择状态（本地状态，点击确定后才保存）
+  // 优先级选择状态（本地状态，点击确定后才保存）
   let selectedPriority = $state<number>(2);
   
-  // 🆕 当面板打开时，初始化选中的优先级
+  // 当面板打开时，初始化选中的优先级
   $effect(() => {
     if (activePanel === 'priority' && card) {
       selectedPriority = card.priority || 2;
@@ -135,11 +135,11 @@
     return names.length > 0 ? names[0] : '未知牌组';
   }
   
-  // 🆕 v2.2: 获取当前卡片的主牌组ID（用于牌组选择器的"当前"标记）
+  // 获取当前卡片的主牌组 ID（用于牌组选择器的“当前”标记）
   function getCurrentDeckId(): string | undefined {
     if (!card) return undefined;
-    const { primaryDeckId } = getCardDeckIds(card);
-    return primaryDeckId;
+    const service = getCardMetadataService();
+    return service.getCardDeckIds(card)[0];
   }
 
   // 处理菜单项点击
@@ -167,7 +167,7 @@
         activePanel = 'ai';
         break;
       case 'deck':
-        // 🔧 v2.2: 使用新的工具函数获取当前牌组ID
+        // 使用工具函数获取当前牌组 ID
         selectedDeckId = getCurrentDeckId() || '';
         activePanel = 'deck';
         break;
@@ -198,12 +198,12 @@
 
   // 处理优先级设置
   function handlePriorityChange() {
-    // 🆕 调用回调并传递选中的优先级
+    // 调用回调并传递选中的优先级
     onChangePriority?.(selectedPriority);
     onClose();
   }
   
-  // 🆕 处理优先级选项点击
+  // 处理优先级选项点击
   function handlePrioritySelect(priority: number) {
     selectedPriority = priority;
   }
@@ -222,6 +222,12 @@
   // 点击遮罩关闭
   function handleOverlayClick(e: MouseEvent) {
     if ((e.target as HTMLElement).classList.contains('mobile-sheet-overlay')) {
+      onClose();
+    }
+  }
+
+  function handleOverlayKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
       onClose();
     }
   }
@@ -257,8 +263,10 @@
     class="mobile-sheet-overlay" 
     class:active={show}
     onclick={handleOverlayClick}
+    onkeydown={handleOverlayKeydown}
     role="dialog"
     aria-modal="true"
+    tabindex="-1"
   >
     <div 
       class="mobile-bottom-sheet"
@@ -682,7 +690,7 @@
     font-size: 1.25rem;
     font-weight: 700;
     color: var(--text-accent);
-    font-family: 'SF Mono', 'Menlo', monospace;
+    font-family: var(--font-monospace, 'SF Mono', 'Menlo', monospace);
   }
 
   .timer-label {
@@ -948,7 +956,7 @@
     font-size: 0.9375rem;
     font-weight: 500;
     color: var(--text-normal);
-    /* 🆕 文本溢出省略 */
+    /* 文本溢出省略 */
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1006,15 +1014,6 @@
   .setting-desc {
     font-size: 0.75rem;
     color: var(--text-muted);
-  }
-
-  .setting-select {
-    padding: 0.25rem 0.5rem;
-    background: var(--background-secondary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 0.25rem;
-    color: var(--text-normal);
-    font-size: 0.8125rem;
   }
 
   /* ==================== AI菜单样式 ==================== */

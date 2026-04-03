@@ -16,22 +16,27 @@
   
   // 生成粒子数据
   const particles = $derived(
-    Array.from({ length: particleCount }, (_, i) => ({
-      id: i,
-      color: colors[Math.floor(Math.random() * colors.length)],
-      // 随机发射角度（360度）
-      angle: Math.random() * 360,
-      // 随机发射距离（200-500px）
-      distance: 200 + Math.random() * 300,
-      // 随机旋转圈数
-      rotation: 360 + Math.random() * 720,
-      // 随机大小（4-12px）
-      size: 4 + Math.random() * 8,
-      // 随机延迟（0-0.2s）
-      delay: Math.random() * 0.2,
-      // 随机形状
-      shape: Math.random() > 0.5 ? 'circle' : 'square'
-    }))
+    Array.from({ length: particleCount }, (_, i) => {
+      const angle = Math.random() * 360;
+      const distance = 200 + Math.random() * 300;
+      const radians = (angle * Math.PI) / 180;
+
+      return {
+        id: i,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        // 使用 JS 预计算终点，避免依赖 CSS 三角函数兼容性
+        x: Math.cos(radians) * distance,
+        y: Math.sin(radians) * distance + 600,
+        // 随机旋转圈数
+        rotation: 360 + Math.random() * 720,
+        // 随机大小（4-12px）
+        size: 4 + Math.random() * 8,
+        // 随机延迟（0-0.2s）
+        delay: Math.random() * 0.2,
+        // 随机形状
+        shape: Math.random() > 0.5 ? 'circle' : 'square'
+      };
+    })
   );
 </script>
 
@@ -43,8 +48,8 @@
       class:square={particle.shape === 'square'}
       style="
         --color: {particle.color};
-        --angle: {particle.angle}deg;
-        --distance: {particle.distance}px;
+        --x: {particle.x}px;
+        --y: {particle.y}px;
         --rotation: {particle.rotation}deg;
         --size: {particle.size}px;
         --delay: {particle.delay}s;
@@ -80,31 +85,6 @@
 
   .confetti-particle.square {
     border-radius: 2px;
-  }
-
-  @keyframes confetti-fall {
-    0% {
-      transform: 
-        translate(0, 0) 
-        rotate(0deg);
-      opacity: 1;
-    }
-    
-    100% {
-      transform: 
-        translate(
-          calc(cos(var(--angle)) * var(--distance)),
-          calc(sin(var(--angle)) * var(--distance) + 600px)
-        )
-        rotate(var(--rotation));
-      opacity: 0;
-    }
-  }
-
-  /* 浏览器兼容性：使用 JavaScript 计算 */
-  .confetti-particle {
-    --x: calc(var(--distance) * cos(var(--angle) * 3.14159 / 180));
-    --y: calc(var(--distance) * sin(var(--angle) * 3.14159 / 180) + 600px);
   }
 
   @keyframes confetti-fall {

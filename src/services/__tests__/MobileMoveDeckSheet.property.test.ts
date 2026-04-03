@@ -9,8 +9,6 @@
  * @module services/__tests__/MobileMoveDeckSheet.property.test
  * @version 1.0.0
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 
 // ===== 类型定义 =====

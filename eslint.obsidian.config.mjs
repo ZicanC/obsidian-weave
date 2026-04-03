@@ -26,6 +26,13 @@ export default defineConfig([
       },
     },
     rules: {
+      "obsidianmd/ui/sentence-case": [
+        "warn",
+        {
+          brands: ["Weave", "Obsidian", "Markdown"],
+          acronyms: ["AI", "API", "HTTP", "HTTPS", "IR", "PDF", "EPUB", "PDF++", "UUID", "URL", "YAML"],
+        },
+      ],
       "@typescript-eslint/no-floating-promises": "warn",
       "@typescript-eslint/no-unsafe-member-access": "off",
       "@typescript-eslint/no-explicit-any": "off",

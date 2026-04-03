@@ -1,6 +1,6 @@
 /**
- * 引用式牌组系统服务导出 (v2.0)
- * 
+ * 引用式牌组系统服务导出
+ *
  * 包含：
  * - ReferenceDeckService: 引用式牌组管理
  * - DataConsistencyService: 数据一致性检查
@@ -9,31 +9,31 @@
  */
 
 export {
-  ReferenceDeckService,
-  getReferenceDeckService,
-  initReferenceDeckService,
-  type CreateDeckFromCardsOptions,
-  type AddCardsToDeckResult,
-  type RemoveCardsFromDeckResult,
-  type DissolveDeckResult
-} from './ReferenceDeckService';
+	ReferenceDeckService,
+	getReferenceDeckService,
+	initReferenceDeckService,
+	type CreateDeckFromCardsOptions,
+	type AddCardsToDeckResult,
+	type RemoveCardsFromDeckResult,
+	type DissolveDeckResult,
+} from "./ReferenceDeckService";
 
 export {
-  DataConsistencyService,
-  getDataConsistencyService,
-  initDataConsistencyService,
-  type RepairResult
-} from './DataConsistencyService';
+	DataConsistencyService,
+	getDataConsistencyService,
+	initDataConsistencyService,
+	type RepairResult,
+} from "./DataConsistencyService";
 
 export {
-  ReferenceMigrationService,
-  getReferenceMigrationService,
-  initReferenceMigrationService,
-  type MigrationOptions
-} from './ReferenceMigrationService';
+	ReferenceMigrationService,
+	getReferenceMigrationService,
+	initReferenceMigrationService,
+	type MigrationOptions,
+} from "./ReferenceMigrationService";
 
 export {
-  CardFileService,
-  getCardFileService,
-  initCardFileService
-} from './CardFileService';
+	CardFileService,
+	getCardFileService,
+	initCardFileService,
+} from "./CardFileService";

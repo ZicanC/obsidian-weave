@@ -165,7 +165,7 @@
 
   .dropdown-panel {
     position: fixed;
-    /*  修复：使用合理的z-index值 */
+    /* 使用合理的 z-index 值 */
     z-index: var(--weave-z-dropdown);
     min-width: 150px;
     max-height: 300px;

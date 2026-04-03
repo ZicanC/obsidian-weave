@@ -8,12 +8,11 @@
  * 
  * _Requirements: 4.2, 7.4, 4.1, 3.1, 3.2_
  */
-
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { FocusStack } from '../../utils/focus-manager/FocusStack';
 import { FocusTrapManager } from '../../utils/focus-manager/FocusTrapManager';
 import { RequestCoalescer } from '../../utils/focus-manager/RequestCoalescer';
 import { KeyboardMonitor } from '../../utils/focus-manager/KeyboardMonitor';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('FocusManagement Integration Tests', () => {
   let container: HTMLElement;
@@ -25,6 +24,11 @@ describe('FocusManagement Integration Tests', () => {
   const waitForRAF = () => new Promise<void>(resolve => {
     setTimeout(resolve, 50); // jsdom 中 RAF 被 mock 为 setTimeout
   });
+
+  const waitForCoalescedAction = async () => {
+    await new Promise(resolve => setTimeout(resolve, 120));
+    await waitForRAF();
+  };
 
   beforeEach(() => {
     // 创建测试 DOM 容器
@@ -339,8 +343,7 @@ describe('FocusManagement Integration Tests', () => {
       requestCoalescer.schedule(action, 'test-key');
       requestCoalescer.schedule(action, 'test-key');
 
-      // 等待 debounce 时间
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await waitForCoalescedAction();
 
       // 验证只执行了一次
       expect(executeCount).toBe(1);
@@ -358,8 +361,7 @@ describe('FocusManagement Integration Tests', () => {
       // 立即取消
       requestCoalescer.cancel('cancel-test');
 
-      // 等待 debounce 时间
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await waitForCoalescedAction();
 
       // 验证没有执行
       expect(executed).toBe(false);
@@ -372,7 +374,7 @@ describe('FocusManagement Integration Tests', () => {
       requestCoalescer.schedule(() => count1++, 'key1');
       requestCoalescer.schedule(() => count2++, 'key2');
 
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await waitForCoalescedAction();
 
       expect(count1).toBe(1);
       expect(count2).toBe(1);

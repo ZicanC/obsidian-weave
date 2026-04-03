@@ -17,11 +17,11 @@
   interface Props {
     plugin: WeavePlugin;
     cards: GeneratedCard[];
-    config: GenerationConfig; // 🆕 AI生成配置（包含provider和model）
+    config: GenerationConfig; // AI 生成配置，包含 provider 和 model
     isOpen: boolean;
-    isGenerating?: boolean; // 🆕 是否正在生成
-    totalCards?: number; // 🆕 总卡片数
-    mode?: 'test' | 'split'; // 🆕 模式：test=测试题生成，split=卡片拆分
+    isGenerating?: boolean; // 是否正在生成
+    totalCards?: number; // 总卡片数
+    mode?: 'test' | 'split'; // 模式：test 表示测试题生成，split 表示卡片拆分
     onClose: () => void;
     onImport: (selectedCards: GeneratedCard[], targetDeck: string) => Promise<void>;
   }
@@ -58,7 +58,7 @@
   //  用于跟踪模态窗是否刚刚打开（普通变量，不触发effect）
   let wasOpen = false;
   
-  // 🆕 编辑模式状态（切换预览/编辑）
+  // 编辑模式状态，用于切换预览和编辑
   let isEditMode = $state(false);
   let editingContent = $state('');  // 编辑中的content内容
   let editorContainer: HTMLDivElement | null = $state(null);
@@ -155,7 +155,7 @@
     showRegenerateDialog = !showRegenerateDialog;
   }
 
-  // ===== 🆕 编辑模式切换功能 =====
+  // ===== 编辑模式切换 =====
   
   /**
    * 切换编辑模式
@@ -196,7 +196,7 @@
         }
         
         // 清空容器
-        editorContainer.innerHTML = '';
+        editorContainer.replaceChildren();
         
         // 创建新编辑器
         embeddedEditor = new DetachedLeafEditor(
@@ -453,13 +453,13 @@ ${originalContent}
       
       // 根据模式过滤牌组
       if (mode === 'split') {
-        // 拆分模式：只显示记忆学习牌组（非题库牌组）
+        // 拆分模式：只显示记忆学习牌组（非考试题组）
         availableDecks = allDecks
           .filter(deck => deck.purpose !== 'test')
           .map(deck => ({ id: deck.id, name: deck.name }));
         logger.debug('[CardPreviewModal] 拆分模式，过滤后牌组:', availableDecks.length);
       } else {
-        // 测试题模式：只显示题库牌组
+        // 测试题模式：只显示考试题组
         availableDecks = allDecks
           .filter(deck => deck.purpose === 'test')
           .map(deck => ({ id: deck.id, name: deck.name }));
@@ -492,7 +492,7 @@ ${originalContent}
     } catch (error) {
       logger.error('[CardPreviewModal] Load decks failed:', error);
       // 创建默认牌组备用
-      const defaultName = mode === 'split' ? '默认记忆牌组' : '默认题库牌组';
+      const defaultName = mode === 'split' ? '默认记忆牌组' : '默认考试题组';
       availableDecks = [{ id: 'default', name: defaultName }];
       selectedDeckId = 'default';
     }
@@ -530,6 +530,10 @@ ${originalContent}
   // ===== 键盘快捷键 =====
   function handleKeydown(event: KeyboardEvent) {
     if (!isOpen) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('.card-editor-wrapper, input, textarea, [contenteditable="true"]')) {
+      return;
+    }
 
     switch (event.key) {
       case 'ArrowLeft':
@@ -578,13 +582,12 @@ ${originalContent}
 </script>
 
 {#if isOpen}
-  <!-- 模态窗遮罩 -->
-  <div class="card-preview-overlay" onclick={onClose} role="presentation">
-    <!-- 模态窗容器 -->
+  <div class="card-preview-overlay" role="presentation">
     <div 
       class="card-preview-modal" 
-      onclick={(e) => { e.stopPropagation(); }}
       role="dialog"
+      aria-modal="true"
+      aria-labelledby="card-preview-title"
       tabindex="-1"
     >
       <!-- 预览头部 -->
@@ -595,7 +598,7 @@ ${originalContent}
         </button>
 
         <div class="preview-title">
-          <h3>{t('modals.cardPreview.title')}</h3>
+          <h3 id="card-preview-title">{t('modals.cardPreview.title')}</h3>
           <div class="card-counter">
             <span class="current-num">{currentIndex + 1}</span>
             <span class="separator">/</span>
@@ -640,15 +643,12 @@ ${originalContent}
                 </label>
               </div>
 
-              <!-- 🆕 预览/编辑切换区域 -->
+              <!-- 预览/编辑切换区域 -->
               {#if isEditMode}
                 <!-- 编辑模式：Obsidian原生编辑器 -->
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div 
                   class="card-editor-wrapper"
-                  onkeydown={(e) => e.stopPropagation()}
-                  onkeyup={(e) => e.stopPropagation()}
-                  onkeypress={(e) => e.stopPropagation()}
                 >
                   <div class="editor-toolbar">
                     <span class="editor-hint">编辑模式 - 使用 ---div--- 分隔正面和背面</span>
@@ -850,8 +850,6 @@ ${originalContent}
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1050,7 +1048,7 @@ ${originalContent}
   /* 已移除未使用的CSS样式 - 预览现由PreviewContainer统一处理 */
   /* 包括：.section-header, .section-content, .cloze-content, .choice-options 等 */
 
-  /* ===== 🆕 操作按钮组 ===== */
+  /* ===== 操作按钮组 ===== */
   .card-action-buttons {
     display: flex;
     gap: 12px;
@@ -1085,7 +1083,7 @@ ${originalContent}
     color: white;
   }
 
-  /* ===== 🆕 编辑器容器样式 ===== */
+  /* ===== 编辑器容器样式 ===== */
   .card-editor-wrapper {
     background: var(--background-primary);
     border-radius: 8px;
@@ -1338,37 +1336,6 @@ ${originalContent}
     color: var(--text-muted);
     font-weight: 500;
     white-space: nowrap;
-  }
-
-  .deck-selector select {
-    padding: 6px 12px;
-    border-radius: 6px;
-    background: var(--background-primary);
-    color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
-    font-size: 13px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    min-width: 150px;
-    max-width: 250px;
-    text-overflow: ellipsis;
-    overflow: hidden;
-  }
-
-  .deck-selector select:hover:not(:disabled) {
-    border-color: var(--text-accent);
-  }
-
-  .deck-selector select:focus {
-    outline: none;
-    border-color: var(--text-accent);
-    box-shadow: 0 0 0 2px var(--color-accent-bg);
-  }
-
-  .deck-selector select:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   :global(.deck-selector .obsidian-dropdown-trigger.target-deck-select) {

@@ -8,8 +8,6 @@
  * 
  * @module services/__tests__/PriorityDecay.property.test
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import { ReadingCategory } from '../../types/incremental-reading-types';
 

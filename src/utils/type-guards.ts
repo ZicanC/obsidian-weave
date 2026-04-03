@@ -9,12 +9,12 @@
  * @returns 过滤后的字段
  */
 export function filterFields(fields: any[]): any[] {
-  if (!Array.isArray(fields)) {
-    return [];
-  }
-  
-  // 基础过滤逻辑：移除空值和undefined
-  return fields.filter(field => field != null);
+	if (!Array.isArray(fields)) {
+		return [];
+	}
+
+	// 基础过滤逻辑：移除空值和undefined
+	return fields.filter((_field) => _field != null);
 }
 
 /**
@@ -23,7 +23,7 @@ export function filterFields(fields: any[]): any[] {
  * @returns 是否为有效字段
  */
 export function isValidField(field: any): field is Record<string, any> {
-  return typeof field === 'object' && field !== null;
+	return typeof field === "object" && field !== null;
 }
 
 /**
@@ -32,7 +32,7 @@ export function isValidField(field: any): field is Record<string, any> {
  * @returns 是否为字符串
  */
 export function isString(value: any): value is string {
-  return typeof value === 'string';
+	return typeof value === "string";
 }
 
 /**
@@ -41,5 +41,5 @@ export function isString(value: any): value is string {
  * @returns 是否为数组
  */
 export function isArray(value: any): value is any[] {
-  return Array.isArray(value);
+	return Array.isArray(value);
 }

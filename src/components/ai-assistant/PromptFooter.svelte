@@ -1,14 +1,67 @@
 <script lang="ts">
+  import { AbstractInputSuggest, Menu, type App } from 'obsidian';
+  import { onMount } from 'svelte';
   import type { WeavePlugin } from '../../main';
   import type { PromptTemplate, AIProvider } from '../../types/ai-types';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
-  import { Menu } from 'obsidian';
   import { AI_PROVIDER_LABELS, AI_MODEL_OPTIONS } from '../settings/constants/settings-constants';
+  import { addWeaveNavigationItems, type WeavePageId } from '../../utils/weave-navigation-menu';
+
+  type PromptSuggestionItem = PromptTemplate & {
+    category: 'official' | 'custom';
+    useBuiltinSystemPrompt: true;
+  };
+
+  class PromptInputSuggest extends AbstractInputSuggest<PromptSuggestionItem> {
+    private getItems: () => PromptSuggestionItem[];
+    private applyItem: (prompt: PromptSuggestionItem) => void;
+
+    constructor(
+      app: App,
+      inputEl: HTMLTextAreaElement,
+      getItems: () => PromptSuggestionItem[],
+      applyItem: (prompt: PromptSuggestionItem) => void
+    ) {
+      super(app, inputEl as unknown as HTMLInputElement);
+      this.getItems = getItems;
+      this.applyItem = applyItem;
+      this.limit = 8;
+    }
+
+    getSuggestions(query: string): PromptSuggestionItem[] {
+      const normalized = query.trim().toLowerCase();
+      const items = this.getItems();
+      if (!normalized) return items.slice(0, 8);
+      return items.filter((prompt) => {
+        const text = `${prompt.name} ${prompt.description ?? ''}`.toLowerCase();
+        return text.includes(normalized);
+      }).slice(0, 8);
+    }
+
+    renderSuggestion(prompt: PromptSuggestionItem, el: HTMLElement): void {
+      el.addClass('weave-ai-prompt-suggest-item');
+
+      const row = el.createDiv({ cls: 'weave-ai-prompt-suggest-row' });
+      row.createDiv({ text: prompt.name, cls: 'weave-ai-prompt-suggest-title' });
+      row.createDiv({ text: prompt.category === 'official' ? '内置' : '自定义', cls: 'weave-ai-prompt-suggest-badge' });
+
+      if (prompt.description) {
+        el.createDiv({ text: prompt.description, cls: 'weave-ai-prompt-suggest-desc' });
+      }
+    }
+
+    selectSuggestion(prompt: PromptSuggestionItem, evt: MouseEvent | KeyboardEvent): void {
+      this.applyItem(prompt);
+      super.selectSuggestion(prompt, evt);
+    }
+  }
 
   interface Props {
     plugin: WeavePlugin;
     selectedPrompt: PromptTemplate | null;
     customPrompt: string;
+    currentPage?: string;
+    onNavigate?: (page: string) => void;
     selectedProvider: AIProvider;
     selectedModel: string;
     onPromptSelect: (prompt: PromptTemplate | null) => void;
@@ -17,6 +70,12 @@
     onGenerate: () => void;
     isGenerating: boolean;
     disabled: boolean;
+    showPromptSelector?: boolean;
+    showProviderSelector?: boolean;
+    showTextarea?: boolean;
+    showGenerateButton?: boolean;
+    showPluginMenuButton?: boolean;
+    compact?: boolean;
     refreshKey?: number; // 刷新键，用于强制刷新提示词列表
   }
 
@@ -24,6 +83,8 @@
     plugin,
     selectedPrompt = $bindable(),
     customPrompt = $bindable(),
+    currentPage = 'ai-assistant',
+    onNavigate,
     selectedProvider,
     selectedModel,
     onPromptSelect,
@@ -32,16 +93,26 @@
     onGenerate,
     isGenerating,
     disabled,
+    showPromptSelector = true,
+    showProviderSelector = true,
+    showTextarea = true,
+    showGenerateButton = true,
+    showPluginMenuButton = false,
+    compact = false,
     refreshKey = 0
   }: Props = $props();
 
   // 输入框引用
   let textareaElement = $state<HTMLTextAreaElement | undefined>(undefined);
+  let promptSuggest: PromptInputSuggest | null = null;
+  const promptTemplates = $derived(
+    plugin.settings.aiConfig?.promptTemplates ?? { official: [], custom: [] }
+  );
 
   // 获取提示词模板（依赖refreshKey以触发刷新）
   let officialPrompts = $derived<PromptTemplate[]>((() => {
     refreshKey; // 使refreshKey成为依赖项
-    return (plugin.settings.aiConfig?.promptTemplates.official || []).map(p => ({
+    return promptTemplates.official.map(p => ({
       ...p,
       category: 'official' as const,
       useBuiltinSystemPrompt: true
@@ -50,17 +121,21 @@
   
   let customPrompts = $derived<PromptTemplate[]>((() => {
     refreshKey; // 使refreshKey成为依赖项
-    return (plugin.settings.aiConfig?.promptTemplates.custom || []).map(p => ({
+    return promptTemplates.custom.map(p => ({
       ...p,
       category: 'custom' as const,
       useBuiltinSystemPrompt: true
     }));
   })());
 
+  const allPromptSuggestions = $derived.by<PromptSuggestionItem[]>(() => [
+    ...officialPrompts,
+    ...customPrompts
+  ] as PromptSuggestionItem[]);
+
   // 打开提示词选择菜单（使用 Obsidian Menu API）
   function openPromptMenu(event: MouseEvent) {
     const menu = new Menu();
-    const target = event.target as HTMLElement;
 
     // 官方模板分组
     if (officialPrompts.length > 0) {
@@ -180,6 +255,53 @@
     adjustTextareaHeight();
   }
 
+  function openPluginMenu(event: MouseEvent) {
+    const menu = new Menu();
+    addWeaveNavigationItems(menu, currentPage, (pageId: WeavePageId) => {
+      onNavigate?.(pageId);
+    });
+
+    menu.showAtMouseEvent(event);
+  }
+
+  function applyPromptSuggestion(prompt: PromptSuggestionItem) {
+    selectedPrompt = prompt;
+    onPromptSelect(prompt);
+    if (textareaElement) {
+      textareaElement.focus();
+    }
+  }
+
+  function syncPromptSuggestPopover() {
+    if (!textareaElement) return;
+    const currentTextarea = textareaElement;
+    window.requestAnimationFrame(() => {
+      const popovers = Array.from(document.querySelectorAll('.suggestion-container')) as HTMLElement[];
+      const activePopover = popovers.at(-1);
+      if (!activePopover) return;
+      document
+        .querySelectorAll('.weave-ai-prompt-suggest-popover')
+        .forEach((el) => el.classList.remove('weave-ai-prompt-suggest-popover'));
+      activePopover.classList.add('weave-ai-prompt-suggest-popover');
+      const inputRect = currentTextarea.getBoundingClientRect();
+      const width = Math.min(
+        Math.max(Math.round(inputRect.width), 320),
+        Math.max(280, window.innerWidth - 24)
+      );
+      activePopover.style.width = `${width}px`;
+      activePopover.style.maxWidth = `${width}px`;
+      activePopover.style.minWidth = `${width}px`;
+      activePopover.style.zIndex = '40';
+    });
+  }
+
+  function showPromptSuggestions() {
+    if (!textareaElement || !promptSuggest) return;
+    promptSuggest.setValue(textareaElement.value);
+    textareaElement.dispatchEvent(new Event('input', { bubbles: true }));
+    syncPromptSuggestPopover();
+  }
+
   // 自动调整 textarea 高度
   function adjustTextareaHeight() {
     if (!textareaElement) return;
@@ -210,64 +332,127 @@
       adjustTextareaHeight();
     }
   });
+
+  $effect(() => {
+    refreshKey;
+    if (!textareaElement || !promptSuggest) return;
+    window.requestAnimationFrame(() => {
+      syncPromptSuggestPopover();
+    });
+  });
+
+  onMount(() => {
+    if (!textareaElement) return;
+    promptSuggest = new PromptInputSuggest(
+      plugin.app,
+      textareaElement,
+      () => allPromptSuggestions,
+      applyPromptSuggestion
+    );
+
+    const handleTemplatesUpdated = () => {
+      window.requestAnimationFrame(() => {
+        if (document.activeElement === textareaElement) {
+          showPromptSuggestions();
+        }
+      });
+    };
+
+    const handleViewportChange = () => {
+      syncPromptSuggestPopover();
+    };
+
+    window.addEventListener('Weave:ai-prompt-templates-updated', handleTemplatesUpdated as EventListener);
+    window.visualViewport?.addEventListener('resize', handleViewportChange);
+    window.addEventListener('resize', handleViewportChange);
+
+    return () => {
+      window.removeEventListener('Weave:ai-prompt-templates-updated', handleTemplatesUpdated as EventListener);
+      window.visualViewport?.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('resize', handleViewportChange);
+      promptSuggest = null;
+    };
+  });
 </script>
 
-<div class="prompt-footer">
+<div class="prompt-footer" class:compact>
   <!-- 提示词选择按钮 -->
-  <button
-    class="prompt-selector-btn"
-    onclick={openPromptMenu}
-    title="选择提示词模板"
-  >
-    <ObsidianIcon name="message-square" size={14} />
-    <span class="prompt-selector-text">
-      {selectedPrompt ? selectedPrompt.name : '选择提示词'}
-    </span>
-    <ObsidianIcon name="chevron-down" size={12} />
-  </button>
+  {#if showPromptSelector}
+    <button
+      class="prompt-selector-btn"
+      onclick={openPromptMenu}
+      title="选择提示词模板"
+    >
+      <ObsidianIcon name="message-square" size={14} />
+      <span class="prompt-selector-text">
+        {selectedPrompt ? selectedPrompt.name : '选择提示词'}
+      </span>
+      <ObsidianIcon name="chevron-down" size={12} />
+    </button>
+  {/if}
 
   <!-- AI服务商/模型选择按钮 -->
-  <button
-    class="ai-provider-selector-btn"
-    onclick={openProviderMenu}
-    title="选择AI服务商和模型"
-  >
-    <ObsidianIcon name="cpu" size={14} />
-    <span class="provider-text">
-      {AI_PROVIDER_LABELS[selectedProvider]} · {selectedModel}
-    </span>
-    <ObsidianIcon name="chevron-down" size={12} />
-  </button>
+  {#if showProviderSelector}
+    <button
+      class="ai-provider-selector-btn"
+      onclick={openProviderMenu}
+      title="选择AI服务商和模型"
+    >
+      <ObsidianIcon name="cpu" size={14} />
+      <span class="provider-text">
+        {AI_PROVIDER_LABELS[selectedProvider]} · {selectedModel}
+      </span>
+      <ObsidianIcon name="chevron-down" size={12} />
+    </button>
+  {/if}
 
   <!-- 自定义提示词输入框 -->
-  <textarea
-    bind:this={textareaElement}
-    class="prompt-textarea"
-    placeholder="或输入自定义提示词..."
-    value={customPrompt}
-    oninput={handleInput}
-    onkeydown={handleKeyDown}
-  ></textarea>
+  {#if showTextarea}
+    <div class="prompt-input-shell">
+      {#if showPluginMenuButton}
+        <button
+          class="plugin-menu-btn"
+          onclick={openPluginMenu}
+          aria-label="打开插件菜单"
+          title="打开插件菜单"
+        >
+          <ObsidianIcon name="menu" size={18} />
+        </button>
+      {/if}
+
+      <textarea
+        bind:this={textareaElement}
+        class="prompt-textarea"
+        placeholder="或输入自定义提示词..."
+        value={customPrompt}
+        oninput={handleInput}
+        onkeydown={handleKeyDown}
+        onclick={showPromptSuggestions}
+        onfocus={showPromptSuggestions}
+      ></textarea>
+    </div>
+  {/if}
 
   <!-- 生成按钮 -->
-  <button
-    class="generate-btn"
-    onclick={onGenerate}
-    disabled={disabled || isGenerating}
-    title={disabled ? '请先输入内容' : '生成AI卡片'}
-  >
-    {#if isGenerating}
-      <ObsidianIcon name="loader" size={16} />
-      <span>生成中...</span>
-    {:else}
-      <ObsidianIcon name="sparkles" size={16} />
-      <span>点击生成</span>
-    {/if}
-  </button>
+  {#if showGenerateButton}
+    <button
+      class="generate-btn"
+      onclick={onGenerate}
+      disabled={disabled || isGenerating}
+      title={disabled ? '请先输入内容' : '生成AI卡片'}
+    >
+      {#if isGenerating}
+        <ObsidianIcon name="loader" size={16} />
+        <span>生成中...</span>
+      {:else}
+        <ObsidianIcon name="sparkles" size={16} />
+        <span>点击生成</span>
+      {/if}
+    </button>
+  {/if}
 </div>
 
 <style>
-  /* ===== CSS 变量定义 ===== */
   :root {
     --prompt-footer-height: 36px;
     --prompt-footer-gap: 8px;
@@ -275,19 +460,25 @@
     --prompt-footer-radius: 6px;
   }
 
-  /* ===== 主容器 ===== */
   .prompt-footer {
     display: flex;
-    align-items: flex-start; /* 改为 flex-start 以支持 textarea 动态高度 */
+    align-items: flex-start;
     gap: var(--prompt-footer-gap);
     padding: var(--prompt-footer-padding);
-    padding-bottom: 16px; /* 固定底部间距 */
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     background: var(--background-primary);
     border-top: 1px solid var(--background-modifier-border);
-    flex-shrink: 0; /* 防止被压缩 */
+    flex-shrink: 0;
+    z-index: 5;
   }
 
-  /* ===== 提示词选择按钮 ===== */
+  .prompt-footer.compact {
+    padding: 0;
+    border-top: none;
+    background: transparent;
+    gap: 10px;
+  }
+
   .prompt-selector-btn,
   .ai-provider-selector-btn {
     display: flex;
@@ -325,36 +516,73 @@
     text-overflow: ellipsis;
   }
 
-  /* ===== 自定义提示词输入框 ===== */
-  .prompt-textarea {
-    flex: 1;
+  .prompt-textarea { 
+    flex: 1; 
+    min-width: 0; 
+    min-height: var(--prompt-footer-height); 
+    max-height: 120px; 
+    padding: 8px 12px; 
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 88%, var(--text-faint)); 
+    border-radius: var(--prompt-footer-radius); 
+    background: color-mix(in srgb, var(--background-primary) 92%, var(--background-secondary)); 
+    color: var(--text-normal); 
+    font-size: 0.875rem; 
+    font-family: inherit; 
+    line-height: 1.5; 
+    resize: none; 
+    outline: none; 
+    transition: border-color 0.2s ease, box-shadow 0.2s ease; 
+    overflow-y: auto; 
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--background-primary) 72%, transparent);
+  } 
+
+  .prompt-input-shell {
+    flex: 1 1 auto;
     min-width: 0;
-    min-height: var(--prompt-footer-height);
-    max-height: 120px;
-    padding: 8px 12px;
-    border: 1px solid rgba(128, 128, 128, 0.3);
-    border-radius: var(--prompt-footer-radius);
-    background: var(--background-primary);
-    color: var(--text-normal);
-    font-size: 0.875rem;
-    font-family: inherit;
-    line-height: 1.5;
-    resize: none;
-    outline: none;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease;
-    overflow-y: auto;
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
   }
 
-  .prompt-textarea:focus {
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.1);
+  .plugin-menu-btn {
+    flex: 0 0 auto;
+    width: 36px;
+    min-height: var(--prompt-footer-height);
+    border-radius: var(--prompt-footer-radius);
+    border: 1px solid var(--background-modifier-border);
+    background: color-mix(in srgb, var(--background-primary) 92%, var(--background-secondary));
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--background-primary) 72%, transparent);
   }
+
+  .plugin-menu-btn:hover {
+    color: var(--text-normal);
+    border-color: color-mix(in srgb, var(--interactive-accent) 28%, var(--background-modifier-border));
+    background: var(--background-primary-alt);
+  }
+
+  .plugin-menu-btn:active {
+    transform: scale(0.98);
+  }
+
+  .prompt-textarea:hover {
+    border-color: color-mix(in srgb, var(--interactive-accent) 28%, var(--background-modifier-border));
+  }
+ 
+  .prompt-textarea:focus { 
+    border-color: var(--interactive-accent); 
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 16%, transparent); 
+  } 
 
   .prompt-textarea::placeholder {
     color: var(--text-muted);
   }
 
-  /* ===== 生成按钮 ===== */
   .generate-btn {
     display: flex;
     align-items: center;
@@ -375,6 +603,15 @@
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   }
 
+  .compact .prompt-selector-btn,
+  .compact .ai-provider-selector-btn,
+  .compact .generate-btn {
+    min-height: 34px;
+    padding: 0 12px;
+    border-radius: 8px;
+    box-shadow: none;
+  }
+
   .generate-btn:hover:not(:disabled) {
     background: var(--interactive-accent-hover);
     transform: translateY(-1px);
@@ -391,7 +628,6 @@
     transform: none;
   }
 
-  /* ===== 加载动画 ===== */
   .generate-btn :global(.lucide-loader) {
     animation: spin 1s linear infinite;
   }
@@ -405,15 +641,18 @@
     }
   }
 
-  /* ===== 响应式设计 ===== */
   @media (max-width: 768px) {
     .prompt-footer {
       flex-wrap: wrap;
       gap: 6px;
-      padding: 8px 10px 12px;
+      padding: 8px 10px calc(12px + env(safe-area-inset-bottom, 0px));
     }
 
     .prompt-textarea {
+      flex: 1 1 auto;
+    }
+
+    .prompt-input-shell {
       order: 1;
       flex: 1 1 100%;
     }
@@ -441,5 +680,85 @@
     .provider-text {
       max-width: 80px;
     }
+  }
+
+  :global(.suggestion-container.weave-ai-prompt-suggest-popover) {
+    padding: 8px;
+    border-radius: 14px;
+  }
+
+  @media (max-width: 768px) {
+    :global(.suggestion-container.weave-ai-prompt-suggest-popover) {
+      border-radius: 18px;
+      padding: 10px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.16);
+    }
+
+    :global(.suggestion-container.weave-ai-prompt-suggest-popover .suggestion-item) {
+      padding: 12px 14px;
+      border-radius: 12px;
+      margin: 3px 0;
+    }
+  }
+
+  :global(.suggestion-container.weave-ai-prompt-suggest-popover .suggestion) {
+    padding: 0;
+  }
+
+  :global(.suggestion-container.weave-ai-prompt-suggest-popover .suggestion-item) {
+    padding: 10px 12px;
+    border-radius: 10px;
+    margin: 2px 0;
+  }
+
+  :global(.suggestion-container.weave-ai-prompt-suggest-popover .suggestion-item.is-selected) {
+    background: var(--background-modifier-hover);
+  }
+
+  :global(.suggestion-container .weave-ai-prompt-suggest-item) {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 2px 0;
+  }
+
+  :global(.suggestion-container .weave-ai-prompt-suggest-row) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+  }
+
+  :global(.suggestion-container .weave-ai-prompt-suggest-title) {
+    min-width: 0;
+    font-size: 0.88rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-normal);
+  }
+
+  :global(.suggestion-container .weave-ai-prompt-suggest-badge) {
+    flex: 0 0 auto;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+    color: var(--text-muted);
+    font-size: 0.7rem;
+    line-height: 1.2;
+  }
+
+  :global(.suggestion-container .weave-ai-prompt-suggest-desc) {
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    line-height: 1.45;
+    white-space: normal;
+    overflow: hidden;
+    line-clamp: 2;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 </style>

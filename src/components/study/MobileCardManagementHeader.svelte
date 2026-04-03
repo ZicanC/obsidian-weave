@@ -8,12 +8,14 @@
    * - 右侧：搜索按钮（🔍）
    *
    * @module components/study/MobileCardManagementHeader
-   * @version 1.3.0 - 🆕 改为视图切换，与桌面端统一
+   * @version 1.3.0
    * @requirements 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 9.1, 9.2, 9.3, 9.4, 9.5
    */
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
+  import { get } from 'svelte/store';
+  import { PremiumFeatureGuard, PREMIUM_FEATURES } from '../../services/premium/PremiumFeatureGuard';
 
-  // 🆕 视图类型
+  // 视图类型
   export type CardViewType = 'table' | 'grid' | 'kanban';
 
   interface Props {
@@ -30,12 +32,50 @@
     onViewChange
   }: Props = $props();
 
-  // 🆕 视图配置（与桌面端统一）
+  const premiumGuard = PremiumFeatureGuard.getInstance();
+  let isPremium = $state(get(premiumGuard.isPremiumActive));
+  let showPremiumFeaturesPreview = $state(get(premiumGuard.premiumFeaturesPreviewEnabled));
+
+  // 视图配置（与桌面端统一）
   const viewTypes = [
     { id: 'table' as CardViewType, name: '表格视图', colorStart: '#ef4444', colorEnd: '#dc2626' },
     { id: 'grid' as CardViewType, name: '网格视图', colorStart: '#3b82f6', colorEnd: '#2563eb' },
     { id: 'kanban' as CardViewType, name: '看板视图', colorStart: '#10b981', colorEnd: '#059669' }
   ];
+
+  $effect(() => {
+    const unsubscribePremium = premiumGuard.isPremiumActive.subscribe(value => {
+      isPremium = value;
+    });
+    const unsubscribePreview = premiumGuard.premiumFeaturesPreviewEnabled.subscribe(value => {
+      showPremiumFeaturesPreview = value;
+    });
+
+    return () => {
+      unsubscribePremium();
+      unsubscribePreview();
+    };
+  });
+
+  const visibleViewTypes = $derived(
+    viewTypes.filter(viewType => {
+      if (viewType.id === 'grid') {
+        return premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.GRID_VIEW, {
+          isPremium,
+          showPremiumPreview: showPremiumFeaturesPreview
+        });
+      }
+
+      if (viewType.id === 'kanban') {
+        return premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.KANBAN_VIEW, {
+          isPremium,
+          showPremiumPreview: showPremiumFeaturesPreview
+        });
+      }
+
+      return true;
+    })
+  );
 
   function handleMenuClick(evt: MouseEvent) {
     onMenuClick(evt);
@@ -62,9 +102,9 @@
     <ObsidianIcon name="menu" size={18} />
   </button>
 
-  <!-- 🆕 中间：视图切换圆点（与桌面端统一） -->
+  <!-- 中间：视图切换圆点（与桌面端统一） -->
   <div class="mobile-view-switcher">
-    {#each viewTypes as viewType}
+    {#each visibleViewTypes as viewType}
       <button
         class="view-type-dot"
         class:selected={currentView === viewType.id}
@@ -108,7 +148,7 @@
   }
 
   .mobile-menu-trigger {
-    width: 44px; /* 🆕 增加到 44px 满足 Apple HIG 触控标准 */
+    width: 44px; /* 增加到 44px，满足 Apple HIG 触控标准 */
     height: 44px;
     border-radius: 6px;
     display: flex;
@@ -119,7 +159,7 @@
     border: none;
     box-shadow: none;
     outline: none;
-    color: var(--interactive-normal); /* 🆕 使用 Obsidian 颜色令牌 */
+    color: var(--interactive-normal); /* 使用 Obsidian 颜色令牌 */
     font-size: 18px;
     cursor: pointer;
     flex-shrink: 0;
@@ -228,7 +268,7 @@
   }
 
   .mobile-search-btn {
-    width: 44px; /* 🆕 与菜单按钮一致 */
+    width: 44px; /* 与菜单按钮一致 */
     height: 44px;
     border-radius: 6px;
     display: flex;

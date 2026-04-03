@@ -10,6 +10,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
+  import { logger } from '../../utils/logger';
   import type { 
     DailyStats, 
     TagGroupSummary,
@@ -51,7 +52,7 @@
       };
       weeklyStats = monitoringService.getRecentStats(7);
     } catch (error) {
-      console.error('[IRMonitoringPanel] 加载数据失败:', error);
+      logger.error('[IRMonitoringPanel] 加载数据失败:', error);
     } finally {
       isLoading = false;
     }

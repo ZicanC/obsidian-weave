@@ -6,6 +6,9 @@
   import type { FSRS } from "../../algorithms/fsrs";
   import { UnifiedCardType } from "../../types/unified-card-types";
   import { StepIndexCalculator } from "../../utils/learning-steps/StepIndexCalculator";
+  import { applyLearningStepScheduling } from "../../utils/learning-steps/learningStepScheduling";
+  import { createDefaultMemorySchedulingSettings } from "../../utils/learning-steps/memorySchedulingConfig";
+  import { detectClozeModeFromContent } from "../../utils/cloze-mode";
   
   //  导入国际化
   import { tr } from "../../utils/i18n";
@@ -33,6 +36,14 @@
   
   // 根据题型动态计算按钮文案
   let showAnswerButtonText = $derived(() => {
+    const isClozeInputMode =
+      cardType === UnifiedCardType.CLOZE_DELETION &&
+      detectClozeModeFromContent(card?.content || '') === 'input';
+
+    if (isClozeInputMode) {
+      return t('studyInterface.confirmAnswer');
+    }
+
     if (cardType === UnifiedCardType.MULTIPLE_CHOICE) {
       return t('studyInterface.confirmAnswer');
     }
@@ -121,56 +132,28 @@
         cloned.elapsedDays = 0;
       }
 
+      const prevState = cloned.state;
       const { card: updatedCard } = fsrs.review(cloned, rating);
 
-      // 若在新/重学阶段，应用与 StudyModal 相同的学习步骤/毕业覆盖逻辑以保持一致
+      // 若配置了学习步骤，则使用与实际调度一致的覆盖逻辑，避免按钮显示与实际结果不一致
       try {
-        const cfg = learningConfig || { learningSteps: [1,10], relearningSteps: [10], graduatingInterval: 1, easyInterval: 4 };
-        const minutesToDays = (min: number) => Math.max(0, (min || 0) / (24 * 60));
-        
-        // 检查FSRS计算后的状态，而不是评分前的状态
-        const fsrsResultState = updatedCard.state;
-        const isNewOrLearning = fsrsResultState === 0 || fsrsResultState === 1; // CardState.New|Learning
-        const isRelearning = fsrsResultState === 3; // CardState.Relearning
-        
-        // 只有FSRS计算后仍然是New/Learning/Relearning的卡片才需要Learning Steps
-        if (isNewOrLearning || isRelearning) {
-          const steps = isRelearning ? (cfg.relearningSteps || [10]) : (cfg.learningSteps || [1,10]);
-          const nextStepDays = (idx: number) => minutesToDays(steps[Math.min(idx, steps.length - 1)] ?? 1);
-          
-          // 使用StepIndexCalculator从FSRS推断当前stepIndex
-          const currentStepIndex = StepIndexCalculator.calculate(
-            card,
-            cfg.learningSteps || [1, 10],
-            cfg.relearningSteps || [10]
-          );
-          
-          // 计算下一步的stepIndex
-          const nextStepIndex = StepIndexCalculator.calculateNext(
-            currentStepIndex,
-            rating,
-            steps
-          );
-          
-          const setDueAfterDays = (days: number) => {
-            updatedCard.scheduledDays = Math.max(0, days);
-            const ms = Math.round(days * 24 * 60 * 60 * 1000);
-            updatedCard.due = new Date(Date.now() + ms).toISOString();
-          };
-          
-          // 简化逻辑：直接使用calculateNext的结果
-          // -1表示毕业，>=0表示继续Learning
-          if (nextStepIndex === -1) {
-            // 毕业
-            const interval = rating === 4 ? (cfg.easyInterval || 4) : (cfg.graduatingInterval || 1);
-            setDueAfterDays(Math.max(1, interval));
-            updatedCard.state = 2; // Review
-          } else {
-            // 继续Learning/Relearning
-            setDueAfterDays(nextStepDays(nextStepIndex));
-            updatedCard.state = isNewOrLearning ? 1 : 3;
-          }
-        }
+        const cfg = learningConfig || createDefaultMemorySchedulingSettings();
+        const currentStepIndex =
+          typeof learningStepIndex === 'number'
+            ? learningStepIndex
+            : StepIndexCalculator.calculate(
+                card,
+                cfg.learningSteps,
+                cfg.relearningSteps
+              );
+
+        applyLearningStepScheduling({
+          prevState,
+          rating,
+          updatedCard,
+          config: cfg,
+          currentStepIndex
+        });
       } catch (e) {
         logger.error("Error applying learning steps in prediction:", e);
       }
@@ -186,10 +169,10 @@
 
   // 获取评分配置
   const ratingConfig = $derived([
-    { rating: 1 as Rating, label: t('studyInterface.ratings.again'), color: "var(--weave-error)", key: "1" },
-    { rating: 2 as Rating, label: t('studyInterface.ratings.hard'), color: "var(--weave-warning)", key: "2" },
-    { rating: 3 as Rating, label: t('studyInterface.ratings.good'), color: "var(--weave-success)", key: "3" },
-    { rating: 4 as Rating, label: t('studyInterface.ratings.easy'), color: "var(--weave-info)", key: "4" },
+    { rating: 1 as Rating, label: t('studyInterface.ratings.again'), color: "#ef4444", key: "1" },
+    { rating: 2 as Rating, label: t('studyInterface.ratings.hard'), color: "#f59e0b", key: "2" },
+    { rating: 3 as Rating, label: t('studyInterface.ratings.good'), color: "#10b981", key: "3" },
+    { rating: 4 as Rating, label: t('studyInterface.ratings.easy'), color: "#3b82f6", key: "4" },
   ]);
 
   // 已移除未使用的模式/建议函数，保持组件精简
@@ -275,23 +258,6 @@
     transform: translateY(0);
   }
 
-  .show-answer-btn kbd {
-    background: var(--background-modifier-border);
-    color: var(--text-muted);
-    padding: 0.25rem 0.5rem;
-    border-radius: 0.375rem;
-    font-size: 0.75rem;
-    font-weight: bold;
-    margin: 0;
-    border: 1px solid var(--background-modifier-border);
-  }
-  
-  .show-answer-btn:hover kbd {
-    background: rgba(255, 255, 255, 0.2);
-    color: white;
-    border-color: rgba(255, 255, 255, 0.3);
-  }
-
 
   /* 评分区域（现代卡片按钮 - 优化版） */
   .rating-modern { 
@@ -315,6 +281,7 @@
     position: relative;
     display: flex;
     flex-direction: column;
+    gap: 6px;
     background: var(--background-secondary);
     border: 1px solid var(--background-modifier-border);
     border-radius: 0.875rem;
@@ -324,12 +291,14 @@
     overflow: hidden;
     isolation: isolate;
     min-height: 56px;
+    box-shadow: none;
   }
   
   .rate-card:hover {
     border-color: var(--accent);
     background: var(--background-modifier-hover);
     box-shadow: 0 12px 24px rgba(0,0,0,.12), 0 4px 8px rgba(0,0,0,.08);
+    transform: translateY(-2px);
   }
   
   .rate-card:active {
@@ -348,7 +317,7 @@
     height: 120%; 
     width: 120%;
     background: radial-gradient(50% 50% at 75% 25%, 
-      color-mix(in srgb, var(--accent) 15%, transparent), 
+      color-mix(in srgb, var(--accent) 15%, transparent),
       transparent 65%);
     pointer-events: none; 
     z-index: -1;
@@ -426,51 +395,6 @@
     border-radius: 0.625rem;
   }
   
-  /* 🆕 移动端难度按钮颜色标识 - 使用具体颜色值 */
-  :global(body.is-phone) .rate-card:nth-child(1) {
-    /* 重来（Again）：红色 */
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-  }
-  :global(body.is-phone) .rate-card:nth-child(1):hover,
-  :global(body.is-phone) .rate-card:nth-child(1):active {
-    background: rgba(239, 68, 68, 0.25);
-    border-color: rgba(239, 68, 68, 0.5);
-  }
-  
-  :global(body.is-phone) .rate-card:nth-child(2) {
-    /* 困难（Hard）：橙色 */
-    background: rgba(245, 158, 11, 0.15);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-  }
-  :global(body.is-phone) .rate-card:nth-child(2):hover,
-  :global(body.is-phone) .rate-card:nth-child(2):active {
-    background: rgba(245, 158, 11, 0.25);
-    border-color: rgba(245, 158, 11, 0.5);
-  }
-  
-  :global(body.is-phone) .rate-card:nth-child(3) {
-    /* 良好（Good）：绿色 */
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-  }
-  :global(body.is-phone) .rate-card:nth-child(3):hover,
-  :global(body.is-phone) .rate-card:nth-child(3):active {
-    background: rgba(34, 197, 94, 0.25);
-    border-color: rgba(34, 197, 94, 0.5);
-  }
-  
-  :global(body.is-phone) .rate-card:nth-child(4) {
-    /* 简单（Easy）：蓝色 */
-    background: rgba(59, 130, 246, 0.15);
-    border: 1px solid rgba(59, 130, 246, 0.3);
-  }
-  :global(body.is-phone) .rate-card:nth-child(4):hover,
-  :global(body.is-phone) .rate-card:nth-child(4):active {
-    background: rgba(59, 130, 246, 0.25);
-    border-color: rgba(59, 130, 246, 0.5);
-  }
-
   :global(body.is-phone) .rate-content {
     flex-direction: column;
     justify-content: center;

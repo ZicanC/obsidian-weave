@@ -1,58 +1,256 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { App } from 'obsidian';
-	import type { EpubReaderService, EpubStorageService, EpubBook, EpubReaderSettings, EpubLayoutMode } from '../../services/epub';
+	import type { EpubBook, EpubFlowMode, EpubLayoutMode, EpubReaderEngine, EpubReaderSettings, EpubStorageService, PaginationInfo, ReaderHighlight } from '../../services/epub';
 	import type { EpubAnnotationService } from '../../services/epub';
-	import { EpubBacklinkHighlightService } from '../../services/epub/EpubBacklinkHighlightService';
+	import type { EpubBacklinkHighlightService } from '../../services/epub/EpubBacklinkHighlightService';
+	import { logger } from '../../utils/logger';
 
 	interface Props {
 		app: App;
 		filePath: string;
 		book: EpubBook | null;
-		readerService: EpubReaderService;
+		readerService: EpubReaderEngine;
 		storageService: EpubStorageService;
 		annotationService: EpubAnnotationService;
+		backlinkService: EpubBacklinkHighlightService;
 		settings: EpubReaderSettings;
 		onProgressChange?: (percent: number) => void;
+		onPaginationChange?: (info: PaginationInfo) => void;
 		onChapterChange?: (title: string) => void;
-		onRenditionReady?: () => void;
+		onReaderReady?: () => void;
+		onRenderError?: (message: string) => void;
 	}
 
-	let { app, filePath, book, readerService, storageService, annotationService, settings, onProgressChange, onChapterChange, onRenditionReady }: Props = $props();
+	let { app, filePath, book, readerService, storageService, annotationService, backlinkService, settings, onProgressChange, onPaginationChange, onChapterChange, onReaderReady, onRenderError }: Props = $props();
 
 	let viewerContainer: HTMLDivElement;
 	let rendered = false;
 	let resizeObserver: ResizeObserver | null = null;
-	let currentLayoutMode: EpubLayoutMode = 'scroll';
+	let currentLayoutMode: EpubLayoutMode = 'paginated';
+	let currentFlowMode: EpubFlowMode = 'paginated';
+	let currentWidthMode: EpubReaderSettings['widthMode'] = 'full';
+	let retryTimer: ReturnType<typeof setTimeout> | null = null;
+	let highlightReapplyTimer: ReturnType<typeof setTimeout> | null = null;
+	let highlightsReady = false;
+	let detachRelocatedHandler: (() => void) | null = null;
+	let skipNextAppearanceSync = false;
+	let renderSessionToken = 0;
+	let viewDisposed = false;
+
+	function isStaleRender(renderToken: number): boolean {
+		return viewDisposed || renderToken !== renderSessionToken;
+	}
+
+	async function resolveRestorableProgress() {
+		const currentBook = book;
+		if (!currentBook) {
+			return null;
+		}
+
+		const savedProgress = await storageService.loadProgress(currentBook.id);
+		if (!savedProgress?.cfi) {
+			return savedProgress;
+		}
+
+		if (typeof readerService.canonicalizeLocation !== 'function') {
+			return savedProgress;
+		}
+
+		try {
+			const canonicalCfi = await readerService.canonicalizeLocation(savedProgress.cfi);
+			if (!canonicalCfi) {
+				logger.warn('[EpubReaderView] Skipping saved EPUB progress because it could not be canonicalized for the current engine.', {
+					bookId: currentBook.id,
+					cfi: savedProgress.cfi,
+				});
+				return null;
+			}
+
+			if (canonicalCfi === savedProgress.cfi) {
+				return savedProgress;
+			}
+
+			const canonicalProgress = {
+				...savedProgress,
+				cfi: canonicalCfi,
+			};
+			currentBook.currentPosition = canonicalProgress;
+			await storageService.saveProgress(currentBook.id, canonicalProgress);
+			logger.info('[EpubReaderView] Canonicalized saved EPUB progress before restoring it into the current reader runtime.', {
+				bookId: currentBook.id,
+				from: savedProgress.cfi,
+				to: canonicalCfi,
+			});
+			return canonicalProgress;
+		} catch (error) {
+			logger.warn('[EpubReaderView] Failed to canonicalize saved EPUB progress before restore:', {
+				bookId: currentBook.id,
+				cfi: savedProgress.cfi,
+				error,
+			});
+			return null;
+		}
+	}
+
+	async function refreshReaderHighlights() {
+		if (typeof readerService.refreshHighlights === 'function') {
+			await readerService.refreshHighlights();
+			return;
+		}
+		await loadSavedHighlights();
+	}
+
+	interface ContainerRect {
+		width: number;
+		height: number;
+	}
+
+	function readContainerRect(): ContainerRect {
+		const rect = viewerContainer?.getBoundingClientRect();
+		return {
+			width: Math.round(rect?.width || 0),
+			height: Math.round(rect?.height || 0)
+		};
+	}
+
+	function waitForNextFrame(): Promise<void> {
+		return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+	}
+
+	function getRenderMode(readerSettings: EpubReaderSettings): {
+		flow: 'paginated' | 'scrolled';
+		spread: 'always' | 'none';
+		manager: 'default' | 'continuous';
+		minSpreadWidth: number;
+	} {
+		if (readerSettings.flowMode === 'scrolled') {
+			return {
+				flow: 'scrolled',
+				spread: 'none',
+				manager: 'continuous',
+				minSpreadWidth: 800
+			};
+		}
+
+		const isDoubleLayout = readerSettings.layoutMode === 'double';
+		return {
+			flow: 'paginated',
+			spread: isDoubleLayout ? 'always' : 'none',
+			manager: 'default',
+			minSpreadWidth: isDoubleLayout ? 0 : 800
+		};
+	}
+
+	async function waitForStableContainer(maxFrames = 24): Promise<ContainerRect> {
+		let previous = readContainerRect();
+		let stableFrames = previous.width > 0 && previous.height > 0 ? 1 : 0;
+
+		for (let i = 0; i < maxFrames; i++) {
+			await waitForNextFrame();
+			const current = readContainerRect();
+			const isSameSize = current.width === previous.width && current.height === previous.height;
+			const isRenderable = current.width > 0 && current.height > 0;
+
+			if (isRenderable && isSameSize) {
+				stableFrames += 1;
+				if (stableFrames >= 2) {
+					return current;
+				}
+			} else {
+				stableFrames = isRenderable ? 1 : 0;
+			}
+
+			previous = current;
+		}
+
+		return previous.width > 0 && previous.height > 0
+			? previous
+			: { width: 800, height: 600 };
+	}
 
 	async function renderBook() {
 		if (!book || !viewerContainer || rendered) return;
+		const renderToken = ++renderSessionToken;
 		rendered = true;
 
 		try {
-			const flow = settings.layoutMode === 'scroll' ? 'scrolled-doc' : 'paginated';
-			const spread = settings.layoutMode === 'double' ? 'always' : 'none';
-			await readerService.renderTo(viewerContainer, { flow, spread });
+			// Start collecting highlights in parallel with rendering
+			const highlightPromise = collectAllHighlights();
+			const stableRect = await waitForStableContainer();
+			if (isStaleRender(renderToken)) {
+				return;
+			}
+			const renderMode = getRenderMode(settings);
+			await readerService.renderTo(viewerContainer, {
+				flow: renderMode.flow,
+				spread: renderMode.spread,
+				manager: renderMode.manager,
+				minSpreadWidth: renderMode.minSpreadWidth,
+				width: stableRect.width,
+				height: stableRect.height,
+				theme: settings.theme,
+				lineHeight: settings.lineHeight,
+				widthMode: settings.widthMode
+			});
+			if (isStaleRender(renderToken)) {
+				return;
+			}
 			currentLayoutMode = settings.layoutMode;
+			currentFlowMode = settings.flowMode;
+			currentWidthMode = settings.widthMode;
+			skipNextAppearanceSync = true;
 
-			const savedProgress = await storageService.loadProgress(book.id);
-			if (savedProgress && savedProgress.cfi) {
-				await readerService.goToLocation(savedProgress.cfi);
+			setupResizeObserver();
+
+			registerRelocatedHandler();
+
+			// Let the Readium layout settle after settings/resize before navigating
+			await new Promise(r => setTimeout(r, 50));
+			if (isStaleRender(renderToken)) {
+				return;
 			}
 
-			readerService.onRelocated(async (position) => {
-				if (book) {
-					await storageService.saveProgress(book.id, position);
+			// Restore reading progress LAST so nothing can override the position
+			const savedProgress = await resolveRestorableProgress();
+			if (isStaleRender(renderToken)) {
+				return;
+			}
+			if (savedProgress?.cfi) {
+				await readerService.goToLocation(savedProgress.cfi);
+				if (isStaleRender(renderToken)) {
+					return;
 				}
-				onProgressChange?.(position.percent);
-			});
+			}
 
-			applySettings();
-			setupResizeObserver();
-			await loadSavedHighlights();
-			onRenditionReady?.();
+			onProgressChange?.(readerService.getReadingProgress());
+			onPaginationChange?.(await readerService.getPaginationInfo());
+			if (isStaleRender(renderToken)) {
+				return;
+			}
+
+			// Apply pre-collected highlights (already resolved or nearly so)
+			const allHighlights = await highlightPromise;
+			if (isStaleRender(renderToken)) {
+				return;
+			}
+			if (allHighlights.length > 0) {
+				await readerService.applyHighlights(allHighlights);
+			} else {
+				// Retry after delay - metadata cache may still be building
+				scheduleHighlightRetry();
+			}
+			highlightsReady = true;
+
+			onReaderReady?.();
 		} catch (error) {
-			console.error('Failed to render book:', error);
+			if (isStaleRender(renderToken)) {
+				return;
+			}
+			logger.error('[EpubReaderView] Failed to render book:', error);
+			rendered = false;
+			const message = error instanceof Error ? error.message : 'EPUB 渲染失败';
+			onRenderError?.(message);
 		}
 	}
 
@@ -61,51 +259,105 @@
 		resizeObserver = new ResizeObserver((entries) => {
 			for (const entry of entries) {
 				const { width, height } = entry.contentRect;
-				if (width > 0 && height > 0) {
+				if (width > 0 && height > 0 && !readerService.isLayoutChanging()) {
 					readerService.resize(width, height);
+					scheduleHighlightReapply();
 				}
 			}
 		});
 		resizeObserver.observe(viewerContainer);
 	}
 
-	function applySettings() {
+	async function applySettings() {
 		if (!rendered) return;
-		readerService.setFontSize(settings.fontSize);
-		readerService.setLineHeight(settings.lineHeight);
-		readerService.setTheme(settings.theme);
-		readerService.setFontFamily(settings.fontFamily);
+		await readerService.applyReaderAppearance(settings.theme, settings.lineHeight);
 	}
 
-	async function loadSavedHighlights() {
-		if (!book) return;
+	async function collectAllHighlights(): Promise<ReaderHighlight[]> {
+		if (!book) return [];
 		try {
-			const backlinkService = new EpubBacklinkHighlightService(app);
-			const highlights = await backlinkService.collectHighlights(filePath);
-			if (highlights.length > 0) {
-				await readerService.applyHighlights(
-					highlights.map(h => ({ cfiRange: h.cfiRange, color: h.color }))
-				);
-			}
+			const allHighlights = await annotationService.collectAllHighlights(book.id, filePath, backlinkService);
+			logger.debug('[EpubReaderView] total highlights to apply:', allHighlights.length);
+			return allHighlights;
 		} catch (e) {
-			console.warn('Failed to load highlights from backlinks:', e);
+			logger.warn('[EpubReaderView] Failed to collect highlights:', e);
+			return [];
 		}
 	}
 
-	async function handleLayoutModeChange() {
-		if (!rendered || settings.layoutMode === currentLayoutMode) return;
-		currentLayoutMode = settings.layoutMode;
-		await readerService.setLayoutMode(settings.layoutMode);
-		applySettings();
+	function scheduleHighlightReapply(delayMs = 300) {
+		if (!highlightsReady) return;
+		if (highlightReapplyTimer) clearTimeout(highlightReapplyTimer);
+		highlightReapplyTimer = setTimeout(async () => {
+			highlightReapplyTimer = null;
+			await refreshReaderHighlights();
+		}, delayMs);
+	}
 
-		readerService.onRelocated(async (position) => {
+	function scheduleHighlightRetry() {
+		if (retryTimer) clearTimeout(retryTimer);
+		retryTimer = setTimeout(async () => {
+			retryTimer = null;
+			const retried = await collectAllHighlights();
+			if (retried.length > 0) {
+				await readerService.applyHighlights(retried);
+			}
+		}, 3000);
+	}
+
+	async function loadSavedHighlights() {
+		const allHighlights = await collectAllHighlights();
+		if (allHighlights.length > 0) {
+			await readerService.applyHighlights(allHighlights);
+		}
+	}
+
+	function registerRelocatedHandler() {
+		if (detachRelocatedHandler) return;
+		detachRelocatedHandler = readerService.onRelocated(async (position) => {
 			if (book) {
 				await storageService.saveProgress(book.id, position);
 			}
 			onProgressChange?.(position.percent);
+			onPaginationChange?.(await readerService.getPaginationInfo());
 		});
-		await loadSavedHighlights();
-		onRenditionReady?.();
+	}
+
+	async function handleReaderModeChange() {
+		if (!rendered) return;
+		if (
+			settings.layoutMode === currentLayoutMode
+			&& settings.flowMode === currentFlowMode
+			&& settings.widthMode === currentWidthMode
+		) return;
+		const previousLayoutMode = currentLayoutMode;
+		const previousFlowMode = currentFlowMode;
+		const previousWidthMode = currentWidthMode;
+		const nextLayoutMode = settings.layoutMode;
+		const nextFlowMode = settings.flowMode;
+		const nextWidthMode = settings.widthMode;
+		try {
+			currentLayoutMode = nextLayoutMode;
+			currentFlowMode = nextFlowMode;
+			currentWidthMode = nextWidthMode;
+			await readerService.setLayoutMode(nextLayoutMode, nextFlowMode, {
+				theme: settings.theme,
+				lineHeight: settings.lineHeight,
+				widthMode: nextWidthMode,
+			});
+			skipNextAppearanceSync = true;
+
+			await new Promise(r => setTimeout(r, 150));
+
+			await refreshReaderHighlights();
+			onReaderReady?.();
+		} catch (error) {
+			logger.error('[EpubReaderView] Failed to change reader mode:', error);
+			currentLayoutMode = previousLayoutMode;
+			currentFlowMode = previousFlowMode;
+			currentWidthMode = previousWidthMode;
+			onRenderError?.(error instanceof Error ? error.message : '阅读模式切换失败');
+		}
 	}
 
 	$effect(() => {
@@ -115,19 +367,38 @@
 	});
 
 	$effect(() => {
+		const _theme = settings.theme;
+		const _lh = settings.lineHeight;
 		if (rendered) {
-			applySettings();
+			if (skipNextAppearanceSync) {
+				skipNextAppearanceSync = false;
+				return;
+			}
+			applySettings().then(() => {
+				scheduleHighlightReapply(150);
+			});
 		}
 	});
 
 	$effect(() => {
-		if (rendered && settings.layoutMode !== currentLayoutMode) {
-			handleLayoutModeChange();
+		const _layout = settings.layoutMode;
+		const _flow = settings.flowMode;
+		const _width = settings.widthMode;
+		if (rendered && (_layout !== currentLayoutMode || _flow !== currentFlowMode || _width !== currentWidthMode)) {
+			void handleReaderModeChange();
 		}
 	});
 
 	onMount(() => {
 		return () => {
+			viewDisposed = true;
+			renderSessionToken += 1;
+			if (detachRelocatedHandler) {
+				detachRelocatedHandler();
+				detachRelocatedHandler = null;
+			}
+			if (retryTimer) clearTimeout(retryTimer);
+			if (highlightReapplyTimer) clearTimeout(highlightReapplyTimer);
 			if (resizeObserver) {
 				resizeObserver.disconnect();
 			}
@@ -135,6 +406,6 @@
 	});
 </script>
 
-<div class="epub-reader-view">
+<div class="epub-reader-view" class:epub-width-full={settings.widthMode === 'full'}>
 	<div class="epub-viewer-container" bind:this={viewerContainer}></div>
 </div>

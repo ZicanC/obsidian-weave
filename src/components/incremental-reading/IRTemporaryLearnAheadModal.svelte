@@ -44,11 +44,11 @@
 
 <div
   class="ir-temp-learn-ahead-backdrop"
-  onclick={() => {
-    if (typeof onClose === 'function') onClose();
+  onclick={(event) => {
+    if (event.target === event.currentTarget && typeof onClose === 'function') onClose();
   }}
-  onkeydown={(e) => {
-    if (e.key === 'Enter' || e.key === ' ') {
+  onkeydown={(event) => {
+    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
       if (typeof onClose === 'function') onClose();
     }
   }}
@@ -59,8 +59,6 @@
   <div
     class="ir-temp-learn-ahead-card"
     class:show={showContent}
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
     role="dialog"
     tabindex="-1"
     aria-modal="true"

@@ -1,16 +1,17 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import type { EpubScreenshotService, ScreenshotRect } from '../../services/epub/EpubScreenshotService';
+	import type { EpubScreenshotService, EpubVisibleFrameLike, ScreenshotRect } from '../../services/epub/EpubScreenshotService';
 
 	interface Props {
 		active: boolean;
 		sourceEl: HTMLElement | null;
 		screenshotService: EpubScreenshotService;
+		getVisibleFrames?: () => EpubVisibleFrameLike[] | null | undefined;
 		onCapture: (blob: Blob, rect: ScreenshotRect) => void;
 		onCancel: () => void;
 	}
 
-	let { active, sourceEl, screenshotService, onCapture, onCancel }: Props = $props();
+	let { active, sourceEl, screenshotService, getVisibleFrames, onCapture, onCancel }: Props = $props();
 
 	let overlayEl = $state<HTMLDivElement | undefined>(undefined);
 	let isDragging = $state(false);
@@ -28,20 +29,20 @@
 		}
 	});
 
-	function handleMouseDown(e: MouseEvent) {
+	function handlePointerStart(clientX: number, clientY: number) {
 		if (isCapturing) return;
 		const rect = overlayEl!.getBoundingClientRect();
-		startX = e.clientX - rect.left;
-		startY = e.clientY - rect.top;
+		startX = clientX - rect.left;
+		startY = clientY - rect.top;
 		isDragging = true;
 		selRect = { x: startX, y: startY, width: 0, height: 0 };
 	}
 
-	function handleMouseMove(e: MouseEvent) {
+	function handlePointerMove(clientX: number, clientY: number) {
 		if (!isDragging) return;
 		const rect = overlayEl!.getBoundingClientRect();
-		const currentX = e.clientX - rect.left;
-		const currentY = e.clientY - rect.top;
+		const currentX = clientX - rect.left;
+		const currentY = clientY - rect.top;
 
 		selRect = {
 			x: Math.min(startX, currentX),
@@ -51,7 +52,7 @@
 		};
 	}
 
-	async function handleMouseUp(_e: MouseEvent) {
+	async function handlePointerEnd() {
 		if (!isDragging) return;
 		isDragging = false;
 
@@ -59,20 +60,53 @@
 			isCapturing = true;
 			const captureRect = { ...selRect };
 
-			if (overlayEl) overlayEl.style.visibility = 'hidden';
 			await new Promise<void>(r => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
 			try {
-				const blob = await screenshotService.captureFromCanvas(sourceEl, captureRect);
+				const blob = await screenshotService.captureFromCanvas(
+					sourceEl,
+					captureRect,
+					getVisibleFrames?.() || undefined,
+				);
 				if (blob) {
 					onCapture(blob, captureRect);
 				}
 			} finally {
-				if (overlayEl) overlayEl.style.visibility = '';
 				isCapturing = false;
 			}
 		}
 		resetState();
+	}
+
+	function handleMouseDown(e: MouseEvent) {
+		handlePointerStart(e.clientX, e.clientY);
+	}
+
+	function handleMouseMove(e: MouseEvent) {
+		handlePointerMove(e.clientX, e.clientY);
+	}
+
+	async function handleMouseUp(_e: MouseEvent) {
+		await handlePointerEnd();
+	}
+
+	function handleTouchStart(e: TouchEvent) {
+		if (e.touches.length !== 1) return;
+		e.preventDefault();
+		const touch = e.touches[0];
+		handlePointerStart(touch.clientX, touch.clientY);
+	}
+
+	function handleTouchMove(e: TouchEvent) {
+		if (e.touches.length !== 1) return;
+		e.preventDefault();
+		const touch = e.touches[0];
+		handlePointerMove(touch.clientX, touch.clientY);
+	}
+
+	async function handleTouchEnd(e: TouchEvent) {
+		e.preventDefault();
+		await handlePointerEnd();
 	}
 
 	function resetState() {
@@ -99,10 +133,14 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		class="epub-screenshot-overlay"
+		class:is-hidden={isCapturing}
 		bind:this={overlayEl}
 		onmousedown={handleMouseDown}
 		onmousemove={handleMouseMove}
 		onmouseup={handleMouseUp}
+		ontouchstart={handleTouchStart}
+		ontouchmove={handleTouchMove}
+		ontouchend={handleTouchEnd}
 		onkeydown={handleKeydown}
 		onwheel={handleWheel}
 		tabindex="-1"
@@ -116,3 +154,9 @@
 
 	</div>
 {/if}
+
+<style>
+	.epub-screenshot-overlay.is-hidden {
+		visibility: hidden;
+	}
+</style>

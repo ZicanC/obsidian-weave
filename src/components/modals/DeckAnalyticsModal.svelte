@@ -9,29 +9,25 @@
   import { Platform, Menu } from 'obsidian';
   import type { WeavePlugin } from '../../main';
   import type { Card, Deck } from '../../data/types';
-  import ResizableModal from '../ui/ResizableModal.svelte';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
   import { LoadBalanceManager } from '../../services/LoadBalanceManager';
   import { LoadStatus } from '../../services/LoadBalanceManager';
   import * as echarts from 'echarts/core';
   import {
-    TitleComponent,
     TooltipComponent,
     GridComponent,
-    LegendComponent,
-    TransformComponent
+    LegendComponent
   } from 'echarts/components';
   import { LineChart, BarChart, ScatterChart } from 'echarts/charts';
   import { CanvasRenderer } from 'echarts/renderers';
   import { LabelLayout } from 'echarts/features';
+  import { applyRetentionChartLayout, createRetentionChartGrid, createRetentionScrollableLegend } from '../charts/retentionChartStyle';
 
   // 注册ECharts组件
   echarts.use([
-    TitleComponent,
     TooltipComponent,
     GridComponent,
     LegendComponent,
-    TransformComponent,
     LineChart,
     BarChart,
     ScatterChart,
@@ -40,12 +36,6 @@
   ]);
 
   interface Props {
-    /** 是否显示模态窗 */
-    open: boolean;
-
-    /** 关闭回调 */
-    onClose: () => void;
-
     /** 插件实例 */
     plugin: WeavePlugin;
 
@@ -60,8 +50,6 @@
   }
 
   let {
-    open = $bindable(),
-    onClose,
     plugin,
     deckId,
     cards = [],
@@ -129,7 +117,7 @@
     return allCards;
   });
   
-  // 🆕 数据状态检查（使用displayCards支持多牌组）
+  // 数据状态检查（使用 displayCards 支持多牌组）
   const activeCards = $derived(displayCards.length > 0 ? displayCards : cards);
   const hasCards = $derived(activeCards && activeCards.length > 0);
   const hasReviewData = $derived(activeCards && activeCards.filter(c => c.reviewHistory && c.reviewHistory.length > 0).length > 0);
@@ -267,12 +255,14 @@
   // 🎨 获取当前主题颜色
   function getThemeColors() {
     const isDark = document.body.classList.contains('theme-dark');
+    const accentColor = getComputedStyle(document.body).getPropertyValue('--interactive-accent').trim();
     return {
       textColor: isDark ? '#e0e0e0' : '#2c3e50',
       axisLineColor: isDark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.15)',
       splitLineColor: isDark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
       tooltipBg: isDark ? '#1a1a1a' : '#ffffff',
-      tooltipBorder: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)'
+      tooltipBorder: isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)',
+      accentColor: accentColor || (isDark ? '#8f87ff' : '#6f62f6')
     };
   }
 
@@ -427,6 +417,7 @@
           name: deckName,
           type: 'line',
           data: retentionData,
+          connectNulls: true,
           smooth: true,
           lineStyle: { color, width: 2 },
           itemStyle: { color },
@@ -471,25 +462,17 @@
             return html;
           }
         },
-        legend: {
-          data: legendData,
-          bottom: 20,
-          textStyle: { color: colors.textColor, fontSize: 12 },
-          itemGap: 16,
-          icon: 'roundRect',
-          itemWidth: 12,
-          itemHeight: 12
-        },
-        grid: { left: isMobile ? 30 : 45, right: isMobile ? 10 : 40, top: isMobile ? 25 : 40, bottom: isMobile ? 60 : 80 },
+        legend: createRetentionScrollableLegend(legendData, colors, isMobile),
+        grid: createRetentionChartGrid(isMobile, true),
         xAxis: {
           type: 'category',
           data: dateLabels,
           name: '日期',
           nameLocation: 'middle',
-          nameGap: 30,
+          nameGap: 24,
           axisLine: { show: true, symbol: ['none', 'arrow'], symbolSize: [8, 10], lineStyle: { color: colors.axisLineColor } },
           axisLabel: { color: colors.textColor, fontSize: 12 },
-          nameTextStyle: { color: colors.textColor, fontSize: 13 }
+          nameTextStyle: { color: colors.textColor, fontSize: 12 }
         },
         yAxis: {
           type: 'value',
@@ -498,12 +481,13 @@
           max: 100,
           axisLine: { show: true, symbol: ['none', 'arrow'], symbolSize: [8, 10], lineStyle: { color: colors.axisLineColor } },
           axisLabel: { color: colors.textColor, formatter: '{value}%', fontSize: 12 },
-          nameTextStyle: { color: colors.textColor, fontSize: 13 },
+          nameTextStyle: { color: colors.textColor, fontSize: 12 },
           splitLine: { lineStyle: { color: colors.splitLineColor, type: 'dashed' } }
         },
         series
       };
       
+      applyRetentionChartLayout(option, colors, isMobile);
       retentionChart.setOption(option, true);
       return;
     }
@@ -618,6 +602,7 @@
           name: '预测保持率',
           type: 'line',
           data: data.map(d => d.predicted),
+          connectNulls: true,
           smooth: true,
           lineStyle: {
             color: '#667eea',
@@ -641,6 +626,7 @@
           name: '实际保持率',
           type: 'line',
           data: data.map(d => d.actual),
+          connectNulls: true,
           smooth: true,
           lineStyle: {
             color: '#4facfe',
@@ -669,6 +655,7 @@
       ]
     };
 
+    applyRetentionChartLayout(option, colors, isMobile);
     retentionChart.setOption(option);
 
     // 点击事件
@@ -679,7 +666,7 @@
     });
   }
   
-  // 🔧 修复：生成真实卡片数量变化数据（基于卡片状态）
+  // 生成真实卡片数量变化数据（基于卡片状态）
   function generateQuantityData(days: number) {
     const data = {
       dates: [] as string[],
@@ -940,10 +927,11 @@
       ]
     };
 
+    applyRetentionChartLayout(option, colors, isMobile);
     quantityChart.setOption(option);
   }
   
-  // 🔧 修复：生成真实复习时机数据（基于reviewHistory）
+  // 生成真实复习时机数据（基于 reviewHistory）
   function generateTimingData(days: number) {
     const data = {
       dates: [] as string[],
@@ -1341,6 +1329,7 @@
       ]
     };
 
+    applyRetentionChartLayout(option, colors, isMobile);
     timingChart.setOption(option);
   }
   
@@ -1630,7 +1619,7 @@
     loadForecastChart.setOption(option);
   }
 
-  // 更新负荷预测图表 - 🔧 修复：使用generateLoadForecastData而非loadBalanceManager
+  // 更新负荷预测图表，使用 generateLoadForecastData 而非 loadBalanceManager
   function updateLoadForecastChart() {
     if (!loadForecastChart) return;
     
@@ -1818,7 +1807,7 @@
     return `${year}-${month}-${day}`;
   }
   
-  // 🆕 滚轮事件处理函数 - 在快捷范围之间切换
+  // 滚轮事件处理函数，在快捷范围之间切换
   function handleWheelScroll(event: WheelEvent) {
     event.preventDefault();
     
@@ -1965,11 +1954,9 @@
     
     // 延迟初始化，确保DOM完全渲染
     setTimeout(() => {
-      if (open) {
-        // 使用switchTab函数初始化初始标签页
-        // 这会自动处理图表初始化和事件监听器
-        switchTab(activeTab);
-      }
+      // 使用switchTab函数初始化初始标签页
+      // 这会自动处理图表初始化和事件监听器
+      switchTab(activeTab);
     }, 100);
     window.addEventListener('resize', handleResize);
 
@@ -1993,42 +1980,40 @@
 
   // 监听activeTab变化，确保图表正确显示
   $effect(() => {
-    if (open) {
-      setTimeout(() => {
-        // 🔧 修复：无论图表是否已存在，都要确保绑定滚轮事件监听器
-        if (activeTab === 'retention' && retentionChartRef) {
-          if (!retentionChart) {
-            initRetentionChart();
-          }
-          retentionChartRef.removeEventListener('wheel', handleWheelScroll);
-          retentionChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
-        } else if (activeTab === 'quantity' && quantityChartRef) {
-          if (!quantityChart) {
-            initQuantityChart();
-          }
-          quantityChartRef.removeEventListener('wheel', handleWheelScroll);
-          quantityChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
-        } else if (activeTab === 'timing' && timingChartRef) {
-          if (!timingChart) {
-            initTimingChart();
-          }
-          timingChartRef.removeEventListener('wheel', handleWheelScroll);
-          timingChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
-        } else if (activeTab === 'difficulty' && difficultyChartRef) {
-          if (!difficultyChart) {
-            initDifficultyChart();
-          }
-          difficultyChartRef.removeEventListener('wheel', handleWheelScroll);
-          difficultyChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
-        } else if (activeTab === 'loadForecast' && loadForecastChartRef) {
-          if (!loadForecastChart) {
-            initLoadForecastChart();
-          }
-          loadForecastChartRef.removeEventListener('wheel', handleWheelScroll);
-          loadForecastChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+    setTimeout(() => {
+      // 无论图表是否已存在，都要确保绑定滚轮事件监听器
+      if (activeTab === 'retention' && retentionChartRef) {
+        if (!retentionChart) {
+          initRetentionChart();
         }
-      }, 100);
-    }
+        retentionChartRef.removeEventListener('wheel', handleWheelScroll);
+        retentionChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+      } else if (activeTab === 'quantity' && quantityChartRef) {
+        if (!quantityChart) {
+          initQuantityChart();
+        }
+        quantityChartRef.removeEventListener('wheel', handleWheelScroll);
+        quantityChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+      } else if (activeTab === 'timing' && timingChartRef) {
+        if (!timingChart) {
+          initTimingChart();
+        }
+        timingChartRef.removeEventListener('wheel', handleWheelScroll);
+        timingChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+      } else if (activeTab === 'difficulty' && difficultyChartRef) {
+        if (!difficultyChart) {
+          initDifficultyChart();
+        }
+        difficultyChartRef.removeEventListener('wheel', handleWheelScroll);
+        difficultyChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+      } else if (activeTab === 'loadForecast' && loadForecastChartRef) {
+        if (!loadForecastChart) {
+          initLoadForecastChart();
+        }
+        loadForecastChartRef.removeEventListener('wheel', handleWheelScroll);
+        loadForecastChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+      }
+    }, 100);
   });
 
   onDestroy(() => {
@@ -2046,29 +2031,9 @@
     themeObserver?.disconnect();
   });
 
-  function handleClose() {
-    if (typeof onClose === 'function') {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-<ResizableModal
-  bind:open
-  {plugin}
-  title="牌组分析"
-  onClose={handleClose}
-  enableTransparentMask={false}
-  enableWindowDrag={false}
-  keyboard={true}
-  initialWidth={960}
-  initialHeight={880}
->
-  {#snippet headerActions()}
-    <!-- no custom header actions -->
-  {/snippet}
-  <div class="deck-analytics-modal">
+<div class="deck-analytics-modal">
     
     <!-- 更新指示器 -->
     {#if isUpdating}
@@ -2085,7 +2050,7 @@
           type="button"
           class="tab-btn"
           class:active={activeTab === 'retention'}
-          onclick={(e) => { e.preventDefault(); e.stopPropagation(); switchTab('retention'); }}
+          onclick={(e) => { e.preventDefault(); switchTab('retention'); }}
           title="记忆率曲线图"
         >
           {#if isMobile}
@@ -2098,7 +2063,7 @@
           type="button"
           class="tab-btn"
           class:active={activeTab === 'quantity'}
-          onclick={(e) => { e.preventDefault(); e.stopPropagation(); switchTab('quantity'); }}
+          onclick={(e) => { e.preventDefault(); switchTab('quantity'); }}
           title="卡片数量变化双轴图"
         >
           {#if isMobile}
@@ -2111,7 +2076,7 @@
           type="button"
           class="tab-btn"
           class:active={activeTab === 'timing'}
-          onclick={(e) => { e.preventDefault(); e.stopPropagation(); switchTab('timing'); }}
+          onclick={(e) => { e.preventDefault(); switchTab('timing'); }}
           title="复习时机分析图"
         >
           {#if isMobile}
@@ -2124,7 +2089,7 @@
           type="button"
           class="tab-btn"
           class:active={activeTab === 'difficulty'}
-          onclick={(e) => { e.preventDefault(); e.stopPropagation(); switchTab('difficulty'); }}
+          onclick={(e) => { e.preventDefault(); switchTab('difficulty'); }}
           title="难度-标签矩阵图"
         >
           {#if isMobile}
@@ -2137,7 +2102,7 @@
           type="button"
           class="tab-btn"
           class:active={activeTab === 'loadForecast'}
-          onclick={(e) => { e.preventDefault(); e.stopPropagation(); switchTab('loadForecast'); }}
+          onclick={(e) => { e.preventDefault(); switchTab('loadForecast'); }}
           title="负荷预测"
         >
           {#if isMobile}
@@ -2277,16 +2242,20 @@
            bind:this={loadForecastChartRef}></div>
     {/if}
   </div>
-</ResizableModal>
-{/if}
 
 <style>
   .deck-analytics-modal {
     display: flex;
     flex-direction: column;
     height: 100%;
-    background: var(--background-primary);
-    padding: 20px;
+    background: linear-gradient(
+      180deg,
+      var(--background-primary) 0%,
+      var(--background-primary) 72%,
+      var(--background-secondary) 100%
+    );
+    padding: 18px;
+    gap: 8px;
   }
   
   /* 标签页头部（导航 + 牌组选择器） */
@@ -2294,96 +2263,104 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    margin-bottom: 16px;
+    gap: 12px;
+    margin-bottom: 4px;
   }
   
   /* 标签页导航 */
   .tabs-nav {
     display: flex;
     background: var(--background-secondary);
-    border-radius: 6px;
-    padding: 2px;
-    gap: 2px;
-  }
-  
-  .deck-card-count {
-    font-size: 11px;
-    color: var(--text-muted);
-    flex-shrink: 0;
+    border-radius: 10px;
+    padding: 4px;
+    gap: 4px;
+    border: 1px solid var(--background-modifier-border);
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
   
   .tab-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 5px 14px;
-    border: none;
-    border-radius: 5px;
+    padding: 7px 14px;
+    border: 1px solid transparent;
+    border-radius: 8px;
     background: transparent;
     color: var(--text-muted);
-    font-size: 13px;
+    font-size: 12.5px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.16s ease;
     white-space: nowrap;
+    line-height: 1.15;
   }
   
   .tab-btn:hover {
     color: var(--text-normal);
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border);
   }
   
   .tab-btn.active {
     background: var(--background-primary);
     color: var(--text-normal);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    border-color: var(--background-modifier-border);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.12);
   }
 
   .toolbar {
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    margin-bottom: 12px;
-    padding: 16px 20px;
+    gap: 12px;
+    margin-bottom: 6px;
+    padding: 14px 16px;
     background: var(--background-secondary);
-    border-radius: 8px;
+    border-radius: 12px;
     border: 1px solid var(--background-modifier-border);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   }
 
   .range-toggle-buttons {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
   }
 
   .range-toggle-btn {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 12px;
-    font-size: 13px;
+    padding: 7px 11px;
+    min-height: 34px;
+    font-size: 12.5px;
     font-weight: 500;
-    background: transparent;
+    background: var(--background-primary);
     color: var(--text-muted);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.16s ease;
   }
 
   .range-toggle-btn:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
+    border-color: var(--background-modifier-border-hover, var(--background-modifier-border));
+    transform: translateY(-1px);
   }
 
   .range-toggle-btn.active {
     background: var(--interactive-accent);
     color: var(--text-on-accent, white);
     border-color: var(--interactive-accent);
+    box-shadow: 0 4px 12px rgba(var(--interactive-accent-rgb), 0.22);
   }
 
   .range-panel {
-    padding-top: 12px;
-    animation: rangePanelIn 0.15s ease;
+    padding-top: 4px;
+    animation: rangePanelIn 0.16s ease;
   }
 
   @keyframes rangePanelIn {
@@ -2394,7 +2371,7 @@
   .quick-range-buttons {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     flex-wrap: wrap;
   }
 
@@ -2406,14 +2383,14 @@
   }
 
   .date-input {
-    padding: 5px 10px;
+    padding: 7px 10px;
     font-size: 13px;
     background: var(--background-primary);
     color: var(--text-normal);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: border-color 0.2s ease;
+    transition: border-color 0.16s ease, box-shadow 0.16s ease;
     font-family: var(--font-interface);
   }
 
@@ -2440,16 +2417,16 @@
   }
 
   .time-range-btn {
-    padding: 6px 12px;
-    font-size: 12px;
+    padding: 7px 12px;
+    font-size: 12.5px;
     font-weight: 500;
     background: var(--background-primary);
     color: var(--text-muted);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
+    border-radius: 8px;
     cursor: pointer;
-    transition: all 0.2s ease;
-    min-width: 45px;
+    transition: all 0.16s ease;
+    min-width: 56px;
     text-align: center;
   }
 
@@ -2463,7 +2440,7 @@
     background: var(--interactive-accent);
     color: var(--text-on-accent);
     border-color: var(--interactive-accent);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 10px rgba(var(--interactive-accent-rgb), 0.24);
   }
 
   .time-range-btn.active:hover {
@@ -2475,17 +2452,18 @@
     flex: 1;
     width: 100%;
     min-height: 500px;
-    border-radius: 10px;
-    background: var(--background-secondary);
+    border-radius: 14px;
+    background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    padding: 12px 6px 12px 2px;
-    cursor: grab;
+    padding: 10px 8px;
+    cursor: default;
     user-select: none;
     position: relative;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.14);
   }
   
   .chart-container:active {
-    cursor: grabbing;
+    cursor: default;
   }
   
   .chart-container.hidden {
@@ -2500,12 +2478,12 @@
     gap: 6px;
     font-size: 12px;
     color: var(--text-muted);
-    background: var(--background-secondary);
-    padding: 6px 12px;
-    margin: 0 auto 12px;
-    border-radius: 6px;
+    background: var(--background-primary);
+    padding: 7px 12px;
+    margin: 0 auto 8px;
+    border-radius: 999px;
     opacity: 0;
-    transition: opacity 0.3s ease;
+    transition: opacity 0.24s ease;
     max-width: fit-content;
     border: 1px solid var(--background-modifier-border);
   }
@@ -2528,52 +2506,7 @@
     50% { transform: translateY(-3px); }
   }
   
-  /* 🆕 空状态样式 */
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 80px 40px;
-    text-align: center;
-    flex: 1;
-    min-height: 400px;
-    pointer-events: none;
-  }
-  
-  .empty-title {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--text-normal);
-    margin-bottom: 12px;
-  }
-  
-  .empty-desc {
-    font-size: 14px;
-    color: var(--text-muted);
-    line-height: 1.6;
-    max-width: 400px;
-  }
-  
-  /* 🆕 数据警告样式 */
-  .data-warning {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 12px 16px;
-    margin-bottom: 16px;
-    background: rgba(255, 200, 87, 0.1);
-    border: 1px solid rgba(255, 200, 87, 0.3);
-    border-radius: 6px;
-    color: var(--text-normal);
-    font-size: 13px;
-  }
-  
-  .data-warning svg {
-    flex-shrink: 0;
-    color: #feca57;
-  }
-  
+  /* 空状态样式 */
   /* 更新指示器样式 */
   .updating-indicator {
     position: absolute;
@@ -2617,7 +2550,7 @@
   /* 移动端标签页头部 */
   .tabs-header.mobile {
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
   }
   
   .tabs-header.mobile .tabs-nav {
@@ -2627,7 +2560,7 @@
   }
   
   .tabs-header.mobile .tab-btn {
-    padding: 8px 10px;
+    padding: 8px 11px;
     min-width: 40px;
     display: flex;
     align-items: center;
@@ -2636,7 +2569,7 @@
   
   /* 移动端工具栏 */
   .toolbar.mobile {
-    padding: 10px 8px;
+    padding: 10px;
   }
   
   .toolbar.mobile .quick-range-buttons {
@@ -2648,7 +2581,7 @@
   
   .toolbar.mobile .time-range-btn {
     flex: 1;
-    padding: 8px 6px;
+    padding: 8px 7px;
     font-size: 13px;
     min-width: auto;
     border-radius: 8px;
@@ -2685,33 +2618,15 @@
   /* 移动端图表容器 */
   @media (max-width: 768px) {
     .deck-analytics-modal {
-      padding: 8px 6px;
+      padding: 8px;
     }
     
     .chart-container {
-      min-height: 300px;
-    }
-    
-    .empty-state {
-      padding: 40px 20px;
-      min-height: 300px;
-    }
-    
-    .empty-title {
-      font-size: 18px;
-    }
-    
-    .empty-desc {
-      font-size: 13px;
-    }
-    
-    .data-warning {
-      padding: 10px 12px;
-      font-size: 12px;
+      min-height: 320px;
     }
     
     .toolbar {
-      padding: 10px 8px;
+      padding: 10px;
       margin-bottom: 8px;
     }
 

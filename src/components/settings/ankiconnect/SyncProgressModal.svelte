@@ -5,6 +5,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { fade } from 'svelte/transition';
+  import { tr } from '../../../utils/i18n';
+  import ObsidianIcon from '../../ui/ObsidianIcon.svelte';
+
+  let t = $derived($tr);
 
   type OperationType = 'fetch_models' | 'sync_to_anki' | 'sync_from_anki' | 'batch_sync';
 
@@ -52,10 +56,10 @@
 
   // 操作图标映射
   const operationIcons: Record<OperationType, string> = {
-    fetch_models: '📋',
-    sync_to_anki: '→',
-    sync_from_anki: '←',
-    batch_sync: '⇄'
+    fetch_models: 'layout-template',
+    sync_to_anki: 'upload',
+    sync_from_anki: 'download',
+    batch_sync: 'refresh-cw'
   };
 
   // 计算进度百分比
@@ -75,7 +79,7 @@
 
   // 获取操作图标
   function getOperationIcon(): string {
-    return operationIcons[operation] || '⚙️';
+    return operationIcons[operation] || 'settings';
   }
 
   function handleKeydown(_event: KeyboardEvent) {
@@ -118,7 +122,9 @@
     >
       <!-- 头部 -->
       <div class="modal-header">
-        <div class="operation-icon">{getOperationIcon()}</div>
+        <div class="operation-icon">
+          <ObsidianIcon name={getOperationIcon()} size={22} />
+        </div>
         <h3 id="progress-modal-title" class="modal-title">{title}</h3>
       </div>
 
@@ -127,7 +133,7 @@
         <!-- 当前处理项 -->
         {#if currentItem}
           <div class="current-item">
-            <span class="label">正在处理：</span>
+            <span class="label">{t('ankiConnect.syncProgress.processing')}</span>
             <span class="value">{currentItem}</span>
           </div>
         {/if}
@@ -135,7 +141,7 @@
         <!-- 牌组进度（批量操作时显示） -->
         {#if totalDecks > 0}
           <div class="deck-progress">
-            <span class="label">牌组进度：</span>
+            <span class="label">{t('ankiConnect.syncProgress.deckProgress')}</span>
             <span class="value">{deckIndex} / {totalDecks}</span>
           </div>
         {/if}
@@ -173,9 +179,9 @@
           <button
             class="btn-cancel"
             onclick={handleCancel}
-            aria-label="取消操作"
+            aria-label={t('ankiConnect.syncProgress.cancelLabel')}
           >
-            取消
+            {t('ankiConnect.syncProgress.cancelButton')}
           </button>
         </div>
       {/if}
@@ -195,7 +201,7 @@
     z-index: var(--layer-notice);
     backdrop-filter: blur(2px);
     animation: fadeIn 0.25s ease-out;
-    /*  关键修复：遮罩层不拦截鼠标事件，允许点击穿透 */
+    /* 遮罩层不拦截鼠标事件，允许点击穿透 */
     pointer-events: none;
   }
 
@@ -219,7 +225,7 @@
     display: flex;
     flex-direction: column;
     animation: slideIn 0.3s ease-out;
-    /*  关键修复：模态窗本体恢复事件接收 */
+    /* 模态窗本体恢复事件接收 */
     pointer-events: auto;
   }
 
@@ -244,8 +250,13 @@
   }
 
   .operation-icon {
-    font-size: 28px;
-    opacity: 0.9;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--interactive-accent);
+    opacity: 0.95;
   }
 
   .modal-title {

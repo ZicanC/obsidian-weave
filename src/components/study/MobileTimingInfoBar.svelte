@@ -13,6 +13,8 @@
    * @version 3.0.0
    */
 
+  import { tr } from '../../utils/i18n';
+
   // 默认阈值常量
   const DEFAULT_THRESHOLD_MS = 60000; // 兜底60秒
   const FSRS_DIFFICULTY_RANGE = { min: 1, max: 10 }; // FSRS难度范围
@@ -37,6 +39,8 @@
     difficulty = 5,
     deckAverageTime = 0
   }: Props = $props();
+
+  let t = $derived($tr);
 
   /**
    * 格式化时间（毫秒 -> MM:SS 或 H:MM:SS）
@@ -89,22 +93,22 @@
    */
   function getTimingStatus(): { text: string; class: string } {
     if (currentTime === 0) {
-      return { text: '准备中', class: 'status-idle' };
+      return { text: t('study.timing.ready'), class: 'status-idle' };
     }
     
     const threshold = calculateThreshold();
     const ratio = currentTime / threshold;
     
     if (ratio < 0.6) {
-      return { text: '回忆中', class: 'status-normal' };
+      return { text: t('study.timing.recalling'), class: 'status-normal' };
     }
     if (ratio < 1.0) {
-      return { text: '思考中', class: 'status-normal' };
+      return { text: t('study.timing.thinking'), class: 'status-normal' };
     }
     if (ratio < 1.5) {
-      return { text: '深度回忆', class: 'status-warning' };
+      return { text: t('study.timing.deepRecall'), class: 'status-warning' };
     }
-    return { text: '需要复习', class: 'status-overtime' };
+    return { text: t('study.timing.reviewNeeded'), class: 'status-overtime' };
   }
 
   // 派生状态
@@ -117,21 +121,21 @@
   <div class="mobile-timing-info-bar {status.class}">
     <!-- 三栏式布局：当前 | 平均 | 状态 -->
     <div class="timing-item current">
-      <span class="timing-label">当前</span>
+      <span class="timing-label">{t('study.timing.current')}</span>
       <span class="timing-value">{currentTimeFormatted}</span>
     </div>
     
     <div class="timing-divider"></div>
     
     <div class="timing-item">
-      <span class="timing-label">平均</span>
+      <span class="timing-label">{t('study.timing.average')}</span>
       <span class="timing-value">{averageTimeFormatted}</span>
     </div>
     
     <div class="timing-divider"></div>
     
     <div class="timing-item status">
-      <span class="timing-label">状态</span>
+      <span class="timing-label">{t('study.timing.status')}</span>
       <span class="timing-status-badge">{status.text}</span>
     </div>
   </div>

@@ -1,10 +1,29 @@
 /* ============================================================
- * 原本通过 document.createElement('style') 动态注入的样式
+ * 原本通过运行时样式注入方式挂载的样式
  * 已迁移至此静态 CSS 文件，由 Vite 打包到 styles.css
  * ============================================================ */
 
 /* --- notifications.ts --- */
 .weave-notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  color: white;
+  padding: 12px 16px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 1000001;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: translateX(100%);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 14px;
+  font-weight: 500;
+  max-width: 400px;
+  min-width: 200px;
+  word-wrap: break-word;
+  font-family: var(--font-interface, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
   pointer-events: auto;
   user-select: none;
   backdrop-filter: blur(8px);
@@ -13,6 +32,42 @@
 body .weave-notification:hover {
   transform: translateX(0) scale(1.02);
   box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+}
+
+.weave-notification.is-visible {
+  transform: translateX(0);
+}
+
+.weave-notification.notification-success {
+  background: #059669;
+}
+
+.weave-notification.notification-error {
+  background: #dc2626;
+}
+
+.weave-notification.notification-warning {
+  background: #d97706;
+}
+
+.weave-notification.notification-info {
+  background: #2563eb;
+}
+
+.theme-dark .weave-notification.notification-success {
+  background: #10b981;
+}
+
+.theme-dark .weave-notification.notification-error {
+  background: #ef4444;
+}
+
+.theme-dark .weave-notification.notification-warning {
+  background: #f59e0b;
+}
+
+.theme-dark .weave-notification.notification-info {
+  background: #3b82f6;
 }
 
 .theme-dark .weave-notification {
@@ -173,6 +228,58 @@ body .weave-notification:hover {
   display: flex;
   justify-content: flex-end;
   gap: 12px;
+}
+
+/* --- SourceLocateOverlayService.ts --- */
+.weave-source-locate-overlay {
+  position: absolute;
+  z-index: 2147483000;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: rgba(15, 23, 42, 0.96);
+  color: #f8fafc;
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  pointer-events: none;
+  animation: weave-source-locate-overlay-in 0.18s ease-out forwards;
+}
+
+.weave-source-locate-overlay__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--interactive-accent, #8b5cf6) 22%, transparent);
+  color: var(--interactive-accent, #8b5cf6);
+  flex: 0 0 24px;
+}
+
+.weave-source-locate-overlay__icon .svg-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.weave-source-locate-overlay__label {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+@keyframes weave-source-locate-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* --- IRImportModal.ts --- */
@@ -605,4 +712,175 @@ body.is-mobile .receipt-modal .modal-background {
 body.is-mobile .receipt-modal .printer-container {
   max-height: var(--weave-modal-max-height, calc(100vh - 130px));
   overflow-y: auto;
+}
+
+/* --- CustomApiUrlModal.ts --- */
+.weave-custom-api-url-modal .weave-url-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.weave-custom-api-url-modal .weave-url-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-normal);
+}
+
+.weave-custom-api-url-modal .weave-url-input {
+  width: 100%;
+  padding: 8px 12px;
+  font-family: var(--font-monospace);
+  font-size: 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  box-sizing: border-box;
+}
+
+.weave-custom-api-url-modal .weave-url-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.15);
+}
+
+.weave-custom-api-url-modal .weave-url-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.weave-custom-api-url-modal .weave-url-examples {
+  margin-top: 1.5rem;
+}
+
+.weave-custom-api-url-modal .weave-url-examples h4 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.weave-custom-api-url-modal .weave-example-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+}
+
+.weave-custom-api-url-modal .weave-example-label {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.weave-custom-api-url-modal .weave-example-url {
+  font-family: var(--font-monospace);
+  font-size: 0.85rem;
+  color: var(--text-accent);
+  word-break: break-all;
+}
+
+.weave-custom-api-url-modal .weave-url-notes {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: rgba(239, 68, 68, 0.15);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-left: 3px solid var(--text-error);
+  border-radius: 6px;
+}
+
+.weave-custom-api-url-modal .weave-url-notes h4 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-error);
+}
+
+.weave-custom-api-url-modal .weave-url-notes ul {
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.weave-custom-api-url-modal .weave-url-notes li {
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.weave-custom-api-url-modal .weave-url-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 1.5rem;
+}
+
+/* --- tablet-debug.ts --- */
+.weave-tablet-debug {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  max-width: 300px;
+  padding: 10px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  font-family: var(--font-monospace, monospace);
+  font-size: 12px;
+  z-index: 10000;
+  pointer-events: none;
+}
+
+.weave-tablet-debug__mock {
+  color: #facc15;
+}
+
+/* --- obsidian-navigation-service.ts --- */
+.weave-nav-button--action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.weave-nav-button--action:hover {
+  background: var(--interactive-accent-hover);
+}
+
+/* --- IRV4SchedulerService.ts --- */
+.weave-ir-tag-drift-description {
+  margin-top: 4px;
+  opacity: 0.8;
+  font-size: 0.9em;
+}
+
+.weave-ir-tag-drift-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.weave-ir-tag-drift-button {
+  padding: 2px 12px;
+  cursor: pointer;
+}
+
+/* --- EPUB Reader Theme Overrides --- */
+.weave-epub-reader-host {
+  display: block;
+  width: 100%;
+  height: 100%;
 }

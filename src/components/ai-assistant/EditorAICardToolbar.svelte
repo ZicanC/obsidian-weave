@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import type { WeavePlugin } from '../../main';
   import type { PromptTemplate, AIProvider, GenerationConfig, GenerationProgress, GeneratedCard } from '../../types/ai-types';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
   import { Menu, Notice } from 'obsidian';
   import { AI_PROVIDER_LABELS, AI_MODEL_OPTIONS } from '../settings/constants/settings-constants';
   import { AICardGenerationService } from '../../services/ai/AICardGenerationService';
-  import AIConfigModal from './AIConfigModal.svelte';
+  import { AIConfigModalObsidian } from './AIConfigModalObsidian';
   import CardPreviewModal from './CardPreviewModal.svelte';
   import { logger } from '../../utils/logger';
 
@@ -24,21 +25,23 @@
   let isGenerating = $state(false);
   let generationProgress = $state<GenerationProgress | null>(null);
   let generatedCards = $state<GeneratedCard[]>([]);
-  let showConfigModal = $state(false);
+  let aiConfigModalInstance: AIConfigModalObsidian | null = null;
   let showPreviewModal = $state(false);
   let textareaElement = $state<HTMLTextAreaElement | undefined>(undefined);
 
-  // 生成配置
+  // 从持久化设置中恢复AI制卡配置
+  const aiAssistantPreferences = plugin.getAIAssistantPreferences();
+  const saved = aiAssistantPreferences.savedGenerationConfig;
   let generationConfig = $state<GenerationConfig>({
     templateId: '',
     promptTemplate: '',
-    cardCount: 10,
-    difficulty: 'medium',
-    typeDistribution: { qa: 50, cloze: 30, choice: 20 },
-    provider: (plugin.settings.aiConfig?.lastUsedProvider || plugin.settings.aiConfig?.defaultProvider || 'openai') as AIProvider,
-    model: plugin.settings.aiConfig?.lastUsedModel || '',
-    temperature: 0.7,
-    maxTokens: 2000,
+    cardCount: saved?.cardCount ?? 10,
+    difficulty: saved?.difficulty ?? 'medium',
+    typeDistribution: saved?.typeDistribution ?? { qa: 50, cloze: 30, choice: 20 },
+    provider: (aiAssistantPreferences.lastUsedProvider || plugin.settings.aiConfig?.defaultProvider || 'openai') as AIProvider,
+    model: aiAssistantPreferences.lastUsedModel || '',
+    temperature: saved?.temperature ?? 0.7,
+    maxTokens: saved?.maxTokens ?? 2000,
     imageGeneration: {
       enabled: false,
       strategy: 'none',
@@ -50,15 +53,15 @@
       choice: 'official-choice',
       cloze: 'official-cloze'
     },
-    autoTags: [],
-    enableHints: true
+    autoTags: saved?.autoTags ?? [],
+    enableHints: saved?.enableHints ?? true
   });
 
   const generationService = new AICardGenerationService(plugin);
 
   // 提示词
   let officialPrompts = $derived<PromptTemplate[]>(
-    (plugin.settings.aiConfig?.promptTemplates.official || []).map(p => ({
+    (plugin.settings.aiConfig?.promptTemplates?.official || []).map(p => ({
       ...p,
       category: 'official' as const,
       useBuiltinSystemPrompt: true
@@ -66,7 +69,7 @@
   );
 
   let customPrompts = $derived<PromptTemplate[]>(
-    (plugin.settings.aiConfig?.promptTemplates.custom || []).map(p => ({
+    (plugin.settings.aiConfig?.promptTemplates?.custom || []).map(p => ({
       ...p,
       category: 'custom' as const,
       useBuiltinSystemPrompt: true
@@ -236,10 +239,42 @@
     }
   }
 
-  function handleSaveConfig(newConfig: GenerationConfig) {
-    generationConfig = newConfig;
-    showConfigModal = false;
+  function openAIConfigModalWithObsidianAPI() {
+    aiConfigModalInstance?.close();
+    aiConfigModalInstance = new AIConfigModalObsidian(plugin.app, {
+      plugin,
+      config: generationConfig,
+      onSave: handleSaveConfig,
+      onClose: () => {
+        aiConfigModalInstance = null;
+      }
+    });
+    aiConfigModalInstance.open();
   }
+
+  async function handleSaveConfig(newConfig: GenerationConfig) {
+    generationConfig = newConfig;
+
+    await plugin.saveAIAssistantPreferences({
+      ...plugin.getAIAssistantPreferences(),
+      lastUsedProvider: newConfig.provider,
+      lastUsedModel: newConfig.model,
+      savedGenerationConfig: {
+        cardCount: newConfig.cardCount,
+        difficulty: newConfig.difficulty,
+        typeDistribution: { ...newConfig.typeDistribution },
+        autoTags: newConfig.autoTags ? [...newConfig.autoTags] : [],
+        enableHints: newConfig.enableHints,
+        temperature: newConfig.temperature,
+        maxTokens: newConfig.maxTokens
+      }
+    });
+  }
+
+  onDestroy(() => {
+    aiConfigModalInstance?.close();
+    aiConfigModalInstance = null;
+  });
 
   async function handleImportCards(selectedCards: GeneratedCard[], targetDeckId: string) {
     try {
@@ -334,7 +369,7 @@
     <!-- 配置按钮 -->
     <button
       class="toolbar-btn config-btn"
-      onclick={() => showConfigModal = true}
+      onclick={openAIConfigModalWithObsidianAPI}
       title="AI制卡配置"
     >
       <ObsidianIcon name="settings" size={14} />
@@ -378,24 +413,9 @@
     </button>
   </div>
 
-  <!-- 进度条 -->
-  {#if generationProgress && generationProgress.status !== 'completed'}
-    <div class="toolbar-progress">
-      <div class="progress-bar" style="width: {generationProgress.progress}%"></div>
-      <span class="progress-text">{generationProgress.message}</span>
-    </div>
-  {/if}
 </div>
 
 <!-- 配置模态窗 -->
-<AIConfigModal
-  {plugin}
-  config={generationConfig}
-  isOpen={showConfigModal}
-  onClose={() => showConfigModal = false}
-  onSave={handleSaveConfig}
-/>
-
 <!-- 卡片预览模态窗 -->
 <CardPreviewModal
   {plugin}
@@ -554,35 +574,6 @@
     font-weight: 700;
     line-height: 16px;
     text-align: center;
-  }
-
-  /* 进度条 */
-  .toolbar-progress {
-    position: relative;
-    height: 20px;
-    background: var(--background-modifier-border);
-    border-radius: 4px;
-    overflow: hidden;
-  }
-
-  .progress-bar {
-    position: absolute;
-    top: 0;
-    left: 0;
-    height: 100%;
-    background: var(--interactive-accent);
-    opacity: 0.3;
-    transition: width 0.3s ease;
-  }
-
-  .progress-text {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    font-size: 0.6875rem;
-    color: var(--text-muted);
   }
 
   @keyframes spin {

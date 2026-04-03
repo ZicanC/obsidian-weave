@@ -1,20 +1,23 @@
 <script lang="ts">
   import type { Card } from "../../data/types";
+  import { tr } from '../../utils/i18n';
 
   interface Props {
     card: Card;
     index: number;
     selected: boolean;
-    regenerating?: boolean; // 🆕 是否正在重新生成
-    disabled?: boolean; // 🆕 是否禁用（待定状态）
+    regenerating?: boolean; // 是否正在重新生成
+    disabled?: boolean; // 是否禁用（待定状态）
     onclick: () => void;
   }
 
   let { card, index, selected, regenerating = false, disabled = false, onclick }: Props = $props();
 
+  let t = $derived($tr);
+
   // 获取完整卡片内容（front + back，使用分隔符）
   const contentPreview = $derived.by(() => {
-    //  Content-Only 架构：从 card.content 解析
+    // 从 card.content 解析
     if (!card.content) {
       return '';
     }
@@ -49,7 +52,7 @@
     }
   });
 
-  // 🆕 处理点击事件（禁用时阻止）
+  // 处理点击事件（禁用时阻止）
   function handleClick() {
     if (!disabled && !regenerating) {
       onclick();
@@ -67,10 +70,10 @@
   type="button"
 >
   {#if regenerating}
-    <!-- 🆕 加载状态UI -->
+    <!-- 加载状态 UI -->
     <div class="regenerating-indicator">
       <div class="regenerating-text">
-        <span>正在重新生成...</span>
+        <span>{t('study.childCards.regenerating')}</span>
       </div>
       <div class="regenerating-progress">
         <div class="regenerating-progress-bar"></div>
@@ -178,7 +181,7 @@
     );
   }
 
-  /* 🆕 正在重新生成状态 */
+  /* 正在重新生成状态 */
   .child-card-mini.regenerating {
     border-color: rgba(76, 175, 230, 0.5);
     background: rgba(76, 175, 230, 0.1);
@@ -200,7 +203,7 @@
     );
   }
 
-  /* 🆕 禁用状态（待定状态） */
+  /* 禁用状态（待定状态） */
   .child-card-mini.disabled {
     opacity: 0.6;
     filter: grayscale(0.3);
@@ -221,7 +224,7 @@
     opacity: 0;
   }
 
-  /* 🆕 加载指示器容器 */
+  /* 加载指示器容器 */
   .regenerating-indicator {
     display: flex;
     flex-direction: column;
@@ -240,11 +243,7 @@
     gap: 0.5rem;
   }
 
-  .regenerating-icon {
-    animation: spin 1s linear infinite;
-  }
-
-  /* 🆕 进度条容器 */
+  /* 进度条容器 */
   .regenerating-progress {
     width: 80%;
     height: 3px;
@@ -253,7 +252,7 @@
     overflow: hidden;
   }
 
-  /* 🆕 进度条 */
+  /* 进度条 */
   .regenerating-progress-bar {
     height: 100%;
     width: 30%;
@@ -265,7 +264,7 @@
     animation: progress-indeterminate 1.5s ease-in-out infinite;
   }
 
-  /* 🆕 脉冲动画 */
+  /* 脉冲动画 */
   @keyframes pulseGlow {
     0%, 100% {
       box-shadow: 
@@ -281,7 +280,7 @@
     }
   }
 
-  /* 🆕 旋转动画（图标） */
+  /* 旋转动画（图标） */
   @keyframes spin {
     from {
       transform: rotate(0deg);
@@ -291,7 +290,7 @@
     }
   }
 
-  /* 🆕 不确定进度条动画 */
+  /* 不确定进度条动画 */
   @keyframes progress-indeterminate {
     0% {
       transform: translateX(-100%);

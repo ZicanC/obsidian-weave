@@ -8,8 +8,6 @@
  * 
  * @module services/__tests__/FSRSScheduling.property.test
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import type { FSRSCard, Rating } from '../../data/types';
 import { CardState, Rating as RatingEnum } from '../../data/types';

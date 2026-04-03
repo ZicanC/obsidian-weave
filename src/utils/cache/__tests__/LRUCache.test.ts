@@ -159,7 +159,7 @@ describe('LRUCache', () => {
       const cache = new LRUCache<string, number>({
         maxSize: 2,
         onEvict: (key, value) => {
-          evictedItems.push([key, value]);
+          evictedItems.push([key, value as number]);
         }
       });
       
@@ -175,7 +175,7 @@ describe('LRUCache', () => {
       const cache = new LRUCache<string, number>({
         maxSize: 3,
         onEvict: (key, value) => {
-          evictedItems.push([key, value]);
+          evictedItems.push([key, value as number]);
         }
       });
       
@@ -241,7 +241,7 @@ describe('CacheManager', () => {
     
     cache.set('a', 1);
     
-    const _samCache = manager.getCache<string, number>('test', { maxSize: 10 });
+    const sameCache = manager.getCache<string, number>('test', { maxSize: 10 });
     expect(sameCache.get('a')).toBe(1);
   });
 

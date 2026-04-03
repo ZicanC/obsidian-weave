@@ -1,313 +1,334 @@
 /**
  * 内容拆分工具函数
- * 
+ *
  * 提供规则拆分和手动标记解析功能
- * 
+ *
  * @module utils/content-split-utils
  * @version 1.0.0
  */
 
-import type { 
-  ContentBlock, 
-  RuleSplitConfig 
-} from '../types/content-split-types';
-import { 
-  SPLIT_MARKER_REGEX,
-  generateSplitMarkerId 
-} from '../types/content-split-types';
-import { extractBodyContent, parseYAMLFromContent } from './yaml-utils';
+import type { ContentBlock, RuleSplitConfig } from "../types/content-split-types";
+import { SPLIT_MARKER_REGEX, generateSplitMarkerId } from "../types/content-split-types";
+import { extractBodyContent, parseYAMLFromContent } from "./yaml-utils";
+
+interface LineSegment {
+	text: string;
+	start: number;
+	nextStart: number;
+}
+
+function normalizeSplitContent(content: string): string {
+	return extractBodyContent(content).replace(/\r\n?/g, "\n");
+}
+
+function extractHeadingText(line: string): string | null {
+	const headingMatch = line.match(/^#{1,6}\s+(.+)$/);
+	return headingMatch ? headingMatch[1].trim() : null;
+}
+
+function sanitizeTitleLine(line: string): string {
+	const cleaned = line
+		.trim()
+		.replace(/^>\s*/, "")
+		.replace(/^[-*+]\s+/, "")
+		.replace(/^\d+[.)]\s+/, "")
+		.replace(/^\[[ xX]\]\s+/, "")
+		.trim();
+
+	if (!cleaned) {
+		return "(无标题)";
+	}
+
+	return cleaned.length > 50 ? `${cleaned.substring(0, 50)}...` : cleaned;
+}
+
+function buildLineSegments(content: string): LineSegment[] {
+	const lines = content.split("\n");
+	const segments: LineSegment[] = [];
+	let offset = 0;
+
+	for (let i = 0; i < lines.length; i++) {
+		const text = lines[i];
+		const start = offset;
+		const nextStart = start + text.length + (i < lines.length - 1 ? 1 : 0);
+		segments.push({ text, start, nextStart });
+		offset = nextStart;
+	}
+
+	return segments;
+}
+
+function normalizeBlockContent(rawBlockContent: string, config: RuleSplitConfig): string {
+	let blockContent = rawBlockContent.replace(/\r\n?/g, "\n");
+
+	if (config.enableSymbolSplit && config.splitSymbol.trim()) {
+		const normalizedSymbol = config.splitSymbol.trim();
+		blockContent = blockContent
+			.split("\n")
+			.filter((line) => line.trim() !== normalizedSymbol)
+			.join("\n");
+	}
+
+	return blockContent.trim();
+}
+
+function extractTitle(content: string, preserveHeading: boolean): string {
+	const lines = content.split("\n");
+	let headingFallback: string | null = null;
+
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+
+		const headingText = extractHeadingText(trimmed);
+		if (headingText) {
+			if (preserveHeading) {
+				return headingText;
+			}
+			headingFallback = headingFallback || headingText;
+			continue;
+		}
+
+		return sanitizeTitleLine(trimmed);
+	}
+
+	return headingFallback || "(无标题)";
+}
 
 export function deriveFileTitleFromContent(content: string, defaultTitle?: string): string {
-  const yaml = parseYAMLFromContent(content);
-  const yamlTitle = typeof yaml.title === 'string' ? yaml.title.trim() : '';
-  if (yamlTitle) return yamlTitle;
+	const yaml = parseYAMLFromContent(content);
+	const yamlTitle = typeof yaml.title === "string" ? yaml.title.trim() : "";
+	if (yamlTitle) return yamlTitle;
 
-  const body = extractBodyContent(content);
-  const lines = body.split('\n');
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const headingMatch = trimmed.match(/^#{1,6}\s+(.+)$/);
-    if (headingMatch) {
-      const headingTitle = headingMatch[1].trim();
-      if (headingTitle) return headingTitle;
-    }
-    break;
-  }
+	const body = normalizeSplitContent(content);
+	const lines = body.split("\n");
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
 
-  if (defaultTitle && defaultTitle.trim()) return defaultTitle.trim();
+		const headingTitle = extractHeadingText(trimmed);
+		if (headingTitle) {
+			return headingTitle;
+		}
+		break;
+	}
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    return trimmed.length > 50 ? trimmed.substring(0, 50) + '...' : trimmed;
-  }
+	if (defaultTitle?.trim()) return defaultTitle.trim();
 
-  return 'untitled';
+	for (const line of lines) {
+		const trimmed = line.trim();
+		if (!trimmed) continue;
+		return sanitizeTitleLine(trimmed);
+	}
+
+	return "untitled";
 }
 
 /**
  * 根据规则拆分内容
  */
 export function splitByRules(
-  content: string,
-  config: RuleSplitConfig,
-  options?: { defaultTitle?: string }
+	content: string,
+	config: RuleSplitConfig,
+	options?: { defaultTitle?: string }
 ): ContentBlock[] {
-  if (!content.trim()) {
-    return [];
-  }
+	const normalizedContent = normalizeSplitContent(content);
+	if (!normalizedContent.trim()) {
+		return [];
+	}
 
-  // 如果启用整个文件作为一个块，直接返回整个内容
-  if (config.enableWholeFile) {
-    const title = deriveFileTitleFromContent(content, options?.defaultTitle);
-    return [{
-      id: generateSplitMarkerId(),
-      title,
-      content: content.trim(),
-      charCount: content.trim().length,
-      startOffset: 0,
-      endOffset: content.length
-    }];
-  }
+	// 如果启用整个文件作为一个块，直接返回整个内容
+	if (config.enableWholeFile) {
+		const wholeContent = normalizedContent.trim();
+		const title = deriveFileTitleFromContent(content, options?.defaultTitle);
+		return [
+			{
+				id: generateSplitMarkerId(),
+				title,
+				content: wholeContent,
+				charCount: wholeContent.length,
+				startOffset: 0,
+				endOffset: normalizedContent.length,
+			},
+		];
+	}
 
-  const splitPoints: number[] = [0];
-  const lines = content.split('\n');
-  let currentOffset = 0;
+	const splitPoints = new Set<number>([0]);
+	const lineSegments = buildLineSegments(normalizedContent);
+	const normalizedSymbol = config.enableSymbolSplit ? config.splitSymbol.trim() : "";
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const lineStart = currentOffset;
+	for (let i = 0; i < lineSegments.length; i++) {
+		const segment = lineSegments[i];
+		const trimmed = segment.text.trim();
 
-    // 按标题拆分
-    if (config.enableHeadingSplit && config.headingLevels.length > 0) {
-      const headingMatch = line.match(/^(#{1,6})\s+/);
-      if (headingMatch) {
-        const level = headingMatch[1].length;
-        if (config.headingLevels.includes(level)) {
-          if (lineStart > 0 && !splitPoints.includes(lineStart)) {
-            splitPoints.push(lineStart);
-          }
-        }
-      }
-    }
+		// 按标题拆分
+		if (config.enableHeadingSplit && config.headingLevels.length > 0) {
+			const headingMatch = trimmed.match(/^(#{1,6})\s+/);
+			if (headingMatch) {
+				const level = headingMatch[1].length;
+				if (config.headingLevels.includes(level) && segment.start > 0) {
+					splitPoints.add(segment.start);
+				}
+			}
+		}
 
-    // 按空行拆分
-    if (config.enableBlankLineSplit && config.blankLineCount > 0) {
-      let blankCount = 0;
-      let j = i;
-      while (j < lines.length && lines[j].trim() === '') {
-        blankCount++;
-        j++;
-      }
-      if (blankCount >= config.blankLineCount) {
-        const splitOffset = currentOffset;
-        if (splitOffset > 0 && !splitPoints.includes(splitOffset)) {
-          splitPoints.push(splitOffset);
-        }
-      }
-    }
+		// 按空行拆分：在满足阈值的空行段之后开始新块
+		if (config.enableBlankLineSplit && config.blankLineCount > 0 && trimmed === "") {
+			let j = i;
+			while (j < lineSegments.length && lineSegments[j].text.trim() === "") {
+				j++;
+			}
+			const blankCount = j - i;
+			if (blankCount >= config.blankLineCount && j < lineSegments.length) {
+				splitPoints.add(lineSegments[j].start);
+			}
+			i = j - 1;
+			continue;
+		}
 
-    // 按符号拆分
-    if (config.enableSymbolSplit && config.splitSymbol) {
-      if (line.trim() === config.splitSymbol.trim()) {
-        const splitOffset = lineStart;
-        if (splitOffset > 0 && !splitPoints.includes(splitOffset)) {
-          splitPoints.push(splitOffset);
-        }
-      }
-    }
+		// 按符号拆分：在分隔符下一行开始新块
+		if (
+			normalizedSymbol &&
+			trimmed === normalizedSymbol &&
+			segment.nextStart < normalizedContent.length
+		) {
+			splitPoints.add(segment.nextStart);
+		}
+	}
 
-    currentOffset += line.length + 1; // +1 for newline
-  }
+	splitPoints.add(normalizedContent.length);
+	const sortedPoints = Array.from(splitPoints).sort((a, b) => a - b);
 
-  // 添加结束点
-  splitPoints.push(content.length);
+	const blocks: ContentBlock[] = [];
+	for (let i = 0; i < sortedPoints.length - 1; i++) {
+		const startOffset = sortedPoints[i];
+		const endOffset = sortedPoints[i + 1];
+		const blockContent = normalizeBlockContent(
+			normalizedContent.substring(startOffset, endOffset),
+			config
+		);
 
-  // 排序去重
-  const sortedPoints = [...new Set(splitPoints)].sort((a, b) => a - b);
+		if (config.filterEmptyBlocks && !blockContent) {
+			continue;
+		}
 
-  // 生成内容块
-  const blocks: ContentBlock[] = [];
-  for (let i = 0; i < sortedPoints.length - 1; i++) {
-    const startOffset = sortedPoints[i];
-    const endOffset = sortedPoints[i + 1];
-    let blockContent = content.substring(startOffset, endOffset).trim();
+		if (blockContent.length < config.minBlockCharCount) {
+			continue;
+		}
 
-    // 移除拆分符号行（如果按符号拆分）
-    if (config.enableSymbolSplit && config.splitSymbol) {
-      const lines = blockContent.split('\n');
-      blockContent = lines
-        .filter(line => line.trim() !== config.splitSymbol.trim())
-        .join('\n')
-        .trim();
-    }
+		blocks.push({
+			id: generateSplitMarkerId(),
+			title: extractTitle(blockContent, config.preserveHeadingAsTitle),
+			content: blockContent,
+			charCount: blockContent.length,
+			startOffset,
+			endOffset,
+		});
+	}
 
-    // 过滤空内容块
-    if (config.filterEmptyBlocks && !blockContent.trim()) {
-      continue;
-    }
-
-    // 检查最小字符数
-    if (blockContent.length < config.minBlockCharCount) {
-      continue;
-    }
-
-    // 提取标题
-    const title = extractTitle(blockContent, config.preserveHeadingAsTitle);
-
-    blocks.push({
-      id: generateSplitMarkerId(),
-      title,
-      content: blockContent,
-      charCount: blockContent.length,
-      startOffset,
-      endOffset
-    });
-  }
-
-  return blocks;
+	return blocks;
 }
 
 /**
  * 解析手动拆分标记
  */
 export function parseManualSplitMarkers(content: string): ContentBlock[] {
-  if (!content.trim()) {
-    return [];
-  }
+	const normalizedContent = normalizeSplitContent(content);
+	if (!normalizedContent.trim()) {
+		return [];
+	}
 
-  const markers: { index: number; marker: string }[] = [];
-  let match;
+	const markers: { index: number; marker: string }[] = [];
+	let match: RegExpExecArray | null;
 
-  // 重置正则
-  const regex = new RegExp(SPLIT_MARKER_REGEX.source, 'g');
-  
-  while ((match = regex.exec(content)) !== null) {
-    markers.push({
-      index: match.index,
-      marker: match[0]
-    });
-  }
+	const regex = new RegExp(SPLIT_MARKER_REGEX.source, "g");
 
-  // 生成分割点
-  const splitPoints: number[] = [0];
-  
-  for (const { index, marker } of markers) {
-    // 拆分点在标记之后
-    splitPoints.push(index + marker.length);
-  }
-  
-  splitPoints.push(content.length);
+	while ((match = regex.exec(normalizedContent)) !== null) {
+		markers.push({
+			index: match.index,
+			marker: match[0],
+		});
+	}
 
-  // 生成内容块
-  const blocks: ContentBlock[] = [];
-  
-  for (let i = 0; i < splitPoints.length - 1; i++) {
-    const startOffset = splitPoints[i];
-    let endOffset = splitPoints[i + 1];
-    
-    // 对于非最后一块，结束位置需要调整到标记之前
-    if (i < markers.length) {
-      endOffset = markers[i].index;
-    }
-    
-    let blockContent = content.substring(startOffset, endOffset).trim();
-    
-    // 移除标记本身
-    blockContent = blockContent.replace(SPLIT_MARKER_REGEX, '').trim();
+	const splitPoints: number[] = [0];
 
-    if (!blockContent) {
-      continue;
-    }
+	for (const { index, marker } of markers) {
+		splitPoints.push(index + marker.length);
+	}
 
-    const title = extractTitle(blockContent, true);
+	splitPoints.push(normalizedContent.length);
 
-    blocks.push({
-      id: generateSplitMarkerId(),
-      title,
-      content: blockContent,
-      charCount: blockContent.length,
-      startOffset,
-      endOffset
-    });
-  }
+	const blocks: ContentBlock[] = [];
 
-  // 处理最后一块（最后一个标记之后的内容）
-  if (markers.length > 0) {
-    const lastMarker = markers[markers.length - 1];
-    const lastStartOffset = lastMarker.index + lastMarker.marker.length;
-    const lastContent = content.substring(lastStartOffset).trim();
-    
-    if (lastContent) {
-      // 检查是否已添加
-      const alreadyAdded = blocks.some(b => 
-        b.content === lastContent || 
-        b.startOffset === lastStartOffset
-      );
-      
-      if (!alreadyAdded) {
-        blocks.push({
-          id: generateSplitMarkerId(),
-          title: extractTitle(lastContent, true),
-          content: lastContent,
-          charCount: lastContent.length,
-          startOffset: lastStartOffset,
-          endOffset: content.length
-        });
-      }
-    }
-  }
+	for (let i = 0; i < splitPoints.length - 1; i++) {
+		const startOffset = splitPoints[i];
+		let endOffset = splitPoints[i + 1];
 
-  return blocks;
-}
+		if (i < markers.length) {
+			endOffset = markers[i].index;
+		}
 
-/**
- * 从内容中提取标题
- */
-function extractTitle(content: string, preserveHeading: boolean): string {
-  const lines = content.split('\n');
-  
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    
-    // 尝试提取Markdown标题
-    if (preserveHeading) {
-      const headingMatch = trimmed.match(/^#{1,6}\s+(.+)$/);
-      if (headingMatch) {
-        return headingMatch[1].trim();
-      }
-    }
-    
-    // 返回首行作为标题（截取前50个字符）
-    return trimmed.length > 50 ? trimmed.substring(0, 50) + '...' : trimmed;
-  }
-  
-  return '(无标题)';
+		let blockContent = normalizedContent.substring(startOffset, endOffset).trim();
+		blockContent = blockContent.replace(SPLIT_MARKER_REGEX, "").trim();
+
+		if (!blockContent) {
+			continue;
+		}
+
+		blocks.push({
+			id: generateSplitMarkerId(),
+			title: extractTitle(blockContent, true),
+			content: blockContent,
+			charCount: blockContent.length,
+			startOffset,
+			endOffset,
+		});
+	}
+
+	if (markers.length > 0) {
+		const lastMarker = markers[markers.length - 1];
+		const lastStartOffset = lastMarker.index + lastMarker.marker.length;
+		const lastContent = normalizedContent.substring(lastStartOffset).trim();
+
+		if (lastContent) {
+			const alreadyAdded = blocks.some(
+				(b) => b.content === lastContent || b.startOffset === lastStartOffset
+			);
+
+			if (!alreadyAdded) {
+				blocks.push({
+					id: generateSplitMarkerId(),
+					title: extractTitle(lastContent, true),
+					content: lastContent,
+					charCount: lastContent.length,
+					startOffset: lastStartOffset,
+					endOffset: normalizedContent.length,
+				});
+			}
+		}
+	}
+
+	return blocks;
 }
 
 /**
  * 将内容块转换为带标记的内容
  */
-export function blocksToMarkedContent(
-  originalContent: string,
-  blocks: ContentBlock[]
-): string {
-  if (blocks.length <= 1) {
-    return originalContent;
-  }
+export function blocksToMarkedContent(originalContent: string, blocks: ContentBlock[]): string {
+	if (blocks.length <= 1) {
+		return originalContent;
+	}
 
-  let result = '';
-  
-  for (let i = 0; i < blocks.length; i++) {
-    result += blocks[i].content;
-    
-    // 在块之间添加标记（除了最后一块）
-    if (i < blocks.length - 1) {
-      result += `\n\n<!-- weave-ir: ir-${blocks[i].id} -->\n\n`;
-    }
-  }
-  
-  return result;
+	let result = "";
+
+	for (let i = 0; i < blocks.length; i++) {
+		result += blocks[i].content;
+
+		// 在块之间添加标记（除了最后一块）
+		if (i < blocks.length - 1) {
+			result += `\n\n<!-- weave-ir: ir-${blocks[i].id} -->\n\n`;
+		}
+	}
+
+	return result;
 }

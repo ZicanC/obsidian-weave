@@ -1,27 +1,26 @@
-import { logger } from '../../utils/logger';
+import { logger } from "../../utils/logger";
 /**
  * Weave 模板导出器
  * 负责将 Weave 的 ParseTemplate 导出为 Anki 模板
  */
 
-import type { WeavePlugin } from '../../main';
-import { AnkiConnectClient } from './AnkiConnectClient';
-import type { AnkiModelInfo } from '../../types/ankiconnect-types';
-import type { ParseTemplate } from '../../types/newCardParsingTypes';
-import { getNativeTemplateByCardType, type WeaveNativeTemplate } from './WeaveNativeTemplates';
+import type { WeavePlugin } from "../../main";
+import type { AnkiModelInfo } from "../../types/ankiconnect-types";
+import { AnkiConnectClient } from "./AnkiConnectClient";
+import { type WeaveNativeTemplate, getNativeTemplateByCardType } from "./WeaveNativeTemplates";
 
 export interface ExportResult {
-  success: boolean;
-  modelInfo?: AnkiModelInfo;
-  error?: string;
+	success: boolean;
+	modelInfo?: AnkiModelInfo;
+	error?: string;
 }
 
 export class WeaveTemplateExporter {
-  private plugin: WeavePlugin;
-  private ankiConnect: AnkiConnectClient;
+	private plugin: WeavePlugin;
+	private ankiConnect: AnkiConnectClient;
 
-  // Weave 现代化卡片样式
-  private readonly DEFAULT_CARD_CSS = `
+	// Weave 现代化卡片样式
+	private readonly DEFAULT_CARD_CSS = `
 /* === 基础样式 === */
 .card {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -53,7 +52,7 @@ export class WeaveTemplateExporter {
   padding: 20px;
   background: #f8fafc;
   border-radius: 8px;
-  border-left: 4px solid #3b82f6;
+  border: 1px solid #e2e8f0;
 }
 
 /* === 选择题样式 - 现代扁平化田园风 === */
@@ -79,10 +78,11 @@ export class WeaveTemplateExporter {
 
 /* 正确答案 - 清新绿色田园风 */
 .option-correct {
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+  background: #ecfdf3;
   color: #14532d;
   font-weight: 500;
-  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.15);
+  border: 1px solid #d1fae5;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.1);
 }
 
 /*  标记样式 */
@@ -105,22 +105,25 @@ export class WeaveTemplateExporter {
 
 /* === 回链样式 === */
 .obsidian-link {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-top: 20px;
-  padding: 8px 16px;
-  font-size: 13px;
-  color: #64748b;
-  background: #f1f5f9;
-  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  font-size: 0;
+  color: #475569;
+  background: #f8fafc;
+  border-radius: 999px;
   text-decoration: none;
   transition: all 0.2s;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #d8dee9;
+  box-sizing: border-box;
 }
 
 .obsidian-link:hover {
-  background: #e2e8f0;
-  color: #475569;
-  transform: translateY(-1px);
+  background: #eef2f7;
 }
 
 .obsidian-link::before {
@@ -179,102 +182,139 @@ hr {
 }
 `.trim();
 
-  constructor(plugin: WeavePlugin, ankiConnect: AnkiConnectClient) {
-    this.plugin = plugin;
-    this.ankiConnect = ankiConnect;
-  }
+	constructor(plugin: WeavePlugin, ankiConnect: AnkiConnectClient) {
+		this.plugin = plugin;
+		this.ankiConnect = ankiConnect;
+	}
 
-  /**
-   * 🆕 创建原生模板
-   */
-  async createNativeModel(nativeTemplate: WeaveNativeTemplate): Promise<ExportResult> {
-    try {
-      const modelName = nativeTemplate.name;
+	/**
+	 * 🆕 创建原生模板
+	 */
+	async createNativeModel(nativeTemplate: WeaveNativeTemplate): Promise<ExportResult> {
+		try {
+			const modelName = nativeTemplate.name;
 
-      // 检查模型是否已存在
-      const exists = await this.checkModelExists(modelName);
-      if (exists) {
-        logger.debug(`原生模板 ${modelName} 已存在，跳过创建`);
-        return {
-          success: true,
-          modelInfo: await this.ankiConnect.getModelInfo(modelName)
-        };
-      }
+			// 检查模型是否已存在
+			const exists = await this.checkModelExists(modelName);
+			if (exists) {
+				logger.debug(`原生模板 ${modelName} 已存在，跳过创建`);
+				return {
+					success: true,
+					modelInfo: await this.ankiConnect.getModelInfo(modelName),
+				};
+			}
 
-      // 调用 AnkiConnect API 创建模型
-      const modelData = {
-        modelName: modelName,
-        inOrderFields: nativeTemplate.fields,
-        css: nativeTemplate.css,
-        isCloze: nativeTemplate.cardType === 'cloze',
-        cardTemplates: [{
-          Name: 'Card 1',
-          Front: nativeTemplate.frontTemplate,
-          Back: nativeTemplate.backTemplate
-        }]
-      };
+			// 调用 AnkiConnect API 创建模型
+			const modelData = {
+				modelName: modelName,
+				inOrderFields: nativeTemplate.fields,
+				css: nativeTemplate.css,
+				isCloze: nativeTemplate.cardType === "cloze",
+				cardTemplates: [
+					{
+						Name: "Card 1",
+						Front: nativeTemplate.frontTemplate,
+						Back: nativeTemplate.backTemplate,
+					},
+				],
+			};
 
-      logger.debug('创建原生 Anki 模板:', modelData);
+			logger.debug("创建原生 Anki 模板:", modelData);
 
-      // 使用AnkiConnect API创建模型
-      await (this.ankiConnect as any).invoke('createModel', modelData);
+			// 使用AnkiConnect API创建模型
+			await this.ankiConnect.createModel(modelData);
 
-      // 获取创建后的模型信息
-      const modelInfo = await this.ankiConnect.getModelInfo(modelName);
+			// 获取创建后的模型信息
+			const modelInfo = await this.ankiConnect.getModelInfo(modelName);
 
-      logger.debug(`✅ 原生模板创建成功: ${modelName}`);
+			logger.debug(`✅ 原生模板创建成功: ${modelName}`);
 
-      return {
-        success: true,
-        modelInfo: modelInfo
-      };
-    } catch (error: any) {
-      logger.error('创建原生 Anki 模板失败:', error);
-      return {
-        success: false,
-        error: error.message
-      };
-    }
-  }
+			return {
+				success: true,
+				modelInfo: modelInfo,
+			};
+		} catch (error) {
+			logger.error("创建原生 Anki 模板失败:", error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+	}
 
-  /**
-   * 检查模型是否存在
-   */
-  async checkModelExists(modelName: string): Promise<boolean> {
-    try {
-      const modelNames = await this.ankiConnect.getModelNames();
-      return modelNames.includes(modelName);
-    } catch (error) {
-      logger.error('检查模型是否存在失败:', error);
-      return false;
-    }
-  }
+	/**
+	 * 检查模型是否存在
+	 */
+	async checkModelExists(modelName: string): Promise<boolean> {
+		try {
+			const modelNames = await this.ankiConnect.getModelNames();
+			return modelNames.includes(modelName);
+		} catch (error) {
+			logger.error("检查模型是否存在失败:", error);
+			return false;
+		}
+	}
 
-  /**
-   * 🆕 基于卡片类型确保原生模板存在
-   */
-  async ensureNativeModelByCardType(cardType: string): Promise<AnkiModelInfo> {
-    // 获取对应的原生模板定义
-    const nativeTemplate = getNativeTemplateByCardType(cardType);
-    if (!nativeTemplate) {
-      throw new Error(`未找到卡片类型 ${cardType} 对应的原生模板`);
-    }
+	/**
+	 * 🆕 基于卡片类型确保原生模板存在
+	 */
+	async ensureNativeModelByCardType(cardType: string): Promise<AnkiModelInfo> {
+		// 获取对应的原生模板定义
+		const nativeTemplate = getNativeTemplateByCardType(cardType);
+		if (!nativeTemplate) {
+			throw new Error(`未找到卡片类型 ${cardType} 对应的原生模板`);
+		}
 
-    // 检查模板是否已存在
-    try {
-      const existingModel = await this.ankiConnect.getModelInfo(nativeTemplate.name);
-      logger.debug(`✅ 使用现有原生模板: ${nativeTemplate.name}`);
-      return existingModel;
-    } catch (_error) {
-      logger.debug(`📦 创建原生模板: ${nativeTemplate.name}`);
-    }
+		// 检查模板是否已存在
+		try {
+			const existingModel = await this.ankiConnect.getModelInfo(nativeTemplate.name);
+			const updatedModel = await this.syncExistingNativeModel(existingModel, nativeTemplate);
+			logger.debug(`✅ 使用现有原生模板: ${nativeTemplate.name}`);
+			return updatedModel;
+		} catch (_error) {
+			logger.debug(`📦 创建原生模板: ${nativeTemplate.name}`);
+		}
 
-    // 创建新的原生模板
-    const result = await this.createNativeModel(nativeTemplate);
-    if (!result.success || !result.modelInfo) {
-      throw new Error(`创建原生模板失败: ${result.error}`);
-    }
+		// 创建新的原生模板
+		const result = await this.createNativeModel(nativeTemplate);
+		if (!result.success || !result.modelInfo) {
+			throw new Error(`创建原生模板失败: ${result.error}`);
+		}
 
-    return result.modelInfo;
-  }
+		return result.modelInfo;
+	}
+
+	private async syncExistingNativeModel(
+		existingModel: AnkiModelInfo,
+		nativeTemplate: WeaveNativeTemplate
+	): Promise<AnkiModelInfo> {
+		const primaryTemplateName = existingModel.templates[0]?.Name || "Card 1";
+		const existingFront = existingModel.templates[0]?.Front || "";
+		const existingBack = existingModel.templates[0]?.Back || "";
+		const hasTemplateChanges =
+			existingFront !== nativeTemplate.frontTemplate ||
+			existingBack !== nativeTemplate.backTemplate;
+		const hasStylingChanges = (existingModel.css || "") !== nativeTemplate.css;
+
+		if (hasTemplateChanges) {
+			logger.debug(`🔄 更新原生模板卡面: ${nativeTemplate.name}`);
+			await this.ankiConnect.updateModelTemplates(nativeTemplate.name, {
+				[primaryTemplateName]: {
+					Front: nativeTemplate.frontTemplate,
+					Back: nativeTemplate.backTemplate,
+				},
+			});
+		}
+
+		if (hasStylingChanges) {
+			logger.debug(`🎨 更新原生模板样式: ${nativeTemplate.name}`);
+			await this.ankiConnect.updateModelStyling(nativeTemplate.name, nativeTemplate.css);
+		}
+
+		if (!hasTemplateChanges && !hasStylingChanges) {
+			return existingModel;
+		}
+
+		return this.ankiConnect.getModelInfo(nativeTemplate.name);
+	}
 }

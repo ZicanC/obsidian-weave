@@ -156,8 +156,16 @@
 
 <div 
   class="quick-resume-backdrop"
-  onclick={onClose}
-  onkeydown={(e) => e.key === 'Enter' && onClose()}
+  onclick={(event) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }}
+  onkeydown={(event) => {
+    if (event.target === event.currentTarget && event.key === 'Enter') {
+      onClose();
+    }
+  }}
   role="button"
   tabindex="0"
   aria-label="关闭快捷续读"
@@ -165,8 +173,6 @@
   <div 
     class="quick-resume-card"
     class:show={showContent}
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
     role="dialog"
     tabindex="-1"
     aria-labelledby="quick-resume-title"

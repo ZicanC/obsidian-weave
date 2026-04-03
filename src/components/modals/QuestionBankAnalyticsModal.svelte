@@ -5,19 +5,11 @@
 <script lang="ts">
   import type { Deck } from '../../data/types';
   import type { WeavePlugin } from '../../main';
-  import ResizableModal from '../ui/ResizableModal.svelte';
-  
   // 导入题库分析标签页
   import QuestionBankEWMATab from './tabs/QuestionBankEWMATab.svelte';
   import QuestionBankHistoryTab from './tabs/QuestionBankHistoryTab.svelte';
 
   interface Props {
-    /** 是否显示模态窗 */
-    open: boolean;
-
-    /** 关闭回调 */
-    onClose: () => void;
-
     /** 插件实例 */
     plugin: WeavePlugin;
 
@@ -26,8 +18,6 @@
   }
 
   let { 
-    open = $bindable(), 
-    onClose, 
     plugin, 
     questionBank 
   }: Props = $props();
@@ -42,15 +32,7 @@
   }
 </script>
 
-{#if open}
-<ResizableModal
-  bind:open
-  {plugin}
-  title="{questionBank.name} - 题库分析"
-  {onClose}
-  keyboard={true}
->
-  <div class="analytics-container">
+<div class="analytics-container">
     <!-- 标签导航 -->
     <div class="tabs-nav">
       <button 
@@ -84,8 +66,6 @@
       </div>
     </div>
   </div>
-</ResizableModal>
-{/if}
 
 <style>
   .analytics-container {

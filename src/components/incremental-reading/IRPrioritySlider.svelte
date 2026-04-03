@@ -17,6 +17,7 @@
     disabled?: boolean;
     onToggle: () => void;
     onChange: (value: number) => void;
+    onPreview?: (value: number) => void;
   }
 
   let {
@@ -24,7 +25,8 @@
     expanded = false,
     disabled = false,
     onToggle,
-    onChange
+    onChange,
+    onPreview
   }: Props = $props();
 
   let localValue = $state(value);
@@ -78,6 +80,7 @@
     const target = event.target as HTMLInputElement;
     localValue = parseFloat(target.value);
     isDragging = true;
+    onPreview?.(localValue);
   }
 
   // 处理滑动结束
@@ -91,6 +94,7 @@
   // 快捷设置
   function quickSet(v: number) {
     localValue = v;
+    onPreview?.(v);
     onChange(v);
   }
 </script>

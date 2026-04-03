@@ -9,7 +9,7 @@
 import { onMount } from 'svelte';
 import type WeavePlugin from '../../main';
 import type { Card } from '../../data/types';
-import type { TestSession, TestMode, QuestionBankModeConfig } from '../../types/question-bank-types';
+import type { TestSession, TestMode, QuestionBankModeConfig, QuestionBankResumeBehavior } from '../../types/question-bank-types';
 import type { QuestionBankView } from '../../views/QuestionBankView';
 import QuestionBankStudyInterface from './QuestionBankStudyInterface.svelte';
 import TestResultView from './TestResultView.svelte';
@@ -22,6 +22,7 @@ let {
   questions = [],
   mode = 'exam',
   config,
+  resumeBehavior = 'prompt',
   viewInstance,
   onBack = () => {}
 }: {
@@ -31,6 +32,7 @@ let {
   questions?: Card[];
   mode?: TestMode;
   config?: QuestionBankModeConfig;
+  resumeBehavior?: QuestionBankResumeBehavior;
   viewInstance?: QuestionBankView; //  视图实例用于移动端回调
   onBack?: () => void;
 } = $props();
@@ -53,8 +55,13 @@ function handleTestComplete(session: TestSession) {
 /**
  * 返回题库
  */
-function handleBackToBank() {
+async function handleBackToBank() {
   logger.debug('[StudyContainer] 返回题库');
+
+  if (currentView === 'result') {
+    await plugin.returnToDeckStudyView('question-bank');
+  }
+
   onBack();
 }
 
@@ -77,6 +84,7 @@ onMount(() => {
       {questions}
       {mode}
       {config}
+      {resumeBehavior}
       {viewInstance}
       onComplete={handleTestComplete}
       onExit={handleBackToBank}

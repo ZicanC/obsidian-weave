@@ -2,8 +2,9 @@
   import { showObsidianConfirm } from '../../utils/obsidian-confirm';
 import { logger } from '../../utils/logger';
 import { vaultStorage } from '../../utils/vault-local-storage';
+  import { resolveQuestionBankSessionEntryAction } from '../../utils/question-bank-resume';
 
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import type { WeavePlugin } from "../../main";
   import type { TestMode, QuestionBankModeConfig } from "../../types/question-bank-types";
   import type { Card } from "../../data/types";
@@ -13,7 +14,7 @@ import { vaultStorage } from '../../utils/vault-local-storage';
   import BouncingBallsLoader from "../ui/BouncingBallsLoader.svelte";
   import CreateQuestionBankModal from "../modals/CreateQuestionBankModal.svelte";
   import TestModeSelectionModal from "../modals/TestModeSelectionModal.svelte";
-  import QuestionBankAnalyticsModal from "../modals/QuestionBankAnalyticsModal.svelte";
+  import { QuestionBankAnalyticsModalObsidian } from "../modals/QuestionBankAnalyticsModalObsidian";
   import { Notice, Menu } from "obsidian";
 
   interface Props {
@@ -40,13 +41,12 @@ import { vaultStorage } from '../../utils/vault-local-storage';
   let selectedBankQuestions = $state<Card[]>([]);
   
   // 分析模态窗状态
-  let showAnalyticsModal = $state(false);
-  let analyticsBank = $state<import('../../data/types').Deck | null>(null);
+  let analyticsModalInstance: QuestionBankAnalyticsModalObsidian | null = null;
   
   // 统计数据
   let bankStats = $state<Record<string, { total: number; completed: number; accuracy: number }>>({});
 
-  // 加载考试牌组树
+  // 加载考试题组树
   async function loadQuestionBankTree() {
     isLoading = true;
     try {
@@ -56,20 +56,20 @@ import { vaultStorage } from '../../utils/vault-local-storage';
         return;
       }
 
-      // 检查是否有考试牌组数据
+      // 检查是否有考试题组数据
       const allBanks = await plugin.questionBankService.getAllBanks();
-      logger.debug('[QuestionBankListView] 考试牌组总数:', allBanks.length);
+      logger.debug('[QuestionBankListView] 考试题组总数:', allBanks.length);
       if (allBanks.length > 0) {
-        logger.debug('[QuestionBankListView] 考试牌组列表:', allBanks.map(b => ({ id: b.id, name: b.name, parentId: b.parentId })));
+        logger.debug('[QuestionBankListView] 考试题组列表:', allBanks.map(b => ({ id: b.id, name: b.name, parentId: b.parentId })));
       }
 
       // 1. 获取记忆牌组树
       const memoryDeckTree = await plugin.deckHierarchy.getDeckTree();
       logger.debug('[QuestionBankListView] 记忆牌组树节点数:', memoryDeckTree.length);
       
-      // 2. 基于记忆牌组树构建考试牌组树
+      // 2. 基于记忆牌组树构建考试题组树
       questionBankTree = await plugin.questionBankHierarchy.buildQuestionBankTree(memoryDeckTree);
-      logger.debug('[QuestionBankListView] 构建的考试牌组树节点数:', questionBankTree.length);
+      logger.debug('[QuestionBankListView] 构建的考试题组树节点数:', questionBankTree.length);
       
       // 3. 加载统计数据
       await loadBankStats();
@@ -158,7 +158,7 @@ import { vaultStorage } from '../../utils/vault-local-storage';
     }
   }
 
-  // 显示考试牌组树
+  // 显示考试题组树
   const filteredQuestionBankTree = $derived(() => questionBankTree);
 
   // 开始测试 - 显示模式选择窗口
@@ -176,15 +176,30 @@ import { vaultStorage } from '../../utils/vault-local-storage';
     
     const questions = await plugin.questionBankService.getQuestionsByBank(bankId);
     const bank = await plugin.questionBankService.getBankById(bankId);
+    const bankName = bank?.name || "未知题库";
     
     if (questions.length === 0) {
       new Notice("该题库暂无题目");
       return;
     }
+
+    const entryAction = await resolveQuestionBankSessionEntryAction(plugin, bankId, bankName);
+    if (entryAction === 'cancel') {
+      return;
+    }
+
+    if (entryAction === 'resume') {
+      await plugin.openQuestionBankSession({
+        bankId,
+        bankName,
+        resumeBehavior: 'resume'
+      });
+      return;
+    }
     
     // 设置选择状态并显示模式选择窗口
     selectedBankId = bankId;
-    selectedBankName = bank?.name || "未知题库";
+    selectedBankName = bankName;
     selectedBankQuestionCount = questions.length;
     selectedBankQuestions = questions;
     showModeSelectionModal = true;
@@ -733,9 +748,15 @@ import { vaultStorage } from '../../utils/vault-local-storage';
         return;
       }
       
-      // 设置分析模态窗数据
-      analyticsBank = bank;
-      showAnalyticsModal = true;
+      analyticsModalInstance?.close();
+      analyticsModalInstance = new QuestionBankAnalyticsModalObsidian(plugin.app, {
+        plugin,
+        questionBank: bank,
+        onClose: () => {
+          analyticsModalInstance = null;
+        }
+      });
+      analyticsModalInstance.open();
       
       logger.debug('[QuestionBankListView] 打开分析模态窗:', bank.name);
     } catch (error) {
@@ -791,6 +812,11 @@ import { vaultStorage } from '../../utils/vault-local-storage';
   // 初始化加载
   onMount(() => {
     loadQuestionBankTree();
+  });
+
+  onDestroy(() => {
+    analyticsModalInstance?.close();
+    analyticsModalInstance = null;
   });
 </script>
 
@@ -916,7 +942,7 @@ import { vaultStorage } from '../../utils/vault-local-storage';
       <div class="header-actions">操作</div>
     </div>
 
-    <!-- 考试牌组列表 -->
+    <!-- 考试题组列表 -->
     <div class="question-bank-list-body" class:has-empty={filteredQuestionBankTree().length === 0}>
       {#if filteredQuestionBankTree().length > 0}
         {#each filteredQuestionBankTree() as node}
@@ -924,8 +950,8 @@ import { vaultStorage } from '../../utils/vault-local-storage';
         {/each}
       {:else}
         <div class="empty-state">
-          <p>暂无考试牌组</p>
-          <p class="empty-hint">请在卡片管理中从选择题引入组建考试牌组</p>
+          <p>暂无考试题组</p>
+          <p class="empty-hint">请在卡片管理中从选择题引入组建考试题组</p>
         </div>
       {/if}
     </div>
@@ -949,19 +975,6 @@ import { vaultStorage } from '../../utils/vault-local-storage';
   onSelect={handleModeSelected}
   onCancel={handleModeSelectionCancel}
 />
-
-<!-- 🆕 题库分析模态窗 -->
-{#if analyticsBank}
-<QuestionBankAnalyticsModal
-  bind:open={showAnalyticsModal}
-  {plugin}
-  questionBank={analyticsBank}
-  onClose={() => {
-    showAnalyticsModal = false;
-    analyticsBank = null;
-  }}
-/>
-{/if}
 
 <style>
   .question-bank-list-view {
@@ -1042,7 +1055,7 @@ import { vaultStorage } from '../../utils/vault-local-storage';
     position: relative;
   }
 
-  /* 考试牌组行 - CSS Table布局 */
+  /* 考试题组行 - CSS Table布局 */
   .question-bank-row {
     display: table !important;
     width: 100%;

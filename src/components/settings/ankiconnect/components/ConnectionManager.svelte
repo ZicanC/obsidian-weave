@@ -1,9 +1,8 @@
-<!--
-  AnkiConnect连接管理器组件
-  职责：连接状态显示、连接测试、端点配置
--->
 <script lang="ts">
   import type { ConnectionStatus } from '../../../../types/ankiconnect-types';
+  import { tr } from '../../../../utils/i18n';
+
+  let t = $derived($tr);
 
   interface Props {
     connectionStatus: ConnectionStatus | null;
@@ -13,39 +12,50 @@
     onEndpointChange: (endpoint: string) => void;
   }
 
-  let { 
-    connectionStatus, 
-    isTesting, 
-    endpoint, 
-    onTestConnection, 
-    onEndpointChange 
+  let {
+    connectionStatus,
+    isTesting,
+    endpoint,
+    onTestConnection,
+    onEndpointChange
   }: Props = $props();
 </script>
 
 <div class="connection-manager">
-  <!-- 连接状态与测试 -->
-  <div class="setting-item">
+  <div class="setting-item connection-item">
     <div class="setting-info">
-      <div class="setting-label">连接状态</div>
+      <div class="setting-label">{t('ankiConnect.connection.endpointLabel')}</div>
       <div class="setting-description">
         {#if isTesting}
-          ⏳ 测试中...
+          {t('ankiConnect.connection.testing')}
         {:else if connectionStatus === null}
-          ⚪ 未测试
+          {t('ankiConnect.connection.notTested')}
         {:else if connectionStatus.isConnected}
-          ✅ 已连接 {#if connectionStatus.apiVersion}<span style="opacity: 0.7;">· API v{connectionStatus.apiVersion}</span>{/if}
+          {t('ankiConnect.connection.connected')}
+          {#if connectionStatus.apiVersion}
+            <span class="connection-meta">API v{connectionStatus.apiVersion}</span>
+          {/if}
         {:else}
-          ❌ 未连接
+          {t('ankiConnect.connection.disconnected')}
         {/if}
       </div>
     </div>
-    <div class="setting-control">
+
+    <div class="setting-control endpoint-control">
+      <input
+        type="text"
+        class="text-input"
+        bind:value={endpoint}
+        onblur={() => onEndpointChange(endpoint)}
+        placeholder="http://localhost:8765"
+      />
       <button
         class="btn btn-primary"
+        type="button"
         onclick={onTestConnection}
         disabled={isTesting}
       >
-        {isTesting ? '测试中...' : '测试连接'}
+        {isTesting ? t('ankiConnect.connection.testingButton') : t('ankiConnect.connection.testButton')}
       </button>
     </div>
   </div>
@@ -58,41 +68,50 @@
       {/if}
     </div>
   {/if}
-
-  <!-- 端点配置 -->
-  <div class="setting-item">
-    <div class="setting-info">
-      <div class="setting-label">AnkiConnect 端点</div>
-      <div class="setting-description">
-        AnkiConnect API 的地址
-      </div>
-    </div>
-    <div class="setting-control">
-      <input
-        type="text"
-        class="text-input"
-        bind:value={endpoint}
-        onblur={() => onEndpointChange(endpoint)}
-        placeholder="http://localhost:8765"
-      />
-    </div>
-  </div>
 </div>
 
 <style>
   .connection-manager {
     display: flex;
     flex-direction: column;
+    gap: 12px;
+  }
+
+  .setting-item {
+    margin: 0;
+    padding: 14px 16px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--background-secondary) 90%, transparent);
+  }
+
+  .connection-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 16px;
   }
 
-  /* 错误横幅 */
+  .setting-control {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .endpoint-control {
+    gap: 12px;
+  }
+
+  .connection-meta {
+    margin-left: 6px;
+    opacity: 0.7;
+  }
+
   .error-banner {
-    padding: 12px;
-    background: rgba(239, 68, 68, 0.1);
-    border-radius: 0.5rem;
+    padding: 14px 16px;
+    background: color-mix(in srgb, var(--text-error) 10%, transparent);
+    border-radius: 12px;
     border-left: 3px solid var(--text-error);
-    margin-bottom: 12px;
   }
 
   .error-text {
@@ -109,11 +128,12 @@
   .btn {
     padding: 8px 16px;
     border: none;
-    border-radius: 0.5rem;
+    border-radius: 10px;
     cursor: pointer;
     font-size: 14px;
     font-weight: 500;
     transition: all 0.2s ease;
+    white-space: nowrap;
   }
 
   .btn-primary {
@@ -132,11 +152,11 @@
   }
 
   .text-input {
-    width: 250px;
+    width: min(360px, 100%);
     padding: 8px 12px;
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 0.5rem;
+    border-radius: 10px;
     color: var(--text-normal);
     font-size: 14px;
     transition: border-color 0.2s;
@@ -149,10 +169,21 @@
   }
 
   @media (max-width: 768px) {
+    .connection-item {
+      grid-template-columns: 1fr;
+    }
+
+    .setting-control {
+      justify-content: flex-start;
+    }
+
+    .endpoint-control {
+      width: 100%;
+      flex-wrap: wrap;
+    }
+
     .text-input {
       width: 100%;
     }
   }
 </style>
-
-

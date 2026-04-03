@@ -6,6 +6,7 @@
   import type { WeaveDataStorage } from "../../data/storage";
   import type { Deck } from "../../data/types";
   import { Menu, Notice } from "obsidian";
+  import { normalizeMemorySchedulingSettings } from "../../utils/learning-steps/memorySchedulingConfig";
   //  导入国际化
   import { tr } from '../../utils/i18n';
 
@@ -19,16 +20,17 @@
     mode?: 'create' | 'edit';
     initialDeck?: Deck | null;
     onUpdated?: (deck: Deck) => void;
+    useObsidianModal?: boolean;
     // 父牌组功能已移除 - 不再支持父子牌组层级结构
   }
 
-  let { open, plugin, dataStorage, onClose, onCreated, mode = 'create', initialDeck = null, onUpdated }: Props = $props();
+  let { open, plugin, dataStorage, onClose, onCreated, mode = 'create', initialDeck = null, onUpdated, useObsidianModal = false }: Props = $props();
 
   //  响应式翻译函数
   let t = $derived($tr);
 
   let name = $state("");
-  let category = $state("默认"); // @deprecated 保留用于兼容
+  let category = $state("默认"); // Compatibility note: 保留用于兼容
   // 父牌组选择功能已移除 - 不再支持父子牌组层级结构
   let isSaving = $state(false);
   
@@ -180,6 +182,7 @@
       }
 
       // 创建模式：只支持创建根牌组
+      const memoryScheduling = normalizeMemorySchedulingSettings(plugin.settings).settings;
       const deckSettings = {
         newCardsPerDay: 20,
         maxReviewsPerDay: 100,
@@ -191,10 +194,10 @@
           maximumInterval: plugin.settings.fsrsParams.maximumInterval,
           enableFuzz: plugin.settings.fsrsParams.enableFuzz,
         },
-        learningSteps: plugin.settings.learningSteps,
-        relearningSteps: [10],
-        graduatingInterval: plugin.settings.graduatingInterval,
-        easyInterval: 4,
+        learningSteps: memoryScheduling.learningSteps,
+        relearningSteps: memoryScheduling.relearningSteps,
+        graduatingInterval: memoryScheduling.graduatingInterval,
+        easyInterval: memoryScheduling.easyInterval,
       };
       
       const newDeck = await plugin.deckHierarchy.createRootDeck(
@@ -232,92 +235,110 @@
     }
   }
 
+  function handleOverlayClick(event: MouseEvent) {
+    if (event.target === event.currentTarget) {
+      closeModal();
+    }
+  }
+
+  function handleOverlayKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      closeModal();
+    }
+  }
+
   // 父牌组选择功能已移除 - 不再支持父子牌组层级结构
 </script>
 
-{#if open}
-  <div class="modal-overlay" role="presentation" onclick={(e) => {
-    // 只有点击遮罩层本身才关闭，不是点击内部内容
-    if (e.target === e.currentTarget) closeModal();
-  }}>
-    <div class="modal" role="dialog" aria-modal="true" tabindex="0" onclick={(e) => {
-      // Svelte 5: 不使用 stopPropagation，改用条件检查
-      if (e.target === e.currentTarget) return;
-    }}>
-      <div class="modal-header">
-        <h3>{mode === 'edit' ? t('modals.createDeck.titleEdit') : t('modals.createDeck.titleCreate')}</h3>
-        <button class="icon-btn" aria-label={t('modals.createDeck.close')} onclick={closeModal}>×</button>
-      </div>
+{#snippet modalContent()}
+  <div class="modal-header">
+    <h3>{mode === 'edit' ? t('modals.createDeck.titleEdit') : t('modals.createDeck.titleCreate')}</h3>
+    {#if !useObsidianModal}
+      <button class="icon-btn" aria-label={t('modals.createDeck.close')} onclick={closeModal}>×</button>
+    {/if}
+  </div>
 
-      <div class="modal-body">
-        <!-- 父牌组选择器已移除 - 不再支持父子牌组层级结构 -->
+  <div class="modal-body">
+    <!-- 父牌组选择器已移除 - 不再支持父子牌组层级结构 -->
 
-        <label>
-          <span>{t('modals.createDeck.name')}</span>
-          <input 
-            class="text-input" 
-            placeholder={t('modals.createDeck.namePlaceholder')} 
-            bind:value={name} 
-            bind:this={nameInputRef}
-          />
-        </label>
+    <label>
+      <span>{t('modals.createDeck.name')}</span>
+      <input 
+        class="text-input" 
+        placeholder={t('modals.createDeck.namePlaceholder')} 
+        bind:value={name} 
+        bind:this={nameInputRef}
+      />
+    </label>
 
-        <label>
-          <span>牌组标签（单选）</span>
-          
-          <!-- 标签输入框（内含已选标签） -->
-          <div class="tag-input-wrapper">
-            {#if selectedTag}
-              <div class="selected-tags">
-                <span class="tag-chip">
-                  <span class="tag-text">{selectedTag}</span>
-                  <button 
-                    type="button"
-                    class="tag-chip-remove" 
-                    onclick={clearTag}
-                    aria-label="移除标签"
-                  >
-                    ×
-                  </button>
-                </span>
-              </div>
-            {/if}
-            <input 
-              class="tag-input" 
-              placeholder={selectedTag ? "" : "输入标签后按回车添加"} 
-              bind:value={tagInput}
-              onkeydown={handleTagInput}
-            />
+    <label>
+      <span>{t('modals.createDeck.tagLabel')}</span>
+      
+      <!-- 标签输入框（内含已选标签） -->
+      <div class="tag-input-wrapper">
+        {#if selectedTag}
+          <div class="selected-tags">
+            <span class="tag-chip">
+              <span class="tag-text">{selectedTag}</span>
+              <button 
+                type="button"
+                class="tag-chip-remove" 
+                onclick={clearTag}
+                aria-label={t('modals.createDeck.removeTag')}
+              >
+                ×
+              </button>
+            </span>
           </div>
-          
-          <!-- 可选标签列表 -->
-          {#if availableTags.length > 0}
-            <div class="available-tags">
-              <div class="available-tags-title">可选标签（点击选择）</div>
-              <div class="available-tags-list">
-                {#each availableTags as tag}
-                  <button 
-                    type="button"
-                    class="available-tag-item {selectedTag === tag ? 'selected' : ''}"
-                    onclick={() => selectTag(tag)}
-                  >
-                    {tag}
-                  </button>
-                {/each}
-              </div>
-            </div>
-          {/if}
-          
-          <span class="hint">标签用于牌组分类，仅可选择一个标签</span>
-        </label>
+        {/if}
+        <input 
+          class="tag-input" 
+          placeholder={selectedTag ? "" : t('modals.createDeck.tagPlaceholder')} 
+          bind:value={tagInput}
+          onkeydown={handleTagInput}
+        />
       </div>
+      
+      <!-- 可选标签列表 -->
+      {#if availableTags.length > 0}
+        <div class="available-tags">
+          <div class="available-tags-title">{t('modals.createDeck.availableTags')}</div>
+          <div class="available-tags-list">
+            {#each availableTags as tag}
+              <button 
+                type="button"
+                class="available-tag-item {selectedTag === tag ? 'selected' : ''}"
+                onclick={() => selectTag(tag)}
+              >
+                {tag}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+      
+      <span class="hint">{t('modals.createDeck.tagHint')}</span>
+    </label>
+  </div>
 
-      <div class="modal-footer">
-        <button class="btn" onclick={closeModal}>{t('modals.createDeck.cancel')}</button>
-        <button class="btn primary" disabled={!name.trim() || isSaving} onclick={handleSubmit}>{mode === 'edit' ? t('modals.createDeck.save') : t('modals.createDeck.create')}</button>
+  <div class="modal-footer">
+    <button class="btn" onclick={closeModal}>{t('modals.createDeck.cancel')}</button>
+    <button class="btn primary" disabled={!name.trim() || isSaving} onclick={handleSubmit}>{mode === 'edit' ? t('modals.createDeck.save') : t('modals.createDeck.create')}</button>
+  </div>
+{/snippet}
+
+{#if open}
+  {#if useObsidianModal}
+    <div class="modal modal-native" role="dialog" aria-modal="true" tabindex="0">
+      {@render modalContent()}
+    </div>
+  {:else}
+    <div class="modal-overlay" role="presentation" onclick={handleOverlayClick} onkeydown={handleOverlayKeydown} tabindex="-1">
+      <div class="modal" role="dialog" aria-modal="true" tabindex="0">
+        {@render modalContent()}
       </div>
     </div>
-  </div>
+  {/if}
 {/if}
 
 <style>
@@ -341,6 +362,15 @@
     display: flex; 
     flex-direction: column;
     z-index: calc(var(--weave-z-top) + 1);
+  }
+
+  .modal-native {
+    width: 100%;
+    max-width: 100%;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
   }
   
   .modal-header { 
@@ -597,51 +627,5 @@
   .btn:disabled { 
     opacity: 0.6; 
     cursor: not-allowed; 
-  }
-
-  /* 牌组选择器按钮样式 */
-  .deck-selector-btn {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.625rem 0.75rem;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 0.5rem;
-    background: var(--background-secondary);
-    color: var(--text-normal);
-    font-size: 0.9rem;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    text-align: left;
-  }
-
-  .deck-selector-btn:hover {
-    border-color: var(--background-modifier-border-hover);
-    background: var(--background-modifier-hover);
-  }
-
-  .deck-selector-btn:focus {
-    outline: none;
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.1);
-  }
-
-  .deck-selector-text {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .deck-selector-icon {
-    flex-shrink: 0;
-    margin-left: 0.5rem;
-    opacity: 0.6;
-    transition: transform 0.2s ease;
-  }
-
-  .deck-selector-btn:hover .deck-selector-icon {
-    opacity: 1;
   }
 </style>

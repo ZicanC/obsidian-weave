@@ -5,7 +5,7 @@ export interface CanvasData {
 
 export interface CanvasNode {
 	id: string;
-	type: 'text' | 'file' | 'link' | 'group';
+	type: "text" | "file" | "link" | "group";
 	text?: string;
 	file?: string;
 	url?: string;
@@ -23,17 +23,17 @@ export interface CanvasEdge {
 	toNode: string;
 	fromSide: CanvasSide;
 	toSide: CanvasSide;
-	fromEnd?: 'arrow' | 'none';
-	toEnd?: 'arrow' | 'none';
+	fromEnd?: "arrow" | "none";
+	toEnd?: "arrow" | "none";
 	color?: string;
 	label?: string;
 }
 
-export type CanvasSide = 'top' | 'bottom' | 'left' | 'right';
+export type CanvasSide = "top" | "bottom" | "left" | "right";
 
-export type CanvasInsertMode = 'child' | 'sibling';
+export type CanvasInsertMode = "child" | "sibling";
 
-export type CanvasLayoutDirection = 'down' | 'right' | 'up' | 'left';
+export type CanvasLayoutDirection = "down" | "right" | "up" | "left";
 
 export interface CanvasAnchor {
 	nodeId: string;
@@ -41,11 +41,11 @@ export interface CanvasAnchor {
 }
 
 export const HIGHLIGHT_TO_CANVAS_COLOR: Record<string, string> = {
-	yellow: '4',
-	green: '5',
-	blue: '6',
-	pink: '1',
-	purple: '3'
+	yellow: "4",
+	green: "5",
+	blue: "6",
+	red: "1",
+	purple: "3",
 };
 
 export const DEFAULT_NODE_WIDTH = 300;

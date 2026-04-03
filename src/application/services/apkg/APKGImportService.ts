@@ -6,7 +6,7 @@
  * @module application/services/apkg
  */
 
-import type { Card, Deck, DeckSettings, DeckStats, FSRSParameters } from "../../../data/types";
+import type { Card, Deck, DeckSettings, DeckStats } from "../../../data/types";
 import type {
 	ImportConfig,
 	ImportError,
@@ -18,7 +18,11 @@ import type {
 import type { IDataStorageAdapter } from "../../../infrastructure/adapters/DataStorageAdapter";
 import type { IMediaStorageAdapter } from "../../../infrastructure/adapters/MediaStorageAdapter";
 import type { WeavePlugin } from "../../../main";
-import { DEFAULT_SIMPLIFIED_PARSING_SETTINGS, type ParseTemplate, type SimplifiedParsingSettings } from "../../../types/newCardParsingTypes";
+import {
+	DEFAULT_SIMPLIFIED_PARSING_SETTINGS,
+	type ParseTemplate,
+	type SimplifiedParsingSettings,
+} from "../../../types/newCardParsingTypes";
 
 import { CardBuilder } from "../../../domain/apkg/builder/CardBuilder";
 import { ContentConverter } from "../../../domain/apkg/converter/ContentConverter";
@@ -43,30 +47,13 @@ export class APKGImportService {
 	private dataStorage: IDataStorageAdapter;
 	private progressCallback?: ProgressCallback;
 
-	private createDefaultFSRSParameters(): FSRSParameters {
-		return {
-			w: [
-				0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796, 1.4835,
-				0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
-			],
-			requestRetention: 0.9,
-			maximumInterval: 36500,
-			enableFuzz: true,
-		};
-	}
-
-	private createDefaultDeckSettings(): DeckSettings {
-		return {
+	private async createDefaultDeckSettings(): Promise<DeckSettings> {
+		return this.dataStorage.getDefaultDeckSettings({
 			newCardsPerDay: 20,
 			maxReviewsPerDay: 100,
 			enableAutoAdvance: true,
 			showAnswerTime: 0,
-			fsrsParams: this.createDefaultFSRSParameters(),
-			learningSteps: [1, 10],
-			relearningSteps: [10],
-			graduatingInterval: 1,
-			easyInterval: 4,
-		};
+		});
 	}
 
 	private createEmptyDeckStats(): DeckStats {
@@ -137,7 +124,7 @@ export class APKGImportService {
 			this.updateProgress("analyzing", 30, "正在分析字段配置...");
 			const fieldSideMap = this.fieldResolver.resolve(apkgData.models);
 
-			// 🆕 3. 创建/复用模板
+			// 3. 创建或复用模板
 			this.updateProgress("analyzing", 40, "正在创建模板...");
 			const importedTemplates = await this.createTemplates(apkgData.models, fieldSideMap, plugin);
 
@@ -179,15 +166,15 @@ export class APKGImportService {
 					continue;
 				}
 
-				// 🆕 获取对应的模板
+				// 获取对应的模板
 				const template = importedTemplates.get(model.id);
 
-				// 🆕 v2.2: 传递 deckName 以写入 we_decks
+				// 传递 deckName 以写入 we_decks
 				const result = this.cardBuilder.build({
 					note,
 					model,
 					deckId: deck.id,
-					deckName: deck.name, // 🆕 用于写入 content YAML 的 we_decks
+					deckName: deck.name, // 用于写入 content YAML 的 we_decks
 					templateId: template?.id,
 					fieldSideMap: fieldSideMap[model.id],
 					mediaPathMap: mediaResult.savedFiles,
@@ -282,7 +269,7 @@ export class APKGImportService {
 				level: 0,
 				order: 0,
 				inheritSettings: false,
-				settings: this.createDefaultDeckSettings(),
+				settings: await this.createDefaultDeckSettings(),
 				stats: this.createEmptyDeckStats(),
 				includeSubdecks: false,
 				created: now,
@@ -326,7 +313,7 @@ export class APKGImportService {
 	}
 
 	/**
-	 * 🆕 创建或复用模板
+	 * 创建或复用模板
 	 *
 	 * @param models - Anki模型列表
 	 * @param fieldSideMap - 字段显示面映射

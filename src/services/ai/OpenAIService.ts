@@ -1,272 +1,282 @@
-import { logger } from '../../utils/logger';
+import { logger } from "../../utils/logger";
 /**
  * OpenAI服务实现
  */
 
-import { AIService } from './AIService';
 import type {
-  GenerationConfig,
-  AIServiceResponse,
-  RegenerateRequest,
-  GenerationProgress,
-  GeneratedCard,
-  SplitCardRequest,
-  SplitCardResponse
-} from '../../types/ai-types';
-import { requestUrl } from 'obsidian';
-import { generateUUID } from '../../utils/helpers';
+	AIServiceResponse,
+	GeneratedCard,
+	GenerationConfig,
+	GenerationProgress,
+	RegenerateRequest,
+	SplitCardRequest,
+	SplitCardResponse,
+	SystemPromptConfig,
+} from "../../types/ai-types";
+import { generateCardUUID } from "../identifier/WeaveIDGenerator";
+import { AIService } from "./AIService";
 
 export class OpenAIService extends AIService {
-  protected baseUrl = 'https://api.openai.com/v1'; // 默认官方地址
+	protected baseUrl = "https://api.openai.com/v1"; // 默认官方地址
 
-  constructor(apiKey: string, model: string, baseUrl?: string, systemPromptConfig?: any) {
-    super(apiKey, model, baseUrl, systemPromptConfig);
-    // 🆕 如果提供了自定义baseUrl，覆盖默认值
-    if (baseUrl) {
-      this.baseUrl = baseUrl;
-    }
-  }
+	constructor(
+		apiKey: string,
+		model: string,
+		baseUrl?: string,
+		systemPromptConfig?: SystemPromptConfig
+	) {
+		super(apiKey, model, baseUrl, systemPromptConfig);
+		// 如果提供了自定义 baseUrl，则覆盖默认值
+		if (baseUrl) {
+			this.baseUrl = baseUrl;
+		}
+	}
 
-  async generateCards(
-    content: string,
-    config: GenerationConfig,
-    onProgress?: (progress: GenerationProgress) => void
-  ): Promise<AIServiceResponse> {
-    let progressInterval: number | null = null;
-    try {
-      // 优化的进度更新策略：非线性增长，减少等待焦虑
-      onProgress?.({
-        status: 'preparing',
-        progress: 15,
-        message: '准备生成卡片...'
-      });
+	async generateCards(
+		content: string,
+		config: GenerationConfig,
+		onProgress?: (progress: GenerationProgress) => void
+	): Promise<AIServiceResponse> {
+		let progressInterval: number | null = null;
+		try {
+			// 优化的进度更新策略：非线性增长，减少等待焦虑
+			onProgress?.({
+				status: "preparing",
+				progress: 15,
+				message: "准备生成卡片...",
+			});
 
-      const systemPrompt = this.buildSystemPrompt(config);
-      const userPrompt = this.buildUserPrompt(content, config.promptTemplate);
+			const systemPrompt = this.buildSystemPrompt(config);
+			const userPrompt = this.buildUserPrompt(content, config.promptTemplate);
 
-      onProgress?.({
-        status: 'generating',
-        progress: 25,
-        message: '正在调用AI服务...'
-      });
+			onProgress?.({
+				status: "generating",
+				progress: 25,
+				message: "正在调用AI服务...",
+			});
 
-      // 模拟进度增长（等待API响应期间）
-      progressInterval = window.setInterval(() => {
-        if (onProgress) {
-          const currentProgress = Math.min(85, 25 + Math.random() * 5);
-          onProgress({
-            status: 'generating',
-            progress: currentProgress,
-            message: `AI正在思考...（${config.cardCount}张卡片）`
-          });
-        }
-      }, 500);
+			// 模拟进度增长（等待API响应期间）
+			progressInterval = window.setInterval(() => {
+				if (onProgress) {
+					const currentProgress = Math.min(85, 25 + Math.random() * 5);
+					onProgress({
+						status: "generating",
+						progress: currentProgress,
+						message: `AI正在思考...（${config.cardCount}张卡片）`,
+					});
+				}
+			}, 500);
 
-      const response = await requestUrl({
-        url: `${this.baseUrl}/chat/completions`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: config.temperature,
-          max_tokens: config.maxTokens,
-          response_format: { type: 'json_object' }
-        })
-      });
+			const response = await this.request({
+				url: `${this.baseUrl}/chat/completions`,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${this.apiKey}`,
+				},
+				body: JSON.stringify({
+					model: this.model,
+					messages: [
+						{ role: "system", content: systemPrompt },
+						{ role: "user", content: userPrompt },
+					],
+					temperature: config.temperature,
+					max_tokens: config.maxTokens,
+					response_format: { type: "json_object" },
+				}),
+			});
 
-      if (progressInterval !== null) {
-        clearInterval(progressInterval);
-        progressInterval = null;
-      }
+			if (progressInterval !== null) {
+				clearInterval(progressInterval);
+				progressInterval = null;
+			}
 
-      onProgress?.({
-        status: 'parsing',
-        progress: 90,
-        message: '解析生成结果...'
-      });
+			onProgress?.({
+				status: "parsing",
+				progress: 90,
+				message: "解析生成结果...",
+			});
 
-      const data = response.json;
-      const content_text = data.choices[0].message.content;
-      const parsedCards = this.parseResponse(content_text);
+			const data = response.json;
+			const content_text = data.choices[0].message.content;
+			let parsedCards = this.parseResponse(content_text);
 
-      // 转换为GeneratedCard格式
-      const cards: GeneratedCard[] = parsedCards.map((card: any) => {
-        // 🆕 优先使用content字段，向后兼容front/back格式
-        let content: string;
-        if (card.content) {
-          // 新格式：直接使用content
-          content = this.ensureString(card.content);
-        } else if (card.front || card.back) {
-          // 旧格式：从front和back构建content
-          const front = this.ensureString(card.front);
-          const back = this.ensureString(card.back);
-          content = back ? `${front}\n\n---div---\n\n${back}` : front;
-        } else {
-          content = '';
-        }
+			// 截断：AI返回数量可能超出请求，只取需要的数量
+			if (parsedCards.length > config.cardCount) {
+				logger.debug(
+					`[OpenAI] AI returned ${parsedCards.length} cards, truncating to requested ${config.cardCount}`
+				);
+				parsedCards = parsedCards.slice(0, config.cardCount);
+			}
 
-        return {
-          uuid: generateUUID(),
-          type: card.type || 'qa',
-          content: content,
-          // 向后兼容：保留front/back字段
-          front: card.front ? this.ensureString(card.front) : undefined,
-          back: card.back ? this.ensureString(card.back) : undefined,
-          choices: card.choices,
-          correctAnswer: card.correctAnswer,
-          clozeText: card.clozeText,
-          tags: card.tags || [],
-          images: card.images || [],
-          explanation: card.explanation,
-          // 🆕 块链接溯源信息
-          sourceText: card.sourceText ? this.ensureString(card.sourceText) : undefined,
-          metadata: {
-            generatedAt: new Date().toISOString(),
-            provider: 'openai',
-            model: this.model,
-            temperature: config.temperature
-          }
-        } as GeneratedCard;
-      });
+			// 转换为GeneratedCard格式
+			const cards: GeneratedCard[] = parsedCards.map((card) => {
+				// 优先使用 content 字段，向后兼容 front/back 格式
+				let content: string;
+				if (card.content) {
+					// 新格式：直接使用content
+					content = this.ensureString(card.content);
+				} else if (card.front || card.back) {
+					// 旧格式：从front和back构建content
+					const front = this.ensureString(card.front);
+					const back = this.ensureString(card.back);
+					content = back ? `${front}\n\n---div---\n\n${back}` : front;
+				} else {
+					content = "";
+				}
 
-      onProgress?.({
-        status: 'completed',
-        progress: 100,
-        message: `成功生成${cards.length}张卡片`
-      });
+				return {
+					uuid: generateCardUUID(),
+					type: card.type || "qa",
+					content: content,
+					// 向后兼容：保留front/back字段
+					front: card.front ? this.ensureString(card.front) : undefined,
+					back: card.back ? this.ensureString(card.back) : undefined,
+					choices: card.choices,
+					correctAnswer: card.correctAnswer,
+					clozeText: card.clozeText,
+					tags: card.tags || [],
+					images: card.images || [],
+					explanation: card.explanation,
+					// 块链接溯源信息
+					sourceText: card.sourceText ? this.ensureString(card.sourceText) : undefined,
+					metadata: {
+						generatedAt: new Date().toISOString(),
+						provider: "openai",
+						model: this.model,
+						temperature: config.temperature,
+					},
+				} as GeneratedCard;
+			});
 
-      return {
-        success: true,
-        cards,
-        usage: {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-          estimatedCost: this.estimateCost(
-            data.usage.prompt_tokens,
-            data.usage.completion_tokens
-          )
-        }
-      };
-    } catch (error) {
-      onProgress?.({
-        status: 'failed',
-        progress: 0,
-        message: '生成失败'
-      });
-      return this.handleError(error);
-    } finally {
-      if (progressInterval !== null) {
-        clearInterval(progressInterval);
-        progressInterval = null;
-      }
-    }
-  }
+			onProgress?.({
+				status: "completed",
+				progress: 100,
+				message: `成功生成${cards.length}张卡片`,
+			});
 
-  async regenerateCard(
-    request: RegenerateRequest,
-    config: GenerationConfig
-  ): Promise<AIServiceResponse> {
-    try {
-      const systemPrompt = `你是一个专业的学习卡片生成助手。现在需要根据用户的修改要求，重新生成一张卡片。
+			return {
+				success: true,
+				cards,
+				usage: {
+					promptTokens: data.usage.prompt_tokens,
+					completionTokens: data.usage.completion_tokens,
+					totalTokens: data.usage.total_tokens,
+					estimatedCost: this.estimateCost(data.usage.prompt_tokens, data.usage.completion_tokens),
+				},
+			};
+		} catch (error) {
+			onProgress?.({
+				status: "failed",
+				progress: 0,
+				message: "生成失败",
+			});
+			return this.handleError(error);
+		} finally {
+			if (progressInterval !== null) {
+				clearInterval(progressInterval);
+				progressInterval = null;
+			}
+		}
+	}
+
+	async regenerateCard(
+		request: RegenerateRequest,
+		config: GenerationConfig
+	): Promise<AIServiceResponse> {
+		try {
+			const systemPrompt = `你是一个专业的学习卡片生成助手。现在需要根据用户的修改要求，重新生成一张卡片。
 
 原始卡片信息：
 类型：${request.originalCard.type}
-内容：${request.originalCard.content || `${request.originalCard.front}\n\n---div---\n\n${request.originalCard.back}`}
+内容：${
+				request.originalCard.content ||
+				`${request.originalCard.front}\n\n---div---\n\n${request.originalCard.back}`
+			}
 
 请根据用户的修改要求生成新卡片，保持与原卡片相同的格式。使用 content 字段，通过 ---div--- 分隔正反面。以JSON格式返回。`;
 
-      const response = await requestUrl({
-        url: `${this.baseUrl}/chat/completions`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: request.instruction }
-          ],
-          temperature: config.temperature,
-          max_tokens: config.maxTokens,
-          response_format: { type: 'json_object' }
-        })
-      });
+			const response = await this.request({
+				url: `${this.baseUrl}/chat/completions`,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${this.apiKey}`,
+				},
+				body: JSON.stringify({
+					model: this.model,
+					messages: [
+						{ role: "system", content: systemPrompt },
+						{ role: "user", content: request.instruction },
+					],
+					temperature: config.temperature,
+					max_tokens: config.maxTokens,
+					response_format: { type: "json_object" },
+				}),
+			});
 
-      const data = response.json;
-      const content_text = data.choices[0].message.content;
-      const parsedCards = this.parseResponse(content_text);
+			const data = response.json;
+			const content_text = data.choices[0].message.content;
+			const parsedCards = this.parseResponse(content_text);
 
-      if (parsedCards.length === 0) {
-        throw new Error('未能生成新卡片');
-      }
+			if (parsedCards.length === 0) {
+				throw new Error("未能生成新卡片");
+			}
 
-      const card = parsedCards[0];
-      
-      // 🆕 优先使用content字段，向后兼容front/back格式
-      let content: string;
-      if (card.content) {
-        content = this.ensureString(card.content);
-      } else if (card.front || card.back) {
-        const front = this.ensureString(card.front);
-        const back = this.ensureString(card.back);
-        content = back ? `${front}\n\n---div---\n\n${back}` : front;
-      } else {
-        content = '';
-      }
+			const card = parsedCards[0];
 
-      const newCard: GeneratedCard = {
-        uuid: request.cardId,
-        type: card.type || request.originalCard.type,
-        content: content,
-        // 向后兼容
-        front: card.front ? this.ensureString(card.front) : undefined,
-        back: card.back ? this.ensureString(card.back) : undefined,
-        choices: card.choices,
-        correctAnswer: card.correctAnswer,
-        clozeText: card.clozeText,
-        tags: card.tags || [],
-        images: card.images || [],
-        explanation: card.explanation,
-        metadata: {
-          generatedAt: new Date().toISOString(),
-          provider: 'openai',
-          model: this.model,
-          temperature: config.temperature
-        }
-      };
+			// 优先使用 content 字段，向后兼容 front/back 格式
+			let content: string;
+			if (card.content) {
+				content = this.ensureString(card.content);
+			} else if (card.front || card.back) {
+				const front = this.ensureString(card.front);
+				const back = this.ensureString(card.back);
+				content = back ? `${front}\n\n---div---\n\n${back}` : front;
+			} else {
+				content = "";
+			}
 
-      return {
-        success: true,
-        cards: [newCard],
-        usage: {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-          estimatedCost: this.estimateCost(
-            data.usage.prompt_tokens,
-            data.usage.completion_tokens
-          )
-        }
-      };
-    } catch (error) {
-      return this.handleError(error);
-    }
-  }
+			const newCard: GeneratedCard = {
+				uuid: request.cardId,
+				type: card.type || request.originalCard.type,
+				content: content,
+				// 向后兼容
+				front: card.front ? this.ensureString(card.front) : undefined,
+				back: card.back ? this.ensureString(card.back) : undefined,
+				choices: card.choices,
+				correctAnswer: card.correctAnswer,
+				clozeText: card.clozeText,
+				tags: card.tags || [],
+				images: card.images || [],
+				explanation: card.explanation,
+				metadata: {
+					generatedAt: new Date().toISOString(),
+					provider: "openai",
+					model: this.model,
+					temperature: config.temperature,
+				},
+			};
 
-  async splitParentCard(request: SplitCardRequest): Promise<SplitCardResponse> {
-    try {
-      // 构建拆分提示词
-      const systemPrompt = `你是一个专业的学习卡片拆分助手，遵循"最小信息原则"。
+			return {
+				success: true,
+				cards: [newCard],
+				usage: {
+					promptTokens: data.usage.prompt_tokens,
+					completionTokens: data.usage.completion_tokens,
+					totalTokens: data.usage.total_tokens,
+					estimatedCost: this.estimateCost(data.usage.prompt_tokens, data.usage.completion_tokens),
+				},
+			};
+		} catch (error) {
+			return this.handleError(error);
+		}
+	}
+
+	async splitParentCard(request: SplitCardRequest): Promise<SplitCardResponse> {
+		try {
+			// 构建拆分提示词
+			const systemPrompt = `你是一个专业的学习卡片拆分助手，遵循"最小信息原则"。
 
 你的任务是将一张包含多个知识点的父卡片拆分为多张独立的子卡片。每张子卡片应该只包含一个清晰的知识点。
 
@@ -289,9 +299,13 @@ export class OpenAIService extends AIService {
   ]
 }
 
-${request.targetCount ? `请生成约${request.targetCount}张子卡片。` : '请根据内容自动决定合适的子卡片数量（建议2-5张）。'}`;
+${
+	request.targetCount
+		? `请生成约${request.targetCount}张子卡片。`
+		: "请根据内容自动决定合适的子卡片数量（建议2-5张）。"
+}`;
 
-      const userPrompt = `请将以下卡片拆分为多张子卡片：
+			const userPrompt = `请将以下卡片拆分为多张子卡片：
 
 【卡片正面】
 ${request.content.front}
@@ -299,159 +313,152 @@ ${request.content.front}
 【卡片背面】
 ${request.content.back}
 
-${request.instruction ? `\n【额外要求】\n${request.instruction}` : ''}
+${request.instruction ? `\n【额外要求】\n${request.instruction}` : ""}
 
 请按照JSON格式输出拆分后的子卡片。`;
 
-      const response = await requestUrl({
-        url: `${this.baseUrl}/chat/completions`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 3000,
-          response_format: { type: 'json_object' }
-        })
-      });
+			const response = await this.request({
+				url: `${this.baseUrl}/chat/completions`,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${this.apiKey}`,
+				},
+				body: JSON.stringify({
+					model: this.model,
+					messages: [
+						{ role: "system", content: systemPrompt },
+						{ role: "user", content: userPrompt },
+					],
+					temperature: 0.7,
+					max_tokens: 3000,
+					response_format: { type: "json_object" },
+				}),
+			});
 
-      const data = response.json;
-      const content_text = data.choices[0].message.content;
-      
-      // 解析JSON响应
-      const parsed = JSON.parse(content_text);
-      const childCards = parsed.cards || [];
+			const data = response.json;
+			const content_text = data.choices[0].message.content;
 
-      if (!Array.isArray(childCards) || childCards.length === 0) {
-        throw new Error('AI未能生成有效的子卡片');
-      }
+			// 解析JSON响应
+			const parsed = JSON.parse(content_text);
+			const childCards = parsed.cards || [];
 
-      // 规范化子卡片数据
-      const normalizedCards = childCards.map(card => ({
-        front: this.ensureString(card.front),
-        back: this.ensureString(card.back),
-        tags: Array.isArray(card.tags) ? card.tags : [],
-        explanation: card.explanation ? this.ensureString(card.explanation) : undefined
-      }));
+			if (!Array.isArray(childCards) || childCards.length === 0) {
+				throw new Error("AI未能生成有效的子卡片");
+			}
 
-      return {
-        success: true,
-        childCards: normalizedCards,
-        usage: {
-          promptTokens: data.usage.prompt_tokens,
-          completionTokens: data.usage.completion_tokens,
-          totalTokens: data.usage.total_tokens,
-          estimatedCost: this.estimateCost(
-            data.usage.prompt_tokens,
-            data.usage.completion_tokens
-          )
-        }
-      };
-    } catch (error) {
-      logger.error('OpenAI splitParentCard error:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : '拆分卡片失败'
-      };
-    }
-  }
+			// 规范化子卡片数据
+			const normalizedCards = childCards.map((card) => ({
+				front: this.ensureString(card.front),
+				back: this.ensureString(card.back),
+				tags: Array.isArray(card.tags) ? card.tags : [],
+				explanation: card.explanation ? this.ensureString(card.explanation) : undefined,
+			}));
 
-  async testConnection(): Promise<boolean> {
-    try {
-      const response = await requestUrl({
-        url: `${this.baseUrl}/models`,
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${this.apiKey}`
-        }
-      });
+			return {
+				success: true,
+				childCards: normalizedCards,
+				usage: {
+					promptTokens: data.usage.prompt_tokens,
+					completionTokens: data.usage.completion_tokens,
+					totalTokens: data.usage.total_tokens,
+					estimatedCost: this.estimateCost(data.usage.prompt_tokens, data.usage.completion_tokens),
+				},
+			};
+		} catch (error) {
+			logger.error("OpenAI splitParentCard error:", error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "拆分卡片失败",
+			};
+		}
+	}
 
-      return response.status === 200;
-    } catch (error) {
-      logger.error('OpenAI connection test failed:', error);
-      return false;
-    }
-  }
+	async testConnection(): Promise<boolean> {
+		try {
+			const response = await this.request({
+				url: `${this.baseUrl}/models`,
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${this.apiKey}`,
+				},
+			});
 
-  /**
-   * 通用对话接口
-   */
-  async chat(request: import('./AIService').ChatRequest): Promise<import('./AIService').ChatResponse> {
-    try {
-      const response = await requestUrl({
-        url: `${this.baseUrl}/chat/completions`,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`
-        },
-        body: JSON.stringify({
-          model: this.model,
-          messages: request.messages,
-          temperature: request.temperature ?? 0.7,
-          max_tokens: request.maxTokens ?? 2000
-        })
-      });
+			return response.status === 200;
+		} catch (error) {
+			throw this.classifyConnectionError(error);
+		}
+	}
 
-      const data = response.json;
-      const content = data.choices?.[0]?.message?.content;
+	/**
+	 * 通用对话接口
+	 */
+	async chat(
+		request: import("./AIService").ChatRequest
+	): Promise<import("./AIService").ChatResponse> {
+		try {
+			const response = await this.request({
+				url: `${this.baseUrl}/chat/completions`,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${this.apiKey}`,
+				},
+				body: JSON.stringify({
+					model: this.model,
+					messages: request.messages,
+					temperature: request.temperature ?? 0.7,
+					max_tokens: request.maxTokens ?? 2000,
+				}),
+			});
 
-      if (!content) {
-        throw new Error('OpenAI未返回有效内容');
-      }
+			const data = response.json;
+			const content = data.choices?.[0]?.message?.content;
 
-      return {
-        success: true,
-        content: content.trim(),
-        model: this.model,
-        tokensUsed: data.usage?.total_tokens,
-        cost: this.estimateCost(
-          data.usage?.prompt_tokens || 0,
-          data.usage?.completion_tokens || 0
-        )
-      };
-    } catch (error) {
-      logger.error('OpenAI chat error:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'OpenAI调用失败'
-      };
-    }
-  }
+			if (!content) {
+				throw new Error("OpenAI未返回有效内容");
+			}
 
-  /**
-   * 确保值是字符串
-   * 处理AI可能返回对象、数组、undefined等非字符串类型的情况
-   */
-  private ensureString(value: any): string {
-    if (value === null || value === undefined) {
-      return '';
-    }
-    
-    if (typeof value === 'string') {
-      return value;
-    }
-    
-    // 如果是对象或数组，尝试JSON化后返回（作为降级方案）
-    if (typeof value === 'object') {
-      logger.warn('AI返回了非字符串类型的卡片内容:', value);
-      try {
-        return JSON.stringify(value);
-      } catch {
-        return String(value);
-      }
-    }
-    
-    // 其他类型（数字、布尔等）转为字符串
-    return String(value);
-  }
+			return {
+				success: true,
+				content: content.trim(),
+				model: this.model,
+				tokensUsed: data.usage?.total_tokens,
+				cost: this.estimateCost(data.usage?.prompt_tokens || 0, data.usage?.completion_tokens || 0),
+			};
+		} catch (error) {
+			logger.error("OpenAI chat error:", error);
+			return {
+				success: false,
+				error: error instanceof Error ? error.message : "OpenAI调用失败",
+			};
+		}
+	}
+
+	/**
+	 * 确保值是字符串
+	 * 处理AI可能返回对象、数组、undefined等非字符串类型的情况
+	 */
+	private ensureString(value: unknown): string {
+		if (value === null || value === undefined) {
+			return "";
+		}
+
+		if (typeof value === "string") {
+			return value;
+		}
+
+		// 如果是对象或数组，尝试JSON化后返回（作为降级方案）
+		if (typeof value === "object") {
+			logger.warn("AI返回了非字符串类型的卡片内容:", value);
+			try {
+				return JSON.stringify(value);
+			} catch {
+				return String(value);
+			}
+		}
+
+		// 其他类型（数字、布尔等）转为字符串
+		return String(value);
+	}
 }
-
-

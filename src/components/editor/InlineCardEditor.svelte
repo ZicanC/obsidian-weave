@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import type { Card, Deck } from '../../data/types';
+  import { CardType } from '../../data/types';
   import type { WeavePlugin } from '../../main';
   import type { EmbeddableEditorManager } from '../../services/editor/EmbeddableEditorManager';
   import type { ErrorDetails } from '../../types/editor-types';
@@ -13,7 +14,10 @@
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import CustomDropdown from '../ui/CustomDropdown.svelte';
   import { Notice } from 'obsidian';
-  import { setCardProperties } from '../../utils/yaml-utils';
+  import { detectClozeModeFromContent, hasClozeSyntax, setClozeModeInContent, type ClozeMode } from '../../utils/cloze-mode';
+  import { getCardDeckIds, parseYAMLFromContent, setCardProperties } from '../../utils/yaml-utils';
+  import { detectCardQuestionType } from '../../utils/card-type-utils';
+  import { getCardTypeName } from '../../types/unified-card-types';
 
   // Props接口定义
   interface Props {
@@ -36,7 +40,7 @@
     decks?: Deck[]; // 支持牌组列表
     propsDecks?: Deck[];
     propsFieldTemplates?: any[];
-    sourcePath?: string; // 🆕 源文件路径，用于解决资源解析问题
+    sourcePath?: string; // 源文件路径，用于解决资源解析问题
   }
 
   let {
@@ -51,7 +55,7 @@
     selectedDeckNames = [],
     showHeader = true,
     showFooter = true,
-    isPinned = false, // 🆕 钉住模式
+    isPinned = false, // 钉住模式
     onSave,
     onCancel,
     onClose,
@@ -59,7 +63,7 @@
     decks = [],
     propsDecks = [],
     propsFieldTemplates = [],
-    sourcePath // 🆕 接收 sourcePath
+    sourcePath // 接收 sourcePath
   }: Props = $props();
 
   // 编辑器状态管理
@@ -71,8 +75,115 @@
   let isLoading = $state(false);
   let errorDetails = $state<ErrorDetails | null>(null);
   
-  //  防重复触发标志（移动端双击问题修复）
+  // 防止保存或取消逻辑被重复触发。
   let isProcessing = $state(false);
+  let deckSelectionTouched = $state(false);
+  let currentContent = $state(card.content || '');
+
+  const supportsClozeModeToggle = $derived.by(() => {
+    const content = currentContent || card.content || '';
+    const isProgressiveCard = card.type === CardType.ProgressiveParent || card.type === CardType.ProgressiveChild;
+    return !isProgressiveCard && (hasClozeSyntax(content) || card.type === CardType.Cloze);
+  });
+
+  const currentClozeMode = $derived.by(() => {
+    return detectClozeModeFromContent(currentContent || card.content || '');
+  });
+
+  function extractClozeOrdinals(content: string): number[] {
+    const ordinals = new Set<number>();
+    const clozePattern = /\{\{c(\d+)::/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = clozePattern.exec(content)) !== null) {
+      const ord = Number.parseInt(match[1], 10);
+      if (Number.isFinite(ord) && ord >= 1) {
+        ordinals.add(ord);
+      }
+    }
+
+    return Array.from(ordinals).sort((a, b) => a - b);
+  }
+
+  function getCardTypeDisplayName(targetCard: Card | null | undefined): string {
+    if (!targetCard) return '未知题型';
+
+    switch (targetCard.type) {
+      case CardType.ProgressiveParent:
+      case CardType.ProgressiveChild:
+        return '渐进式挖空';
+      case CardType.Basic:
+        return '问答题';
+      case CardType.Cloze:
+        return '普通挖空';
+      case CardType.Multiple:
+        return '选择题';
+      default:
+        return getCardTypeName(detectCardQuestionType(targetCard));
+    }
+  }
+
+  function buildProgressiveClozeSaveNotice(previousCard: Card, persistedCard: Card): string | null {
+    const previousOrdinals = extractClozeOrdinals(previousCard.content || '');
+    const nextOrdinals = extractClozeOrdinals(persistedCard.content || '');
+
+    const previousOrdinalSet = new Set(previousOrdinals);
+    const nextOrdinalSet = new Set(nextOrdinals);
+
+    const removedOrdinals = previousOrdinals.filter(ord => !nextOrdinalSet.has(ord));
+    const addedOrdinals = nextOrdinals.filter(ord => !previousOrdinalSet.has(ord));
+    const retainedOrdinals = nextOrdinals.filter(ord => previousOrdinalSet.has(ord));
+
+    const parts: string[] = [];
+
+    if (addedOrdinals.length > 0) {
+      const labels = addedOrdinals.map(ord => `c${ord}`).join('、');
+      parts.push(`已新增子卡片 ${labels}，并通过 UUID 加入当前牌组引用`);
+      parts.push('新增子卡片不会进入当前学习会话，下次学习时再由兄弟分散规则自动处理');
+    }
+
+    if (removedOrdinals.length > 0) {
+      const labels = removedOrdinals.map(ord => `c${ord}`).join('、');
+      parts.push(`已删除子卡片 ${labels}，对应子卡片及其复习历史已删除`);
+    }
+
+    if (addedOrdinals.length === 0 && removedOrdinals.length === 0 && retainedOrdinals.length > 0) {
+      parts.push(`已同步 ${retainedOrdinals.length} 张现有渐进式子卡片的内容`);
+    }
+
+    return parts.length > 0 ? parts.join('；') : null;
+  }
+
+  function notifySaveChanges(previousCard: Card, persistedCard: Card) {
+    if (previousCard.type !== persistedCard.type) {
+      const previousTypeLabel = getCardTypeDisplayName(previousCard);
+      const nextTypeLabel = getCardTypeDisplayName(persistedCard);
+      new Notice(`卡片题型已从「${previousTypeLabel}」变更为「${nextTypeLabel}」`, 7000);
+    }
+
+    const progressiveNotice = buildProgressiveClozeSaveNotice(previousCard, persistedCard);
+    if (progressiveNotice) {
+      new Notice(progressiveNotice, 7000);
+    }
+  }
+
+  function handleEditorContentChange(content: string): void {
+    currentContent = content;
+    card.content = content;
+    onContentChange?.(content);
+  }
+
+  async function handleClozeModeToggle(mode: ClozeMode): Promise<void> {
+    const content = currentContent || card.content || '';
+    const nextContent = setClozeModeInContent(content, mode);
+
+    if (nextContent === content) {
+      return;
+    }
+
+    await updateEditorContent(nextContent);
+    new Notice(mode === 'input' ? '已切换为输入模式' : '已切换为显示模式');
+  }
 
   // 初始化编辑器（使用文件池方案）
   async function initializeEditor() {
@@ -91,9 +202,9 @@
       logger.debug('[InlineCardEditor] 🚀 开始初始化编辑器...');
 
       // 清空容器
-      editorContainer.innerHTML = '';
+      editorContainer.replaceChildren();
 
-      //  修复：InlineCardEditor用于普通编辑（CreateCardModal/EditCardModal），
+      // InlineCardEditor 用于普通编辑（CreateCardModal/EditCardModal），
       // 直接使用card.uuid作为会话ID，不使用学习会话ID
       const editSessionId = (card.uuid && card.uuid.trim().length > 0)
         ? `${card.uuid}-${editorInstanceId}`
@@ -102,7 +213,7 @@
       // 创建文件池文件（普通编辑，不传递isStudySession参数）
       const tempFileResult = await editorPoolManager.createEditorSession(card, {
         sessionId: editSessionId,
-        sourcePath: sourcePath // 🆕 传递 sourcePath
+        sourcePath: sourcePath // 传递 sourcePath
       });
 
       if (!tempFileResult.success) {
@@ -119,7 +230,7 @@
         resolvedSessionId,
         handleEditorSave,
         handleEditorCancel,
-        onContentChange
+        handleEditorContentChange
       );
 
       if (!editorResult.success) {
@@ -134,8 +245,8 @@
       logger.debug('[InlineCardEditor] ✅ 编辑器初始化成功，editorInitialized =', editorInitialized);
 
       // 初始内容加载不触发 editor-change，手动通知一次以便提取 PDF+ 来源等元数据
-      if (onContentChange && card.content) {
-        queueMicrotask(() => onContentChange!(card.content));
+      if (card.content) {
+        queueMicrotask(() => handleEditorContentChange(card.content));
       }
       
     } catch (error) {
@@ -218,7 +329,7 @@
       }
       
       //  现在有真实的content了
-      //  修复：合并外部card的sourceFile和sourceBlock（钉住模式下通过updateContent设置）
+      // 合并外部 card 的 sourceFile 和 sourceBlock（钉住模式下通过 updateContent 设置）
       const updatedCard = {
         ...result.updatedCard,
         deckId: selectedDeckId,
@@ -228,79 +339,105 @@
         sourceBlock: card.sourceBlock
       };
 
+      // 只有新建卡片或用户显式修改牌组时，才回填 we_decks，
+      // 避免用户手动删掉 YAML 里的牌组后又被旧状态悄悄补回。
+      const shouldBackfillDecks =
+        isNew ||
+        deckSelectionTouched ||
+        (Array.isArray(selectedDeckNames) && selectedDeckNames.length > 0);
+
       let nextDeckNames: string[] = [];
-      if (Array.isArray(selectedDeckNames) && selectedDeckNames.length > 0) {
-        nextDeckNames = selectedDeckNames;
-      } else {
-        const deckName = decks?.find(d => d.id === selectedDeckId)?.name;
-        if (deckName) nextDeckNames = [deckName];
+      if (shouldBackfillDecks) {
+        if (Array.isArray(selectedDeckNames) && selectedDeckNames.length > 0) {
+          nextDeckNames = selectedDeckNames;
+        } else {
+          const deckName = decks?.find(d => d.id === selectedDeckId)?.name;
+          if (deckName) nextDeckNames = [deckName];
+        }
       }
 
-      if (updatedCard.content && nextDeckNames.length > 0) {
-        updatedCard.content = setCardProperties(updatedCard.content, { we_decks: nextDeckNames });
+      if (updatedCard.content) {
+        const yaml = parseYAMLFromContent(updatedCard.content);
+        const hasPriorityKey = Object.prototype.hasOwnProperty.call(yaml, 'we_priority');
+        const yamlPriority = typeof yaml.we_priority === 'number' && Number.isFinite(yaml.we_priority)
+          ? yaml.we_priority
+          : undefined;
+
+        // YAML 中的 we_priority 优先级更高：允许用户直接编辑 frontmatter 控制卡片优先级。
+        if (yamlPriority !== undefined) {
+          updatedCard.priority = yamlPriority;
+        }
+
+        const shouldBackfillPriority =
+          !hasPriorityKey &&
+          typeof updatedCard.priority === 'number' &&
+          Number.isFinite(updatedCard.priority);
+
+        if (shouldBackfillDecks || shouldBackfillPriority) {
+          updatedCard.content = setCardProperties(updatedCard.content, {
+            ...(shouldBackfillDecks ? { we_decks: nextDeckNames.length > 0 ? nextDeckNames : undefined } : {}),
+            ...(shouldBackfillPriority ? { we_priority: updatedCard.priority } : {})
+          });
+        }
       }
       
-      logger.debug('[InlineCardEditor] ✅ 获取到编辑器内容, 长度:', updatedCard.content?.length || 0);
+      logger.debug('[InlineCardEditor] 获取到编辑器内容, 长度:', updatedCard.content?.length || 0);
       
       // 步骤2： 修复 - 先保存到数据库，确保持久化成功
+      let persistedCard: Card = updatedCard;
       if (plugin.dataStorage) {
         logger.debug('[InlineCardEditor] 💾 开始保存到数据库...');
         const saveResult = await plugin.dataStorage.saveCard(updatedCard);
+        persistedCard = saveResult.data || updatedCard;
         
         if (!saveResult.success) {
           throw new Error(saveResult.error || '数据库保存失败');
         }
         
-        logger.debug('[InlineCardEditor] ✅ 数据库保存成功, UUID:', saveResult.data?.uuid);
+        logger.debug('[InlineCardEditor] 数据库保存成功, UUID:', saveResult.data?.uuid);
 
         const referenceDeckService = (plugin as any).referenceDeckService;
         if (referenceDeckService && updatedCard.uuid) {
-          const targetDeckIds = new Set<string>();
-          if (Array.isArray(nextDeckNames)) {
-            for (const name of nextDeckNames) {
-              const matched = decks?.find(d => d.name === name);
-              if (matched?.id) {
-                targetDeckIds.add(matched.id);
-              }
+          const { deckIds: explicitDeckIds } = getCardDeckIds(updatedCard, decks, {
+            fallbackToReferences: false
+          });
+          const targetDeckIds = new Set<string>(explicitDeckIds);
+          const sourceSet = new Set<string>((sourceDeckIds || []).filter(Boolean));
+
+          for (const deckId of sourceSet) {
+            if (!targetDeckIds.has(deckId)) {
+              await referenceDeckService.removeCardsFromDeck(deckId, [updatedCard.uuid]);
             }
           }
 
-          if (targetDeckIds.size > 0) {
-            const sourceSet = new Set<string>((sourceDeckIds || []).filter(Boolean));
-
-            for (const deckId of sourceSet) {
-              if (!targetDeckIds.has(deckId)) {
-                await referenceDeckService.removeCardsFromDeck(deckId, [updatedCard.uuid]);
-              }
-            }
-
-            for (const deckId of targetDeckIds) {
-              if (!sourceSet.has(deckId)) {
-                await referenceDeckService.addCardsToDeck(deckId, [updatedCard.uuid]);
-              }
+          for (const deckId of targetDeckIds) {
+            if (!sourceSet.has(deckId)) {
+              await referenceDeckService.addCardsToDeck(deckId, [updatedCard.uuid]);
             }
           }
         }
       } else {
-        logger.warn('[InlineCardEditor] ⚠️ dataStorage未初始化，跳过数据库保存');
+        logger.warn('[InlineCardEditor] dataStorage未初始化，跳过数据库保存');
       }
       
-      //  关键修复：在调用 onSave 之前重置 isLoading
-      // 这样可以确保按钮在回调执行前就已经恢复可用状态
-      // 避免在非钉住模式下，模态窗关闭时按钮仍处于禁用状态
+      // 在触发 onSave 前先恢复按钮状态，避免界面残留禁用态。
       isLoading = false;
-      logger.debug('[InlineCardEditor] 🔓 isLoading 已重置为 false，准备调用 onSave 回调');
+      if (!isNew) {
+        notifySaveChanges(card, persistedCard);
+      }
+
+      logger.debug('[InlineCardEditor] isLoading 已重置，准备调用 onSave 回调');
       
-      // 步骤3：数据库保存成功后，再调用onSave回调（通知上层可以关闭了）
+      // 数据库保存成功后，再通知上层继续后续 UI 流程。
       if (onSave) {
-        logger.debug('[InlineCardEditor] 📞 调用 onSave 回调...');
-        onSave(updatedCard);
-        logger.debug('[InlineCardEditor] ✅ onSave 回调已执行');
+        logger.debug('[InlineCardEditor] 调用 onSave 回调...');
+        onSave(persistedCard);
+        logger.debug('[InlineCardEditor] onSave 回调已执行');
       }
       
     } catch (error) {
       isLoading = false;
-      logger.error('[InlineCardEditor] ❌ 保存失败:', error);
+      logger.error('[InlineCardEditor] 保存失败:', error);
       new Notice('保存失败: ' + (error instanceof Error ? error.message : '未知错误'));
     } finally {
       //  延迟重置处理标志，防止快速连续点击
@@ -348,14 +485,14 @@
         return;
       }
       
-      //  修复：使用updateSessionContent真正更新编辑器内容
+      // 使用 updateSessionContent 真正更新编辑器内容
       const result = await editorPoolManager.updateSessionContent(currentEditSessionId, content);
       
       if (result.success) {
         logger.debug('[InlineCardEditor] ✅ 编辑器内容已更新（快捷键填充）');
         
-        // 同时更新card对象的content，确保同步
-        card.content = content;
+        // 同步本地内容状态，确保预览和模式切换即时刷新
+        handleEditorContentChange(content);
       } else {
         logger.error('[InlineCardEditor] ❌ 更新编辑器内容失败:', result.error);
       }
@@ -364,7 +501,7 @@
     }
   }
 
-  // 🆕 重置编辑器准备下一张卡片（钉住模式专用）
+  // 重置编辑器，为下一张卡片做准备（钉住模式专用）
   export async function resetForNewCard(newCard?: Card) {
     logger.debug('[InlineCardEditor] 🔄 钉住模式：准备下一张卡片', {
       hasNewCard: !!newCard,
@@ -376,12 +513,13 @@
       return;
     }
 
-    //  修复：更新会话的card对象和清空编辑器内容
+    // 更新会话的 card 对象并清空编辑器内容
     try {
       if (newCard) {
         // 如果提供了新卡片，更新整个card对象（包含uuid等信息）
         const result = await editorPoolManager.updateSessionCard(currentEditSessionId, newCard);
         if (result.success) {
+          handleEditorContentChange(newCard.content || '');
           logger.debug('[InlineCardEditor] ✅ 会话卡片对象已更新，编辑器已清空');
         } else {
           logger.error('[InlineCardEditor] ❌ 更新会话卡片对象失败:', result.error);
@@ -390,6 +528,7 @@
         // 没有提供新卡片，只清空内容
         const result = await editorPoolManager.updateSessionContent(currentEditSessionId, '');
         if (result.success) {
+          handleEditorContentChange('');
           logger.debug('[InlineCardEditor] ✅ 编辑器内容已清空');
         } else {
           logger.error('[InlineCardEditor] ❌ 清空编辑器内容失败:', result.error);
@@ -433,6 +572,28 @@
       </div>
       
       <div class="header-right">
+        {#if supportsClozeModeToggle}
+          <div class="cloze-mode-switch" role="group" aria-label="挖空模式切换">
+            <span class="cloze-mode-label">挖空模式</span>
+            <button
+              type="button"
+              class:active={currentClozeMode === 'reveal'}
+              onclick={() => void handleClozeModeToggle('reveal')}
+              disabled={isLoading || !editorInitialized}
+            >
+              显示
+            </button>
+            <button
+              type="button"
+              class:active={currentClozeMode === 'input'}
+              onclick={() => void handleClozeModeToggle('input')}
+              disabled={isLoading || !editorInitialized}
+            >
+              输入
+            </button>
+          </div>
+        {/if}
+
         <!-- 牌组选择器 -->
         {#if decks && decks.length > 0}
           <CustomDropdown
@@ -441,6 +602,7 @@
             options={decks}
             onchange={(value) => {
               selectedDeckId = value;
+              deckSelectionTouched = true;
               logger.debug('[InlineCardEditor] 牌组选择变更:', selectedDeckId);
             }}
           />
@@ -497,7 +659,7 @@
 
   {#if showFooter}
     <div class="editor-footer">
-      <!--  移动端修复：使用 onclick 替代 pointerup，配合 touch-action: manipulation 消除延迟 -->
+      <!-- 移动端使用 onclick 替代 pointerup，配合 touch-action: manipulation 消除延迟 -->
       <!-- onclick 在焦点变化后触发，避免与编辑器焦点管理冲突 -->
       <button
         type="button"
@@ -505,7 +667,6 @@
         onclick={(e) => {
           //  使用 onclick 统一处理，配合 CSS touch-action: manipulation 消除300ms延迟
           e.preventDefault();
-          e.stopPropagation();
           if (!isLoading) {
             logger.debug('[InlineCardEditor] 📱 取消按钮 click 触发');
             handleCancel();
@@ -523,7 +684,6 @@
         onclick={(e) => {
           //  使用 onclick 统一处理，配合 CSS touch-action: manipulation 消除300ms延迟
           e.preventDefault();
-          e.stopPropagation();
           if (!isLoading && editorInitialized) {
             logger.debug('[InlineCardEditor] 📱 创建/保存按钮 click 触发');
             handleSave();
@@ -547,10 +707,10 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    padding: 16px; /* 🎯 恢复正常padding */
-    gap: 16px; /* 🎯 恢复正常间距 */
+    padding: 16px;
+    gap: 16px;
     background: var(--background-primary);
-    /*  确保编辑器容器接收触摸事件 */
+    /* 确保编辑器容器接收触摸事件。 */
     pointer-events: auto;
   }
 
@@ -576,6 +736,49 @@
     align-items: center;
     flex-shrink: 0;
     gap: 12px;
+  }
+
+  .cloze-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
+    background: var(--background-secondary);
+  }
+
+  .cloze-mode-label {
+    padding: 0 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .cloze-mode-switch button {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .cloze-mode-switch button:hover:not(:disabled) {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+  }
+
+  .cloze-mode-switch button.active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+  }
+
+  .cloze-mode-switch button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   /* 关闭按钮样式 */
@@ -621,9 +824,9 @@
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 16px; /* 🎯 恢复正常间距 */
+    gap: 16px;
     min-height: 0;
-    /*  关键修复：确保内容区域不溢出，让编辑器正确滚动 */
+    /* 确保内容区域不溢出，让编辑器正确滚动。 */
     overflow: hidden;
   }
 
@@ -634,7 +837,7 @@
     display: flex;
     flex-direction: column;
     min-height: 200px;
-    /*  关键修复：设置最大高度并启用滚动，确保长内容时光标可见 */
+    /* 设置最大高度并启用滚动，确保长内容时光标可见。 */
     max-height: 100%;
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
@@ -648,7 +851,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    /*  关键修复：确保容器可以滚动 */
+    /* 确保容器可以滚动。 */
     max-height: 100%;
     overflow: hidden;
     position: relative;
@@ -658,7 +861,7 @@
   .obsidian-editor-container :global(.cm-editor) {
     flex: 1;
     min-height: 200px;
-    /*  关键修复：限制最大高度，启用内部滚动 */
+    /* 限制最大高度，启用内部滚动。 */
     max-height: 100%;
     border: none;
     border-radius: 0;
@@ -666,7 +869,7 @@
   }
 
   .obsidian-editor-container :global(.cm-scroller) {
-    /*  关键修复：确保滚动器可以滚动，光标始终可见 */
+    /* 确保滚动器可滚动，光标始终可见。 */
     overflow-y: auto !important;
     overflow-x: hidden !important;
     /* CodeMirror 会自动滚动到光标位置 */
@@ -863,10 +1066,10 @@
       /*  确保编辑器不超出可用空间 */
       max-height: 100%;
       overflow: hidden;
-      /*  关键：参与 flex 布局 */
+      /* 关键：参与 flex 布局。 */
       display: flex;
       flex-direction: column;
-      /*  P0修复：填满父容器高度 */
+      /* 填满父容器高度。 */
       height: 100%;
       flex: 1;
     }
@@ -876,34 +1079,34 @@
     }
 
     .editor-content {
-      /*  移动端：确保内容区域可以收缩 */
+      /* 移动端：确保内容区域可以收缩。 */
       flex: 1;
       min-height: 0;
       overflow: hidden;
-      /*  P0修复：确保 flex 布局正确传递 */
+      /* 确保 flex 布局正确传递。 */
       display: flex;
       flex-direction: column;
     }
 
     .editor-container-wrapper {
-      /*  移动端：减小最小高度，避免内容过高 */
+      /* 移动端：减小最小高度，避免内容过高。 */
       min-height: 150px;
-      /*  确保编辑器可以滚动 */
+      /* 确保编辑器可以滚动。 */
       flex: 1;
       overflow: hidden;
-      /*  P0修复：确保 flex 布局正确传递 */
+      /* 确保 flex 布局正确传递。 */
       display: flex;
       flex-direction: column;
     }
 
     .editor-placeholder,
     .editor-loading {
-      /*  移动端：减小占位符高度 */
+      /* 移动端：减小占位符高度。 */
       height: 150px;
     }
 
     .obsidian-editor-container {
-      /*  P0修复：确保容器填满并传递 flex 布局 */
+      /* 确保容器填满并传递 flex 布局。 */
       flex: 1;
       min-height: 0;
       display: flex;
@@ -911,9 +1114,9 @@
     }
 
     .obsidian-editor-container :global(.cm-editor) {
-      /*  移动端：减小最小高度 */
+      /* 移动端：减小最小高度。 */
       min-height: 150px;
-      /*  P0修复：使用 flex 布局而非固定高度 */
+      /* 使用 flex 布局而非固定高度。 */
       flex: 1;
       min-height: 0 !important;
       display: flex;
@@ -921,19 +1124,19 @@
     }
 
     .obsidian-editor-container :global(.cm-scroller) {
-      /*  移动端：确保滚动正常工作 */
+      /* 移动端：确保滚动正常工作。 */
       overflow-y: auto !important;
       -webkit-overflow-scrolling: touch;
-      /*  关键修复：确保光标位置始终可见 */
+      /* 确保光标位置始终可见。 */
       scroll-padding-bottom: 100px;
-      /*  P0修复：关键！flex 布局 + min-height: 0 允许收缩并正确滚动 */
+      /* flex 布局 + min-height: 0 允许收缩并正确滚动。 */
       flex: 1;
       min-height: 0;
     }
     
-    /*  移动端：确保编辑器内容区域可以滚动到光标位置 */
+    /* 移动端：确保编辑器内容区域可以滚动到光标位置。 */
     .obsidian-editor-container :global(.cm-content) {
-      /*  添加底部内边距，确保光标在底部时仍可见 */
+      /* 添加底部内边距，确保光标在底部时仍可见。 */
       padding-bottom: 120px !important;
     }
 

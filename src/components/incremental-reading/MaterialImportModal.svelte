@@ -20,7 +20,7 @@
   import ResizableModal from '../ui/ResizableModal.svelte';
   import type { BatchImportResult } from '../../services/incremental-reading/ReadingMaterialManager';
   import { getServices } from './IRDeckView.svelte';
-  import type { IRDeck } from '../../types/ir-types';
+  import type { IRDeck, IRChunkFileData } from '../../types/ir-types';
   
   import type { ImportStep, SplitMode, RuleSplitConfig as RuleSplitConfigType, ContentBlock } from '../../types/content-split-types';
   import { DEFAULT_RULE_SPLIT_CONFIG, SPLIT_MARKER_REGEX, generateSplitMarker } from '../../types/content-split-types';
@@ -28,13 +28,22 @@
   import { IRChunkFileService } from '../../services/incremental-reading/IRChunkFileService';
   import { IRTagGroupService } from '../../services/incremental-reading/IRTagGroupService';
   import { IRPdfBookmarkTaskService } from '../../services/incremental-reading/IRPdfBookmarkTaskService';
+  import { IREpubBookmarkTaskService } from '../../services/incremental-reading/IREpubBookmarkTaskService';
+  import { IRV4SchedulerService } from '../../services/incremental-reading/IRV4SchedulerService';
+  import { ReadiumReaderService } from '../../services/epub';
+  import type { TocItem } from '../../services/epub/types';
   import type { SchedulingConfig, SchedulingImpact } from '../../types/ir-import-scheduling';
   import { DEFAULT_SCHEDULING_CONFIG, SCHEDULING_PRESETS } from '../../types/ir-import-scheduling';
   import { IRImportSchedulingService, type IRLoadInfo } from '../../services/incremental-reading/IRImportSchedulingService';
+  import { recomputeAndBroadcastIRData } from '../../services/incremental-reading/IRScheduleRefreshService';
+  import { extractBodyContent } from '../../utils/yaml-utils';
+  import { ReadingCategory } from '../../types/incremental-reading-types';
+  import { createDefaultChunkFileData, generateChunkId, generateSourceId } from '../../types/ir-types';
 
   interface Props {
     plugin: WeavePlugin;
     open: boolean;
+    useObsidianModal?: boolean;
     onClose: () => void;
     onImportComplete: (result: BatchImportResult) => void;
   }
@@ -50,6 +59,8 @@
 
       const pdfService = new IRPdfBookmarkTaskService(plugin.app);
       await pdfService.initialize();
+      const scheduler = new IRV4SchedulerService(plugin.app);
+      await scheduler.initialize();
       const allPdfTasks = await pdfService.getAllTasks();
 
       let assignments: Map<ContentBlock, Date> | null = null;
@@ -144,11 +155,15 @@
 
           const assignedDate = assignments?.get(block as any);
           if (assignedDate) {
-            await pdfService.updateTask(created.id, {
-              nextRepDate: assignedDate.getTime(),
-              intervalDays: 1,
-              status: 'queued'
-            });
+            await scheduler.manualRescheduleBlockWithPreviewV4(
+              pdfService.toBlockV4(created),
+              {
+                nextRepDate: assignedDate.getTime(),
+                intervalDays: 1,
+                scheduleStatus: 'queued'
+              },
+              selectedDeckId
+            );
           }
 
           existingKeys.add(key);
@@ -160,7 +175,7 @@
         }
       }
 
-      window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+      await recomputeAndBroadcastIRData(plugin.app, 'import_materials');
       onImportComplete({ success, skipped, errors });
       onClose();
     } catch (error) {
@@ -171,7 +186,13 @@
     }
   }
 
-  let { plugin, open = $bindable(), onClose, onImportComplete }: Props = $props();
+  let {
+    plugin,
+    open = $bindable(),
+    useObsidianModal = false,
+    onClose,
+    onImportComplete
+  }: Props = $props();
 
   interface TreeNode {
     name: string;
@@ -198,6 +219,15 @@
   interface ImportContentBlock extends ContentBlock {
     sourceFilePath?: string;
     pdfPageNumber?: number;
+  }
+
+  interface EpubFlatItem {
+    id: string;
+    label: string;
+    href: string;
+    level: number;
+    filePath: string;
+    bookTitle: string;
   }
 
   let contentBlocks = $state<ImportContentBlock[]>([]);
@@ -231,7 +261,17 @@
   let customDaysValue = $state(21);
 
   let isPdfImportMode = $state(false);
+  let isEpubImportMode = $state(false);
   let previewTagGroupName = $state('');
+
+  // EPUB-specific state
+  let epubTocTree = $state<TocItem[]>([]);
+  let epubMaxTocLevel = $state(0);
+  let epubSplitLevel = $state(1);
+  let epubFlatItems = $state<EpubFlatItem[]>([]);
+  let epubSelectedItems = $state<Set<string>>(new Set());
+  let loadingToc = $state(false);
+  let epubFilePath = $state('');
 
   const selectedCount = $derived.by(() => countSelectedFiles(treeData));
   
@@ -240,7 +280,7 @@
       case 'select': return '导入阅读材料';
       case 'split-mode': return '选择拆分方式';
       case 'configure': return splitMode === 'manual' ? '手动拆分' : '配置拆分规则';
-      case 'preview': return isPdfImportMode ? '确认导入 PDF 材料' : '预览拆分结果';
+      case 'preview': return isPdfImportMode ? '确认导入 PDF 材料' : isEpubImportMode ? '确认导入 EPUB 材料' : '预览拆分结果';
       default: return '导入阅读材料';
     }
   });
@@ -322,7 +362,7 @@
         if (folderNode.children.length > 0) {
           children.push(folderNode);
         }
-      } else if (child instanceof TFile && (child.extension === 'md' || child.extension === 'pdf')) {
+      } else if (child instanceof TFile && (child.extension === 'md' || child.extension === 'pdf' || child.extension === 'epub')) {
         children.push({
           name: child.name,
           path: child.path,
@@ -543,13 +583,20 @@
     }
 
     const hasMarkdown = extensions.has('md');
-    const hasNonMarkdown = Array.from(extensions).some(ext => ext !== 'md');
-    if (hasMarkdown && hasNonMarkdown) {
-      new Notice('暂不支持混合导入（请分别导入 Markdown 与 PDF）');
+    const hasPdf = extensions.has('pdf');
+    const hasEpub = extensions.has('epub');
+    const typeCount = (hasMarkdown ? 1 : 0) + (hasPdf ? 1 : 0) + (hasEpub ? 1 : 0);
+    if (typeCount > 1) {
+      new Notice('暂不支持混合导入（请分别导入 Markdown、PDF 或 EPUB）');
       return;
     }
 
-    const isPdfImport = hasNonMarkdown;
+    if (hasEpub) {
+      await prepareEpubSplitStep(paths);
+      return;
+    }
+
+    const isPdfImport = hasPdf;
     if (isPdfImport) {
       await preparePdfImportPreview(paths);
       return;
@@ -560,7 +607,8 @@
       try {
         const file = plugin.app.vault.getAbstractFileByPath(selectedFilePath);
         if (file instanceof TFile) {
-          fileContent = await plugin.app.vault.read(file);
+          const rawContent = await plugin.app.vault.read(file);
+          fileContent = extractBodyContent(rawContent);
           editedContent = fileContent;
         }
       } catch (error) {
@@ -637,6 +685,167 @@
     }
   }
 
+  function getMatchedBlocksForFile(
+    filePath: string,
+    allBlocks: ContentBlock[],
+    fallbackStartIndex: number,
+    fallbackCount: number,
+    isManualSingleFile: boolean
+  ): ContentBlock[] {
+    if (isManualSingleFile) {
+      return allBlocks;
+    }
+
+    const normalizedFilePath = normalizePath(filePath);
+    const blocksForFile = allBlocks.filter(block =>
+      (block as ImportContentBlock).sourceFilePath
+      && normalizePath((block as ImportContentBlock).sourceFilePath!) === normalizedFilePath
+    );
+
+    if (blocksForFile.length > 0) {
+      return blocksForFile;
+    }
+
+    return allBlocks.slice(fallbackStartIndex, fallbackStartIndex + fallbackCount);
+  }
+
+  async function ensureMdMaterialServices() {
+    const materialManager = plugin.readingMaterialManager;
+    const materialStorage = plugin.readingMaterialStorage;
+
+    if (!materialManager || !materialStorage) {
+      throw new Error('增量阅读材料服务尚未初始化');
+    }
+
+    await materialStorage.initialize();
+    return { materialManager };
+  }
+
+  async function ensureExternalDocumentChunkScheduled(
+    file: TFile,
+    deckId: string,
+    deckName: string,
+    nextRepDate?: number
+  ): Promise<void> {
+    await services.init();
+    const storage = services.storageService;
+    if (!storage) {
+      throw new Error('增量阅读存储服务尚未初始化');
+    }
+
+    const chunks = await storage.getAllChunkData();
+    const existing = Object.values(chunks).find((chunk: any) => (chunk as any)?.filePath === file.path) as IRChunkFileData | undefined;
+    const effectiveNextRepDate = nextRepDate ?? Date.now();
+
+    if (existing) {
+      existing.deckIds = [deckId];
+      existing.deckTag = `#IR_deck_${deckName}`;
+      existing.nextRepDate = effectiveNextRepDate;
+      existing.intervalDays = existing.intervalDays || 1;
+      existing.scheduleStatus = 'queued';
+      existing.updatedAt = Date.now();
+      (existing.meta as any) = { ...(existing.meta || {}), externalDocument: true };
+      await storage.saveChunkData(existing);
+      return;
+    }
+
+    const chunk = createDefaultChunkFileData(generateChunkId(), generateSourceId(), file.path) as IRChunkFileData;
+    chunk.deckIds = [deckId];
+    chunk.deckTag = `#IR_deck_${deckName}`;
+    chunk.nextRepDate = effectiveNextRepDate;
+    chunk.intervalDays = 1;
+    chunk.scheduleStatus = 'queued';
+    chunk.updatedAt = Date.now();
+    (chunk.meta as any) = { ...(chunk.meta || {}), externalDocument: true };
+    await storage.saveChunkData(chunk);
+  }
+
+  async function importMdFilesAsSourceDocuments(
+    filePaths: string[],
+    assignments: Map<ContentBlock, Date> | null
+  ): Promise<{ successCount: number; errorCount: number; chunkCount: number }> {
+    const selectedDeck = availableDecks.find(d => d.id === selectedDeckId);
+    if (!selectedDeckId || !selectedDeck) {
+      throw new Error('未选择专题');
+    }
+
+    const { materialManager } = await ensureMdMaterialServices();
+    const isManualSingleFile = splitMode === 'manual' && filePaths.length === 1;
+
+    let successCount = 0;
+    let errorCount = 0;
+    let chunkCount = 0;
+    let fallbackCursor = 0;
+
+    for (let i = 0; i < filePaths.length; i++) {
+      const filePath = filePaths[i];
+      importProgress = { current: i + 1, total: filePaths.length };
+
+      const file = plugin.app.vault.getAbstractFileByPath(filePath);
+      if (!(file instanceof TFile) || file.extension !== 'md') {
+        errorCount++;
+        continue;
+      }
+
+      try {
+        const blocksForFile = getMatchedBlocksForFile(
+          file.path,
+          contentBlocks,
+          fallbackCursor,
+          isManualSingleFile ? contentBlocks.length : 1,
+          isManualSingleFile
+        );
+        fallbackCursor += blocksForFile.length;
+
+        if (blocksForFile.length === 0) {
+          throw new Error('没有可导入的拆分内容');
+        }
+
+        const splitBlocks = blocksForFile.map((block) => {
+          const sourcePrefix = `${file.basename} - `;
+          const normalizedTitle = block.title.startsWith(sourcePrefix)
+            ? block.title.slice(sourcePrefix.length).trim()
+            : block.title.trim();
+          return {
+            title: normalizedTitle || file.basename,
+            content: block.content,
+            nextReviewAt: assignments?.get(block)
+          };
+        });
+
+        const createdMaterials = await materialManager.createSplitMarkdownMaterials(file, splitBlocks, {
+          source: 'manual',
+          category: ReadingCategory.Later,
+          priority: 50,
+          tags: ['weave-incremental-reading'],
+          deckId: selectedDeckId
+        });
+
+        for (const material of createdMaterials) {
+          const createdFile = plugin.app.vault.getAbstractFileByPath(material.filePath);
+          if (!(createdFile instanceof TFile)) {
+            continue;
+          }
+
+          const nextRepDate = material.fsrs?.due ? new Date(material.fsrs.due).getTime() : undefined;
+          await ensureExternalDocumentChunkScheduled(createdFile, selectedDeckId, selectedDeck.name, nextRepDate);
+        }
+
+        successCount += createdMaterials.length;
+        chunkCount += createdMaterials.length;
+        logger.info(
+          `[MaterialImportModal] Markdown 拆分导入成功: ${file.path} -> ${createdMaterials.length} 个独立 md 文件`
+        );
+      } catch (error) {
+        errorCount++;
+        logger.error(`[MaterialImportModal] Markdown 拆分导入失败: ${file.path}`, error);
+        new Notice(`导入失败: ${file.basename} - ${error instanceof Error ? error.message : '未知错误'}`);
+      }
+    }
+
+    return { successCount, errorCount, chunkCount };
+  }
+
   /**
    * 通过 Obsidian 的 PDF 视图获取 PDF 目录（outline）。
    *
@@ -649,7 +858,65 @@
    *                       ├── pdfViewer (内层 PDF.js PDFViewer) → pdfDocument
    *                       └── pdfLoadingTask.promise → PDFDocumentProxy
    */
+  async function getPdfOutlineDirect(pdfFile: TFile): Promise<Array<{ title: string; pageNumber: number; path: string[] }> | null> {
+    const pdfjsLib = (window as any).pdfjsLib;
+    if (!pdfjsLib?.getDocument) return null;
+
+    let loadingTask: any = null;
+    try {
+      const arrayBuffer = await plugin.app.vault.readBinary(pdfFile);
+      loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
+      const pdfDocument = await Promise.race([
+        loadingTask.promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('PDF load timeout')), 10000))
+      ]);
+
+      try {
+        const outline = await pdfDocument.getOutline();
+        if (!Array.isArray(outline) || outline.length === 0) return [];
+
+        const results: Array<{ title: string; pageNumber: number; path: string[] }> = [];
+        const resolvePageNumber = async (item: any): Promise<number> => {
+          const dest = item?.dest;
+          if (!dest) return 0;
+          try {
+            const destArray = typeof dest === 'string' ? await pdfDocument.getDestination(dest) : dest;
+            if (!Array.isArray(destArray) || destArray.length === 0) return 0;
+            const idx = await pdfDocument.getPageIndex(destArray[0]);
+            return typeof idx === 'number' && !Number.isNaN(idx) ? idx + 1 : 0;
+          } catch { return 0; }
+        };
+
+        const walk = async (items: any[], ancestors: string[]) => {
+          for (const it of items) {
+            const title = String(it?.title || '').trim() || '目录';
+            const nextPath = [...ancestors, title];
+            const pageNumber = await resolvePageNumber(it);
+            results.push({ title, pageNumber, path: nextPath });
+            const children = it?.items ?? it?.children;
+            if (Array.isArray(children) && children.length > 0) {
+              await walk(children, nextPath);
+            }
+          }
+        };
+
+        await walk(outline, []);
+        logger.debug('[MaterialImportModal] PDF outline via pdfjsLib:', { pdf: pdfFile.path, count: results.length });
+        return results;
+      } finally {
+        try { pdfDocument.destroy(); } catch {}
+      }
+    } catch (e) {
+      try { loadingTask?.destroy(); } catch {}
+      logger.debug('[MaterialImportModal] pdfjsLib outline failed, falling back to leaf:', e);
+      return null;
+    }
+  }
+
   async function getPdfOutlineItemsByOpeningLeaf(pdfFile: TFile): Promise<Array<{ title: string; pageNumber: number; path: string[] }>> {
+    const directResult = await getPdfOutlineDirect(pdfFile);
+    if (directResult !== null) return directResult;
+
     let leaf: any = null;
     let createdLeaf = false;
     try {
@@ -672,7 +939,7 @@
       //    PDFViewerComponent.child 初始为 null，文件加载完成后才填充
       //    PDFViewerComponent.then(cb) 可注册就绪回调
       const child: any = await new Promise<any>((resolve, reject) => {
-        const timeoutId = setTimeout(() => reject(new Error('PDFViewerChild 等待超时')), 20000);
+        const timeoutId = setTimeout(() => reject(new Error('PDFViewerChild 等待超时')), 8000);
         const viewerComp = (leaf as any)?.view?.viewer;
         if (!viewerComp) {
           clearTimeout(timeoutId);
@@ -695,7 +962,7 @@
               resolve(viewerComp.child);
             }
           }, 100);
-          setTimeout(() => clearInterval(poll), 20000);
+          setTimeout(() => clearInterval(poll), 8000);
         }
       });
 
@@ -706,9 +973,10 @@
       const outlineViewer: any = obsViewer?.pdfOutlineViewer;
       if (outlineViewer) {
         // 等待 outline 加载完毕
-        for (let i = 0; i < 100; i++) {
+        for (let i = 0; i < 30; i++) {
           const items = outlineViewer.allItems ?? outlineViewer.children;
           if (Array.isArray(items) && items.length > 0) break;
+          if (i >= 5 && obsViewer?.pdfViewer?.pdfDocument) break;
           await new Promise(r => setTimeout(r, 100));
         }
 
@@ -750,7 +1018,7 @@
         if (obsViewer?.pdfLoadingTask?.promise) {
           pdfDocument = await Promise.race([
             obsViewer.pdfLoadingTask.promise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('pdfLoadingTask 超时')), 15000))
+            new Promise((_, reject) => setTimeout(() => reject(new Error('pdfLoadingTask 超时')), 8000))
           ]);
         }
       } catch {}
@@ -825,12 +1093,261 @@
     currentStep = 'configure';
   }
 
+  // --- EPUB functions ---
+  async function prepareEpubSplitStep(paths: string[]): Promise<void> {
+    isEpubImportMode = true;
+    epubFilePath = paths.length === 1 ? paths[0] : '';
+    selectedFilePath = paths.length === 1 ? paths[0] : null;
+    loadingToc = true;
+    importProgress = { current: 0, total: paths.length };
+
+    try {
+      const mergedTocTree: TocItem[] = [];
+      let maxDepth = 0;
+
+      for (let i = 0; i < paths.length; i++) {
+        const filePath = paths[i];
+        importProgress = { current: i + 1, total: paths.length };
+
+        const file = plugin.app.vault.getAbstractFileByPath(filePath);
+        const tfile = file instanceof TFile ? file : null;
+        if (!tfile) {
+          continue;
+        }
+
+        const readerService = new ReadiumReaderService(plugin.app);
+        try {
+          await readerService.loadEpub(filePath);
+          const tocItems = await readerService.getTableOfContents();
+          maxDepth = Math.max(maxDepth, getEpubMaxDepth(tocItems));
+          mergedTocTree.push({
+            id: filePath,
+            label: tfile.basename,
+            href: '',
+            level: 0,
+            subitems: tocItems.map((item) => attachEpubItemContext(item, filePath, tfile.basename))
+          });
+        } finally {
+          readerService.destroy();
+        }
+      }
+
+      epubTocTree = mergedTocTree;
+      epubMaxTocLevel = maxDepth;
+      epubSplitLevel = Math.max(1, Math.min(epubSplitLevel || 1, maxDepth || 1));
+      refreshEpubFlatItems();
+      currentStep = 'split-mode';
+    } catch (e) {
+      logger.error('[MaterialImportModal] EPUB TOC loading failed:', e);
+      new Notice(`EPUB 目录加载失败: ${e instanceof Error ? e.message : '未知错误'}`);
+      isEpubImportMode = false;
+    } finally {
+      loadingToc = false;
+    }
+  }
+
+  function attachEpubItemContext(item: TocItem, filePath: string, bookTitle: string): TocItem {
+    return {
+      ...item,
+      id: `${filePath}::${item.id}`,
+      subitems: item.subitems?.map((subitem) => attachEpubItemContext(subitem, filePath, bookTitle))
+    } as TocItem;
+  }
+
+  function getEpubMaxDepth(items: TocItem[]): number {
+    let max = 0;
+    for (const item of items) {
+      max = Math.max(max, item.level);
+      if (item.subitems && item.subitems.length > 0) {
+        max = Math.max(max, getEpubMaxDepth(item.subitems));
+      }
+    }
+    return max;
+  }
+
+  function flattenEpubToc(items: TocItem[], maxLevel: number): EpubFlatItem[] {
+    const result: EpubFlatItem[] = [];
+    const walk = (list: TocItem[], filePath = '', bookTitle = '') => {
+      for (const item of list) {
+        const nextFilePath = filePath || String(item.id.split('::')[0] || '');
+        const nextBookTitle = bookTitle || item.label;
+        if (item.href && item.level <= maxLevel) {
+          result.push({
+            id: item.id,
+            label: item.label,
+            href: item.href,
+            level: item.level,
+            filePath: nextFilePath,
+            bookTitle: nextBookTitle
+          });
+        }
+        if (item.subitems && item.subitems.length > 0) {
+          walk(item.subitems, nextFilePath, nextBookTitle);
+        }
+      }
+    };
+    walk(items);
+    return result;
+  }
+
+  function refreshEpubFlatItems(): void {
+    const nextItems = flattenEpubToc(epubTocTree, epubSplitLevel);
+    const previousSelection = new Set(epubSelectedItems);
+    epubFlatItems = nextItems;
+    epubSelectedItems = previousSelection.size > 0
+      ? new Set(nextItems.filter(item => previousSelection.has(item.id)).map(item => item.id))
+      : new Set(nextItems.map(item => item.id));
+  }
+
+  function toggleEpubItem(id: string) {
+    const next = new Set(epubSelectedItems);
+    if (next.has(id)) { next.delete(id); } else { next.add(id); }
+    epubSelectedItems = next;
+  }
+
+  function handleEpubSplitConfirm() {
+    const selected = epubFlatItems.filter(i => epubSelectedItems.has(i.id));
+    if (selected.length === 0) {
+      new Notice('请至少选择一个章节');
+      return;
+    }
+    contentBlocks = selected.map((item, idx) => ({
+      id: `epub-${idx}`,
+      title: isMultiFileMode ? `${item.bookTitle} - ${item.label}` : item.label,
+      content: item.href,
+      charCount: item.label.length,
+      startOffset: 0,
+      endOffset: 0,
+      sourceFilePath: item.filePath
+    }));
+    currentStep = 'preview';
+  }
+
+  async function handleEpubBookmarkTaskImport(): Promise<void> {
+    if (!selectedDeckId) return;
+
+    importing = true;
+    importProgress = { current: 0, total: contentBlocks.length };
+
+    try {
+      await services.init();
+
+      const epubService = new IREpubBookmarkTaskService(plugin.app);
+      await epubService.initialize();
+
+      const selected = epubFlatItems.filter(i => epubSelectedItems.has(i.id));
+      const existingHrefMap = new Map<string, Set<string>>();
+      const selectedFilePaths = Array.from(new Set(selected.map(item => item.filePath).filter(Boolean)));
+      for (const filePath of selectedFilePaths) {
+        const existing = await epubService.getTasksByEpub(filePath);
+        existingHrefMap.set(
+          filePath,
+          new Set(existing.filter(t => t.deckId === selectedDeckId).map(t => t.tocHref))
+        );
+      }
+
+      const newItems = selected.filter(item => !existingHrefMap.get(item.filePath)?.has(item.href));
+
+      let assignments: Map<ContentBlock, Date> | null = null;
+      if (contentBlocks.length > 0) {
+        const allPdfTasks = await (new IRPdfBookmarkTaskService(plugin.app)).initialize().then(async () => {
+          const svc = new IRPdfBookmarkTaskService(plugin.app);
+          await svc.initialize();
+          return svc.getAllTasks();
+        }).catch(() => []);
+
+        const loadInfo: IRLoadInfo = {
+          dailyBudgetMinutes: 60,
+          getBlocksForDate: async (date: Date) => {
+            const allChunks = await services.storageService?.getAllChunkData() || {};
+            const chunks = Object.values(allChunks);
+            const startOfDay = new Date(date);
+            startOfDay.setHours(0, 0, 0, 0);
+            const endOfDay = new Date(date);
+            endOfDay.setHours(23, 59, 59, 999);
+
+            const chunkBlocks = chunks.filter((chunk: any) => {
+              if (!chunk.nextRepDate) return false;
+              if (chunk.scheduleStatus === 'done' || chunk.scheduleStatus === 'suspended' || chunk.scheduleStatus === 'removed') return false;
+              const d = new Date(chunk.nextRepDate);
+              return d >= startOfDay && d <= endOfDay;
+            }) as any;
+
+            const pdfBlocks = (allPdfTasks as any[]).filter((t: any) => {
+              if (!t?.nextRepDate) return false;
+              if (t.status === 'done' || t.status === 'suspended' || t.status === 'removed') return false;
+              const d = new Date(t.nextRepDate);
+              return d >= startOfDay && d <= endOfDay;
+            }) as any;
+
+            return [...chunkBlocks, ...pdfBlocks] as any;
+          },
+          estimateBlockMinutes: () => 5
+        };
+
+        if (!schedulingService) {
+          schedulingService = new IRImportSchedulingService(loadInfo);
+        }
+
+        schedulingImpact = await schedulingService.calculateScheduling(contentBlocks, schedulingConfig);
+        assignments = schedulingService.applyScheduling(contentBlocks, schedulingImpact);
+      }
+
+      const inputs = newItems.map((item, idx) => {
+        let nextRepDate = 0;
+        if (assignments) {
+          const block = contentBlocks.find(b => b.content === item.href && b.sourceFilePath === item.filePath);
+          const assignedDate = block ? assignments.get(block) : null;
+          if (assignedDate) {
+            nextRepDate = assignedDate.getTime();
+          }
+        }
+
+        return {
+          deckId: selectedDeckId!,
+          epubFilePath: item.filePath,
+          title: item.label,
+          tocHref: item.href,
+          tocLevel: item.level,
+          priorityUi: 5,
+          nextRepDate
+        };
+      });
+
+      const created = await epubService.batchCreateTasks(inputs);
+      const success = created.length;
+      const skipped = selected.length - newItems.length;
+
+      importProgress = { current: contentBlocks.length, total: contentBlocks.length };
+      new Notice(`EPUB 导入完成: ${success} 个任务创建, ${skipped} 个已跳过`);
+
+      await recomputeAndBroadcastIRData(plugin.app, 'import_materials');
+      onImportComplete({ success, skipped, errors: [] });
+      onClose();
+    } catch (error) {
+      logger.error('[MaterialImportModal] EPUB 书签任务导入失败:', error);
+      new Notice(`导入失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      importing = false;
+    }
+  }
+
   function goBack(): void {
     switch (currentStep) {
       case 'split-mode':
-        currentStep = 'select';
-        splitMode = null;
-        selectedFilePaths = [];
+        if (isEpubImportMode) {
+          currentStep = 'select';
+          isEpubImportMode = false;
+          epubTocTree = [];
+          epubFlatItems = [];
+          epubSelectedItems = new Set();
+          epubFilePath = '';
+          selectedFilePaths = [];
+        } else {
+          currentStep = 'select';
+          splitMode = null;
+          selectedFilePaths = [];
+        }
         break;
       case 'configure':
         currentStep = 'split-mode';
@@ -843,6 +1360,8 @@
           selectedFilePaths = [];
           contentBlocks = [];
           isPdfImportMode = false;
+        } else if (isEpubImportMode) {
+          currentStep = 'split-mode';
         } else {
           currentStep = 'configure';
         }
@@ -880,7 +1399,7 @@
         const file = plugin.app.vault.getAbstractFileByPath(filePath);
         if (file instanceof TFile) {
           const content = await plugin.app.vault.read(file);
-          const blocks = splitByRules(content, ruleSplitConfig, { defaultTitle: file.basename });
+          const blocks = splitByRules(extractBodyContent(content), ruleSplitConfig, { defaultTitle: file.basename });
 
           // 为每个块添加文件来源信息
           blocks.forEach(block => {
@@ -915,6 +1434,10 @@
       await handlePdfBookmarkTaskImport();
       return;
     }
+    if (isEpubImportMode) {
+      await handleEpubBookmarkTaskImport();
+      return;
+    }
     
     importing = true;
     importProgress = { current: 0, total: selectedFilePaths.length };
@@ -937,6 +1460,10 @@
 
     if (isPdfImportMode) {
       await handlePdfBookmarkTaskImport();
+      return;
+    }
+    if (isEpubImportMode) {
+      await handleEpubBookmarkTaskImport();
       return;
     }
     
@@ -1025,7 +1552,7 @@
     
     menu.addItem((item) => {
       item
-        .setTitle('新建牌组')
+        .setTitle('新建专题')
         .setIcon('plus')
         .onClick(() => {
           showNewDeckInput = true;
@@ -1048,7 +1575,7 @@
 
   function getSelectedDeckLabel(): string {
     const deck = availableDecks.find(d => d.id === selectedDeckId);
-    return deck ? `${deck.icon} ${deck.name}` : '选择牌组';
+    return deck ? `${deck.icon} ${deck.name}` : '选择专题';
   }
   
   /**
@@ -1085,10 +1612,6 @@
       logger.info(`[MaterialImportModal] 开始文件化块导入: ${filePaths.length} 个文件, 牌组: ${selectedDeck?.name || '未分配'}`);
       logger.info(`[MaterialImportModal] ruleSplitConfig: ${JSON.stringify(ruleSplitConfig)}`);
       
-      const chunkIds: string[] = [];
-      let successCount = 0;
-      let errorCount = 0;
-
       let assignments: Map<ContentBlock, Date> | null = null;
       if (contentBlocks.length > 0) {
         const loadInfo: IRLoadInfo = {
@@ -1124,6 +1647,34 @@
         );
         assignments = schedulingService.applyScheduling(contentBlocks, schedulingImpact);
       }
+
+      const mdFilePaths: string[] = [];
+      const nonMdFilePaths: string[] = [];
+      for (const filePath of filePaths) {
+        const file = plugin.app.vault.getAbstractFileByPath(filePath);
+        if (file instanceof TFile && file.extension === 'md') {
+          mdFilePaths.push(filePath);
+        } else {
+          nonMdFilePaths.push(filePath);
+        }
+      }
+
+      let successCount = 0;
+      let errorCount = 0;
+
+      if (mdFilePaths.length > 0) {
+        const mdResult = await importMdFilesAsSourceDocuments(mdFilePaths, assignments);
+        successCount += mdResult.successCount;
+        errorCount += mdResult.errorCount;
+      }
+
+      if (nonMdFilePaths.length === 0) {
+        logger.info(`[MaterialImportModal] MD 源文档直引导入完成: 成功 ${successCount}, 失败 ${errorCount}`);
+        if (successCount > 0) {
+          new Notice(`导入完成: ${successCount} 个 Markdown 文档已接入增量阅读`);
+        }
+        return { successCount, errorCount, chunkCount: 0 };
+      }
       
       const books = new Map<string, {
         bookTitle: string;
@@ -1136,8 +1687,9 @@
       }>();
 
       const filesByBook = new Map<string, TFile[]>();
+      const chunkIds: string[] = [];
       
-      for (const filePath of filePaths) {
+      for (const filePath of nonMdFilePaths) {
         const file = plugin.app.vault.getAbstractFileByPath(filePath);
         if (file instanceof TFile) {
           const derivedBookName = getBookNameForFilePath(file.path);
@@ -1149,7 +1701,7 @@
         }
       }
       
-      let processedCount = 0;
+      let processedCount = mdFilePaths.length;
       for (const [bookName, bookFiles] of filesByBook) {
         for (let i = 0; i < bookFiles.length; i++) {
           const originalFile = bookFiles[i];
@@ -1318,6 +1870,14 @@
     importing = false;
     importProgress = { current: 0, total: 0 };
     isPdfImportMode = false;
+    isEpubImportMode = false;
+    epubTocTree = [];
+    epubMaxTocLevel = 0;
+    epubSplitLevel = 1;
+    epubFlatItems = [];
+    epubSelectedItems = new Set();
+    loadingToc = false;
+    epubFilePath = '';
     selectedDeckId = null;
     showNewDeckInput = false;
     newDeckName = '';
@@ -1392,7 +1952,7 @@
   });
 
   async function preMatchTagGroup() {
-    if (isPdfImportMode) {
+    if (isPdfImportMode || isEpubImportMode) {
       previewTagGroupName = '';
       return;
     }
@@ -1434,19 +1994,10 @@
   });
 </script>
 
-<ResizableModal
-  bind:open
-  {onClose}
-  {plugin}
-  title={modalTitle}
-  accentColor="cyan"
-  enableWindowDrag={true}
-  initialWidth={currentStep === 'select' ? 520 : 680}
-  initialHeight={560}
->
+{#snippet MaterialImportModalContent()}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <div class="material-import-modal" onclick={(e) => e.stopPropagation()} onmousedown={(e) => e.stopPropagation()}>
+  <div class="material-import-modal">
     {#if currentStep !== 'select'}
       <div class="step-indicator">
         <div class="step" class:completed={true} class:active={false}>
@@ -1494,7 +2045,7 @@
             <div class="empty-state">
               <ObsidianIcon name={searchQuery ? 'search-x' : 'file-question'} size={32} />
               <p class="empty-text">{searchQuery ? '未找到匹配的文件' : '没有可导入的文件'}</p>
-              <p class="empty-hint-text">{searchQuery ? '请尝试其他关键词' : 'Vault 中没有 Markdown / PDF 文件'}</p>
+              <p class="empty-hint-text">{searchQuery ? '请尝试其他关键词' : 'Vault 中没有 Markdown / PDF / EPUB 文件'}</p>
             </div>
           {:else}
             {#each filteredTreeData as node (node.path)}
@@ -1510,7 +2061,7 @@
             <div class="progress-bar">
               <div class="progress-fill" style="width: {importProgress.total > 0 ? (importProgress.current / importProgress.total * 100) : 0}%"></div>
             </div>
-            <span class="progress-text">正在导入 {importProgress.current}/{importProgress.total}</span>
+            <span class="progress-text">{isPdfImportMode ? '正在解析 PDF 目录...' : `正在导入 ${importProgress.current}/${importProgress.total}`}</span>
           </div>
         {:else}
           <button class="btn-primary" onclick={goToSplitModeStep} disabled={selectedCount === 0}>
@@ -1521,45 +2072,119 @@
       </footer>
 
     {:else if currentStep === 'split-mode'}
-      <div class="step-content">
-        <div class="section-header">
-          <h4 class="section-title">选择拆分方式</h4>
-          {#if isMultiFileMode}
-            <span class="badge">批量处理 {selectedFilePaths.length} 个文件</span>
+      {#if isEpubImportMode}
+        <div class="step-content">
+          <div class="section-header">
+            <h4 class="section-title">EPUB 目录拆分</h4>
+            <span class="badge">{epubFlatItems.length} 个章节</span>
+          </div>
+
+          {#if loadingToc}
+            <div class="empty-state">
+              <p class="empty-text">正在解析 EPUB 目录...</p>
+            </div>
+          {:else if epubFlatItems.length === 0}
+            <div class="empty-state">
+              <ObsidianIcon name="file-question" size={32} />
+              <p class="empty-text">未获取到 EPUB 目录</p>
+              <p class="empty-hint-text">该 EPUB 可能没有嵌入目录信息</p>
+            </div>
+          {:else}
+            <div class="epub-split-config">
+              <div class="config-group">
+                <span class="option-label">拆分深度:</span>
+                <div class="checkbox-group">
+                  {#each Array.from({ length: epubMaxTocLevel }, (_, i) => i + 1) as level}
+                    <button
+                      class="level-btn"
+                      class:active={epubSplitLevel === level}
+                      onclick={() => { epubSplitLevel = level; refreshEpubFlatItems(); }}
+                    >
+                      L{level}
+                    </button>
+                  {/each}
+                </div>
+                <span class="info-text" style="margin-left: auto;">{epubSelectedItems.size}/{epubFlatItems.length} 已选</span>
+              </div>
+            </div>
+
+            <div class="pdf-outline-list">
+              {#each epubFlatItems as item, i}
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div
+                  class="outline-item epub-selectable"
+                  class:selected={epubSelectedItems.has(item.id)}
+                  onclick={(event) => {
+                    if ((event.target as HTMLElement).closest('.checkbox-wrapper')) return;
+                    toggleEpubItem(item.id);
+                  }}
+                  style="padding-left: {12 + (item.level - 1) * 16}px"
+                >
+                  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                  <label class="checkbox-wrapper">
+                    <input type="checkbox" checked={epubSelectedItems.has(item.id)} onchange={() => toggleEpubItem(item.id)} />
+                    <span class="checkbox-box"></span>
+                  </label>
+                  <span class="outline-index">{i + 1}</span>
+                  <span class="outline-title">{item.label}</span>
+                </div>
+              {/each}
+            </div>
           {/if}
         </div>
 
-        <div class="mode-list">
-          <button class="mode-card" onclick={() => handleSplitModeSelect('rule')}>
-            <div class="mode-icon">
-              <ObsidianIcon name="list-tree" size={24} />
-            </div>
-            <div class="mode-info">
-              <div class="mode-name">规则拆分</div>
-            </div>
-            <ObsidianIcon name="chevron-right" size={18} />
+        <footer class="modal-footer modal-footer-row">
+          <button class="btn-secondary btn-compact" onclick={goBack}>
+            <ObsidianIcon name="arrow-left" size={14} />
+            上一步
           </button>
+          <button class="btn-primary btn-compact" onclick={handleEpubSplitConfirm} disabled={epubSelectedItems.size === 0}>
+            下一步 ({epubSelectedItems.size})
+            <ObsidianIcon name="arrow-right" size={14} />
+          </button>
+        </footer>
+      {:else}
+        <div class="step-content">
+          <div class="section-header">
+            <h4 class="section-title">选择拆分方式</h4>
+            {#if isMultiFileMode}
+              <span class="badge">批量处理 {selectedFilePaths.length} 个文件</span>
+            {/if}
+          </div>
 
-          {#if !isMultiFileMode}
-            <button class="mode-card" onclick={() => handleSplitModeSelect('manual')}>
+          <div class="mode-list">
+            <button class="mode-card" onclick={() => handleSplitModeSelect('rule')}>
               <div class="mode-icon">
-                <ObsidianIcon name="scissors" size={24} />
+                <ObsidianIcon name="list-tree" size={24} />
               </div>
               <div class="mode-info">
-                <div class="mode-name">手动拆分</div>
+                <div class="mode-name">规则拆分</div>
               </div>
               <ObsidianIcon name="chevron-right" size={18} />
             </button>
-          {/if}
-        </div>
-      </div>
 
-      <footer class="modal-footer modal-footer-row">
-        <button class="btn-secondary btn-compact" onclick={goBack}>
-          <ObsidianIcon name="arrow-left" size={14} />
-          上一步
-        </button>
-      </footer>
+            {#if !isMultiFileMode}
+              <button class="mode-card" onclick={() => handleSplitModeSelect('manual')}>
+                <div class="mode-icon">
+                  <ObsidianIcon name="scissors" size={24} />
+                </div>
+                <div class="mode-info">
+                  <div class="mode-name">手动拆分</div>
+                </div>
+                <ObsidianIcon name="chevron-right" size={18} />
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <footer class="modal-footer modal-footer-row">
+          <button class="btn-secondary btn-compact" onclick={goBack}>
+            <ObsidianIcon name="arrow-left" size={14} />
+            上一步
+          </button>
+        </footer>
+      {/if}
 
     {:else if currentStep === 'configure' && splitMode === 'rule'}
       <div class="step-content">
@@ -1744,6 +2369,19 @@
               {/each}
             {/if}
           </div>
+        {:else if isEpubImportMode}
+          <div class="section-header">
+            <h4 class="section-title">EPUB 章节预览</h4>
+            <span class="badge">{contentBlocks.length} 个章节</span>
+          </div>
+          <div class="pdf-outline-list">
+            {#each contentBlocks as block, i}
+              <div class="outline-item">
+                <span class="outline-index">{i + 1}</span>
+                <span class="outline-title">{block.title || 'EPUB'}</span>
+              </div>
+            {/each}
+          </div>
         {:else}
           <div class="preview-header">
             <button class="btn-icon" onclick={() => previewIndex = Math.max(0, previewIndex - 1)} disabled={previewIndex === 0}>
@@ -1858,12 +2496,13 @@
           
           <!-- 牌组选择器 -->
           <div class="deck-selector">
+            <span class="selector-label">专题:</span>
             {#if showNewDeckInput}
               <div class="new-deck-input">
                 <input
                   type="text"
                   class="input-text deck-name-input"
-                  placeholder="输入牌组名称..."
+                  placeholder="输入专题名称..."
                   bind:value={newDeckName}
                   onkeydown={(e) => e.key === 'Enter' && handleCreateNewDeck()}
                 />
@@ -1899,7 +2538,24 @@
       </footer>
     {/if}
   </div>
-</ResizableModal>
+{/snippet}
+
+{#if useObsidianModal}
+  {@render MaterialImportModalContent()}
+{:else}
+  <ResizableModal
+    bind:open
+    {onClose}
+    {plugin}
+    title={modalTitle}
+    accentColor="cyan"
+    enableWindowDrag={true}
+    initialWidth={currentStep === 'select' ? 520 : 680}
+    initialHeight={560}
+  >
+    {@render MaterialImportModalContent()}
+  </ResizableModal>
+{/if}
 
 {#snippet TreeNodeComponent(node: TreeNode, depth: number)}
   <div class="tree-node" style="--depth: {depth}">
@@ -1913,7 +2569,6 @@
       type={node.type === 'folder' ? 'button' : undefined}
       tabindex={node.type === 'folder' ? undefined : -1}
       onclick={(e: MouseEvent) => {
-        e.stopPropagation();
         if ((e.target as HTMLElement).closest('.checkbox-wrapper')) return;
         const realNode = findNodeByPath(treeData, node.path) ?? node;
         if (realNode.type === 'folder') {
@@ -1944,7 +2599,7 @@
           <ObsidianIcon name={node.expanded ? 'folder-open' : 'folder'} size={16} />
         {:else}
           {@const ext = (node.path.split('.').pop() || '').toLowerCase()}
-          <ObsidianIcon name={ext === 'pdf' ? 'file' : 'file-text'} size={16} />
+          <ObsidianIcon name={ext === 'epub' ? 'book-open' : ext === 'pdf' ? 'file' : 'file-text'} size={16} />
         {/if}
       </span>
       
@@ -1969,8 +2624,22 @@
   .material-import-modal {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
+    height: auto;
     overflow: hidden;
+  }
+
+  :global(.weave-material-import-modal) {
+    overflow: hidden;
+  }
+
+  :global(.weave-material-import-modal-content) {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
   }
 
   .step-indicator {
@@ -2048,15 +2717,7 @@
   }
 
   .step-content.editor-step {
-    max-height: 500px;
-  }
-
-  .hint-bar {
-    padding: 12px 20px;
-    font-size: 13px;
-    color: var(--text-muted);
-    background: var(--background-secondary);
-    border-bottom: 1px solid var(--background-modifier-border);
+    max-height: none;
   }
 
   .section-header {
@@ -2167,11 +2828,12 @@
 
   .tree-container {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 8px 0;
-    min-height: 200px;
-    max-height: 380px;
+    max-height: none;
     background: var(--background-primary);
+    overscroll-behavior: contain;
   }
 
   .empty-state {
@@ -2418,8 +3080,11 @@
 
   .config-form {
     padding: 16px 20px;
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    max-height: 400px;
+    max-height: none;
+    overscroll-behavior: contain;
   }
 
   .config-group {
@@ -2540,12 +3205,13 @@
   .editor-container {
     flex: 1;
     min-height: 0;
+    overflow: hidden;
   }
 
   .content-editor {
     width: 100%;
     height: 100%;
-    min-height: 200px;
+    min-height: 0;
     padding: 12px 20px;
     border: none;
     background: var(--background-primary);
@@ -2586,10 +3252,11 @@
 
   .pdf-outline-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 8px 0;
-    min-height: 100px;
-    max-height: 340px;
+    max-height: none;
+    overscroll-behavior: contain;
   }
 
   .outline-item {
@@ -2723,16 +3390,7 @@
     flex: 1;
     overflow-y: auto;
     padding: 20px;
-  }
-
-  .preview-nav {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 20px;
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--background-modifier-border);
-    background: var(--background-primary);
+    overscroll-behavior: contain;
   }
 
   .nav-info {
@@ -2765,6 +3423,7 @@
     border-top: 1px solid var(--background-modifier-border);
     gap: 8px;
     flex-wrap: wrap;
+    flex-shrink: 0;
   }
 
   .modal-footer-row {
@@ -2772,12 +3431,6 @@
   }
 
   .modal-footer-preview {
-    flex-wrap: wrap;
-  }
-
-  .footer-right {
-    display: flex;
-    gap: 8px;
     flex-wrap: wrap;
   }
 
@@ -2833,23 +3486,6 @@
   .btn-icon-sm:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
-  }
-
-  .btn-text {
-    padding: 4px 10px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .btn-text:hover {
-    background: var(--background-secondary);
-    color: var(--text-normal);
-    border-color: var(--text-muted);
   }
 
   .btn-outline {
@@ -2966,30 +3602,6 @@
     white-space: nowrap;
   }
 
-  .scheduling-days-select,
-  .scheduling-strategy-select {
-    padding: 4px 8px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    background: var(--background-primary);
-    color: var(--text-normal);
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-
-  .scheduling-days-select:hover,
-  .scheduling-strategy-select:hover {
-    border-color: var(--interactive-accent);
-  }
-
-  .scheduling-days-select:focus,
-  .scheduling-strategy-select:focus {
-    outline: none;
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px rgba(var(--interactive-accent-rgb), 0.2);
-  }
-
   .custom-days-input {
     width: 60px;
     padding: 4px 8px;
@@ -3028,25 +3640,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .deck-select-wrapper {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
-    background: var(--background-secondary);
-  }
-
-  .deck-select {
-    border: none;
-    background: transparent;
-    color: var(--text-normal);
-    font-size: 13px;
-    cursor: pointer;
-    outline: none;
   }
 
   .menu-trigger {
@@ -3159,24 +3752,6 @@
       gap: 8px;
     }
 
-    .scheduling-days-select,
-    .scheduling-strategy-select {
-      flex: 1 1 80px;
-      min-width: 80px;
-      font-size: 13px;
-      padding: 6px 8px;
-    }
-
-    .deck-select-wrapper {
-      width: 100%;
-      justify-content: space-between;
-    }
-
-    .deck-select {
-      width: 100%;
-      font-size: 13px;
-    }
-
     .new-deck-input {
       width: 100%;
     }
@@ -3185,5 +3760,54 @@
       width: 100%;
       font-size: 13px;
     }
+  }
+
+  .epub-split-config {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  .epub-split-config .config-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .level-btn {
+    padding: 4px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 0.15s ease;
+  }
+
+  .level-btn:hover {
+    border-color: var(--interactive-accent);
+    color: var(--text-normal);
+  }
+
+  .level-btn.active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    border-color: var(--interactive-accent);
+  }
+
+  .outline-item.epub-selectable {
+    cursor: pointer;
+    transition: background 0.1s ease;
+  }
+
+  .outline-item.epub-selectable:hover {
+    background: var(--background-modifier-hover);
+  }
+
+  .outline-item.epub-selectable .checkbox-wrapper {
+    margin-right: 4px;
+    flex-shrink: 0;
   }
 </style>

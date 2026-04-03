@@ -1,6 +1,6 @@
 <script lang="ts">
   import { logger } from '../../../utils/logger';
-  //  v2.1.1: 静态导入 parseSourceInfo（修复响应式问题）
+  // 静态导入 parseSourceInfo，确保响应式追踪正常
   import { parseSourceInfo, getCardProperty } from '../../../utils/yaml-utils';
   import { detectCardTypeFromContent } from '../../../utils/card-markdown-serializer';
 
@@ -15,7 +15,7 @@
   import { DerivationMethod } from '../../../services/relation/types';
   //  导入国际化
   import { tr } from '../../../utils/i18n';
-  // 🆕 导入卡片关系工具函数
+  // 导入卡片关系工具函数
   import {
     buildVirtualTimeline,
     getTimelineDisplayMode,
@@ -42,35 +42,35 @@
   //  响应式翻译函数
   let t = $derived($tr);
 
-  // 🆕 父子卡片关系状态
+  // 父子卡片关系状态
   let parentCard = $state<Card | null>(null);
   let siblingCards = $state<Card[]>([]);
   let loadingRelations = $state(false);
 
-  // 🆕 时间线状态
+  // 时间线状态
   let timelineEvents = $state<CardHistoryEvent[]>([]);
   let timelineMode = $state<TimelineDisplayMode>('simple');
   let expandedTimeline = $state(false);
   let expandedSiblings = $state(false);
 
-  // 🆕 浮窗状态 - 改用全局方法，不再需要本地状态
+  // 浮窗由全局方法处理，这里不维护本地状态
 
-  // 🆕 源记忆卡片预览状态
+  // 源记忆卡片预览状态
   let sourceMemoryCard = $state<Card | null>(null);
   let loadingSourceCard = $state(false);
 
-  // 🆕 检测是否为测试卡片（题库考试）
+  // 检测是否为测试卡片（题库考试）
   const isTestCard = $derived(
     card.cardPurpose === 'test' && card.metadata?.sourceCardId
   );
 
-  // 🆕 获取源记忆卡片ID
+  // 获取源记忆卡片 ID
   const sourceCardId = $derived(
     card.metadata?.sourceCardId as string
   );
 
-  // 🆕 v2.1.1: 响应式来源信息 - 使用统一的 parseSourceInfo 工具函数
-  //  修复：使用静态 import 确保响应式追踪正常工作
+  // 响应式来源信息，使用统一的 parseSourceInfo 工具函数
+  // 静态导入可确保响应式追踪正常工作
   let sourceInfo = $derived.by(() => {
     // 显式访问 card.content 建立响应式依赖
     const content = card?.content;
@@ -90,15 +90,15 @@
     new Notice(t('modals.cardInfoTab.copyUUID'));
   }
 
-  // 跳转到来源文档（增强版：定位并高亮显示）
-  //  v2.1.1: 使用 Obsidian 原生 openLinkText API，支持仅文件名格式
+  // 跳转到来源文档，并定位高亮目标内容
+  // 使用 Obsidian 原生 openLinkText API，支持仅文件名格式
   async function navigateToSource() {
     try {
       const contextPath = plugin.app.workspace.getActiveFile()?.path ?? '';
       let filePath: string | undefined;
       let blockId: string | undefined;
       
-      //  v2.1 修复：使用响应式 sourceInfo 从 content YAML 获取来源
+      // 使用响应式 sourceInfo 从 content YAML 获取来源
       if (sourceInfo.sourceFile) {
         filePath = sourceInfo.sourceFile;
         blockId = sourceInfo.sourceBlock?.replace(/^\^/, ''); // 移除^前缀
@@ -115,10 +115,10 @@
         return;
       }
       
-      //  v2.1.1: 使用 openLinkText 处理 wikilink 格式，支持仅文件名
+      // 使用 openLinkText 处理 wikilink 格式，支持仅文件名
       const docName = filePath.replace(/\.md$/, '');
       
-      //  v2.1.2: 验证文件是否存在，防止创建新文档
+      // 验证文件是否存在，防止创建新文档
       const file = plugin.app.metadataCache.getFirstLinkpathDest(docName, contextPath);
       if (!file) {
         new Notice(t('modals.cardInfoTab.sourceDeleted'));
@@ -175,7 +175,7 @@
     }
   }
 
-  // 🆕 通过UUID查找卡片
+  // 通过 UUID 查找卡片
   async function findCardByUUID(uuid: string): Promise<Card | null> {
     try {
       //  使用DirectFileCardReader，O(1)索引查询
@@ -186,7 +186,7 @@
     }
   }
 
-  // 🆕 加载卡片关系数据
+  // 加载卡片关系数据
   async function loadCardRelations() {
     if (loadingRelations) return;
     
@@ -228,22 +228,22 @@
     }
   }
 
-  // 🆕 打开查看卡片浮窗 - 使用全局方法
+  // 打开查看卡片浮窗，使用全局方法
   function viewCard(cardToView: Card) {
     //  使用全局模态窗，支持在其他标签页上方显示
     plugin.openViewCardModal(cardToView);
   }
 
-  // 🆕 切换时间线展开/折叠
+  // 切换时间线展开状态
   function toggleTimeline() {
     expandedTimeline = !expandedTimeline;
   }
 
-  // 🆕 切换兄弟卡片展开/折叠
+  // 切换兄弟卡片展开状态
   function toggleSiblings() {
     expandedSiblings = !expandedSiblings;
   }
-  // 🆕 查看全部兄弟卡片（导航到卡片管理页面并筛选）
+  // 查看全部兄弟卡片，并导航到卡片管理页面筛选
   async function viewAllSiblingCards() {
     // 收集所有兄弟卡片ID（包括当前卡片和其他兄弟）
     const allSiblingIds: string[] = [];
@@ -270,9 +270,9 @@
     logger.debug('[CardInfoTab] 查看全部兄弟卡片:', allSiblingIds);
 
     try {
-      // 1. 🆕 先激活 Weave 插件视图（切换到插件标签页）
+      // 1. 先激活 Weave 插件视图（切换到插件标签页）
       if (plugin && typeof (plugin as any).activateView === 'function') {
-        //  修复：使用常量而非硬编码字符串
+        // 使用常量而非硬编码字符串
         const { VIEW_TYPE_WEAVE } = await import('../../../views/WeaveView');
         await (plugin as any).activateView(VIEW_TYPE_WEAVE);
         logger.debug('[CardInfoTab] 已激活 Weave 插件视图');
@@ -302,7 +302,7 @@
     }
   }
 
-  // 🆕 加载源记忆卡片
+  // 加载源记忆卡片
   async function loadSourceMemoryCard() {
     const cardId = sourceCardId;
     if (!cardId || loadingSourceCard) return;
@@ -322,14 +322,14 @@
     }
   }
 
-  // 🆕 查看源记忆卡片 - 使用全局方法
+  // 查看源记忆卡片，使用全局方法
   function viewSourceMemoryCard() {
     if (sourceMemoryCard) {
       plugin.openViewCardModal(sourceMemoryCard);
     }
   }
 
-  // 🆕 初始化时加载关系数据
+  // 初始化时加载关系数据
   onMount(() => {
     loadCardRelations();
     // 如果是测试卡片，自动加载源记忆卡片
@@ -369,7 +369,7 @@
         </span>
       </div>
 
-      <!-- 🆕 卡片关系类型（多标签显示） -->
+      <!-- 卡片关系类型（多标签显示） -->
       <div class="info-row" class:mobile={isMobile}>
         <span class="info-label">卡片关系</span>
         <span class="info-value">
@@ -452,21 +452,6 @@
     </div>
   </section>
 
-  <!-- 🆕 卡片内容区 -->
-  <section class="info-section" class:mobile={isMobile}>
-    <h3 class="section-title with-accent-bar accent-blue" class:mobile={isMobile}>
-      卡片内容
-    </h3>
-    
-    <div class="card-content-preview">
-      {#if card.content}
-        <pre class="content-text">{card.content}</pre>
-      {:else}
-        <p class="text-muted">无内容</p>
-      {/if}
-    </div>
-  </section>
-
   <!-- 标签区 -->
   {#if card.tags && card.tags.length > 0}
     <section class="info-section" class:mobile={isMobile}>
@@ -487,7 +472,7 @@
       溯源信息
     </h3>
     
-    <!--  v2.1: 使用响应式 sourceInfo 从 content YAML 实时解析 -->
+    <!-- 使用响应式 sourceInfo 从 content YAML 实时解析 -->
     <div class="info-grid" class:mobile={isMobile}>
       <div class="info-row" class:mobile={isMobile}>
         <span class="info-label">源文档</span>
@@ -529,7 +514,7 @@
         </span>
       </div>
 
-      <!-- 🆕 v2.1.1: 关联文档列表 -->
+      <!-- 关联文档列表 -->
       {#if sourceInfo.refs && sourceInfo.refs.length > 0}
         <div class="info-row" class:mobile={isMobile}>
           <span class="info-label">关联文档</span>
@@ -541,7 +526,7 @@
         </div>
       {/if}
 
-      <!-- 🆕 测试卡片的源记忆卡片信息 -->
+      <!-- 测试卡片的源记忆卡片信息 -->
       {#if isTestCard}
         <div class="info-row source-memory-card-row" class:mobile={isMobile}>
           <span class="info-label">源记忆卡片</span>
@@ -571,7 +556,7 @@
     </div>
   </section>
 
-  <!-- 🆕 卡片演化历史区 -->
+  <!-- 卡片演化历史区 -->
   {#if timelineEvents.length > 0 || parentCard || siblingCards.length > 0}
     <section class="info-section timeline-section" class:mobile={isMobile}>
       <h3 class="section-title with-accent-bar accent-cyan" class:mobile={isMobile}>
@@ -762,7 +747,7 @@
   {/if}
 </div>
 
-<!-- 🆕 卡片详情模态窗 - 改用全局方法 plugin.openViewCardModal() -->
+<!-- 卡片详情模态窗由 plugin.openViewCardModal() 全局处理 -->
 
 <style>
   .card-info-tab {
@@ -828,26 +813,6 @@
   .text-muted {
     color: var(--text-muted);
     font-style: italic;
-  }
-
-  /* 🆕 卡片内容预览区域 */
-  .card-content-preview {
-    background: var(--background-secondary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: var(--radius-s);
-    padding: var(--size-4-3);
-    max-height: 300px;
-    overflow-y: auto;
-  }
-
-  .content-text {
-    font-family: var(--font-text);
-    font-size: var(--font-ui-small);
-    line-height: 1.6;
-    white-space: pre-wrap;
-    word-break: break-word;
-    margin: 0;
-    color: var(--text-normal);
   }
 
   /* 蓝色强调条 */
@@ -916,7 +881,7 @@
     color: #1e40af;
   }
 
-  /* 🆕 卡片关系徽章组 */
+  /* 卡片关系徽章组 */
   .relation-badges-group {
     display: flex;
     flex-wrap: wrap;
@@ -924,7 +889,7 @@
     align-items: center;
   }
 
-  /* 🆕 卡片关系徽章 */
+  /* 卡片关系徽章 */
   .relation-badge {
     display: inline-flex;
     align-items: center;
@@ -1049,7 +1014,7 @@
   }
 
   /* ============================================ */
-  /* 🆕 时间线样式 */
+  /* 时间线样式 */
   /* ============================================ */
 
   .timeline-section {
@@ -1419,7 +1384,7 @@
     border-color: var(--interactive-accent);
   }
 
-  /* 🆕 兄弟卡片操作按钮容器 */
+  /* 兄弟卡片操作按钮容器 */
   .sibling-actions {
     display: flex;
     gap: var(--size-4-2);
@@ -1431,7 +1396,7 @@
     margin-top: 0;
   }
 
-  /* 🆕 在网格中查看按钮 */
+  /* 在网格中查看按钮 */
   .view-in-grid-btn {
     display: inline-flex;
     align-items: center;
@@ -1464,7 +1429,7 @@
     margin-top: 0;
   }
 
-  /* 🆕 源记忆卡片预览样式 */
+  /* 源记忆卡片预览样式 */
   .source-memory-card-preview {
     background: var(--background-secondary);
     border-radius: var(--radius-m);
@@ -1602,7 +1567,7 @@
     font-style: italic;
   }
 
-  /* 🆕 溯源信息中的源记忆卡片紧凑样式 */
+  /* 溯源信息中的源记忆卡片紧凑样式 */
   .source-memory-card-row {
     border-top: 1px solid var(--background-modifier-border);
     padding-top: var(--size-4-2);
@@ -1746,7 +1711,7 @@
     font-size: 12px;
   }
 
-  /* 🆕 v2.1.1: 关联文档列表样式 */
+  /* 关联文档列表样式 */
   .refs-list {
     display: flex;
     flex-wrap: wrap;

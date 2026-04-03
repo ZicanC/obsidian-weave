@@ -1,302 +1,286 @@
-import { logger } from '../../utils/logger';
-/**
- * 自动同步调度器
- * 负责定时同步和文件变更检测同步
- */
+import { type App, type EventRef, Notice, TFile } from "obsidian";
+import type { WeavePlugin } from "../../main";
+import type { IncrementalSyncResult } from "../../types/ankiconnect-types";
+import { logger } from "../../utils/logger";
+import type { AnkiConnectService } from "./AnkiConnectService";
 
-import { TFile, Notice, type App } from 'obsidian';
-import type { WeavePlugin } from '../../main';
-import type { AnkiConnectService } from './AnkiConnectService';
-
-/**
- * 同步任务类型
- */
 export interface SyncTask {
-  type: 'scheduled' | 'on_change' | 'manual';
-  timestamp: number;
-  triggeredBy?: string;  // 文件路径或事件名
+	type: "scheduled" | "on_change" | "manual";
+	timestamp: number;
+	triggeredBy?: string;
 }
 
-/**
- * 自动同步调度器配置
- */
 export interface AutoSyncSchedulerConfig {
-  intervalMinutes: number;  // 定时同步间隔（分钟）
-  syncOnStartup: boolean;  // 启动时同步
-  onlyWhenAnkiRunning: boolean;  // 仅在 Anki 运行时同步
-  enableFileWatcher: boolean;  // 启用文件变更检测
-  debounceDelay: number;  // 文件变更防抖延迟（毫秒）
+	intervalMinutes: number;
+	syncOnStartup: boolean;
+	onlyWhenAnkiRunning: boolean;
+	enableFileWatcher: boolean;
+	debounceDelay: number;
 }
 
-/**
- * 自动同步调度器
- */
 export class AutoSyncScheduler {
-  private intervalTimer: number | null = null;
-  private debounceTimer: number | null = null;
-  private isRunning = false;
-  private isSyncing = false;
+	private intervalTimer: number | null = null;
+	private debounceTimer: number | null = null;
+	private isRunning = false;
+	private isSyncing = false;
+	private fileModifyRef: EventRef | null = null;
 
-  // Obsidian 事件引用（用于清理）
-  private fileModifyRef: any = null;
+	constructor(
+		private app: App,
+		private plugin: WeavePlugin,
+		private ankiService: AnkiConnectService,
+		private config: AutoSyncSchedulerConfig
+	) {}
 
-  constructor(
-    private app: App,
-    private plugin: WeavePlugin,
-    private ankiService: AnkiConnectService,
-    private config: AutoSyncSchedulerConfig
-  ) {}
+	start(): void {
+		if (this.isRunning) {
+			logger.warn("[AutoSyncScheduler] Scheduler is already running");
+			return;
+		}
 
-  /**
-   * 启动调度器
-   */
-  start(): void {
-    if (this.isRunning) {
-      logger.warn('[AutoSyncScheduler] 调度器已在运行中');
-      return;
-    }
+		logger.debug("[AutoSyncScheduler] Starting scheduler", {
+			intervalMinutes: this.config.intervalMinutes,
+			syncOnStartup: this.config.syncOnStartup,
+			enableFileWatcher: this.config.enableFileWatcher,
+		});
 
-    logger.debug('[AutoSyncScheduler] 启动自动同步调度器', {
-      定时间隔: `${this.config.intervalMinutes}分钟`,
-      启动时同步: this.config.syncOnStartup,
-      文件监听: this.config.enableFileWatcher
-    });
+		this.isRunning = true;
 
-    this.isRunning = true;
+		if (this.config.syncOnStartup) {
+			this.scheduleSyncTask("scheduled", 2000);
+		}
 
-    // 启动时同步
-    if (this.config.syncOnStartup) {
-      logger.debug('[AutoSyncScheduler] 执行启动时同步...');
-      this.scheduleSyncTask('scheduled', 2000); // 延迟 2 秒执行
-    }
+		this.startScheduledSync();
 
-    // 启动定时同步
-    this.startScheduledSync();
+		if (this.config.enableFileWatcher) {
+			this.startFileWatcher();
+		}
+	}
 
-    // 启动文件变更监听
-    if (this.config.enableFileWatcher) {
-      this.startFileWatcher();
-    }
-  }
+	stop(): void {
+		if (!this.isRunning) {
+			return;
+		}
 
-  /**
-   * 停止调度器
-   */
-  stop(): void {
-    if (!this.isRunning) {
-      return;
-    }
+		logger.debug("[AutoSyncScheduler] Stopping scheduler");
 
-    logger.debug('[AutoSyncScheduler] 停止自动同步调度器');
+		if (this.intervalTimer !== null) {
+			window.clearInterval(this.intervalTimer);
+			this.intervalTimer = null;
+		}
 
-    // 清理定时器
-    if (this.intervalTimer !== null) {
-      window.clearInterval(this.intervalTimer);
-      this.intervalTimer = null;
-    }
+		if (this.debounceTimer !== null) {
+			window.clearTimeout(this.debounceTimer);
+			this.debounceTimer = null;
+		}
 
-    if (this.debounceTimer !== null) {
-      window.clearTimeout(this.debounceTimer);
-      this.debounceTimer = null;
-    }
+		if (this.fileModifyRef) {
+			this.app.vault.offref(this.fileModifyRef);
+			this.fileModifyRef = null;
+		}
 
-    // 清理文件监听
-    if (this.fileModifyRef) {
-      this.app.vault.offref(this.fileModifyRef);
-      this.fileModifyRef = null;
-    }
+		this.isRunning = false;
+	}
 
-    this.isRunning = false;
-  }
+	private startScheduledSync(): void {
+		const intervalMs = this.config.intervalMinutes * 60 * 1000;
 
-  /**
-   * 启动定时同步
-   */
-  private startScheduledSync(): void {
-    const intervalMs = this.config.intervalMinutes * 60 * 1000;
+		logger.debug("[AutoSyncScheduler] Starting scheduled sync timer", {
+			intervalMinutes: this.config.intervalMinutes,
+		});
 
-    logger.debug(`[AutoSyncScheduler] 启动定时同步，间隔: ${this.config.intervalMinutes} 分钟`);
+		this.intervalTimer = window.setInterval(() => {
+			logger.debug("[AutoSyncScheduler] Scheduled sync triggered");
+			this.scheduleSyncTask("scheduled");
+		}, intervalMs);
+	}
 
-    this.intervalTimer = window.setInterval(() => {
-      logger.debug('[AutoSyncScheduler] 触发定时同步');
-      this.scheduleSyncTask('scheduled');
-    }, intervalMs);
-  }
+	private startFileWatcher(): void {
+		logger.debug("[AutoSyncScheduler] Starting file watcher");
 
-  /**
-   * 启动文件变更监听
-   */
-  private startFileWatcher(): void {
-    logger.debug('[AutoSyncScheduler] 启动文件变更监听');
+		this.fileModifyRef = this.app.vault.on("modify", (_file) => {
+			if (_file instanceof TFile) {
+				this.onFileChange(_file);
+			}
+		});
+	}
 
-    this.fileModifyRef = this.app.vault.on('modify', (file) => {
-      if (file instanceof TFile) {
-        this.onFileChange(file);
-      }
-    });
-  }
+	private onFileChange(file: TFile): void {
+		if (!this.isWeaveCardFile(file)) {
+			return;
+		}
 
-  /**
-   * 文件变更处理（带防抖）
-   */
-  private onFileChange(file: TFile): void {
-    // 只监听 Weave 卡片文件
-    if (!this.isWeaveCardFile(file)) {
-      return;
-    }
+		logger.debug("[AutoSyncScheduler] Relevant file changed", { path: file.path });
 
-    logger.debug('[AutoSyncScheduler] 检测到卡片文件变更:', file.path);
+		if (this.debounceTimer !== null) {
+			window.clearTimeout(this.debounceTimer);
+		}
 
-    // 清理已有的防抖定时器
-    if (this.debounceTimer !== null) {
-      window.clearTimeout(this.debounceTimer);
-    }
+		this.debounceTimer = window.setTimeout(() => {
+			logger.debug("[AutoSyncScheduler] Debounced change sync triggered", { path: file.path });
+			this.scheduleSyncTask("on_change", 0, file.path);
+		}, this.config.debounceDelay);
+	}
 
-    // 设置新的防抖定时器
-    this.debounceTimer = window.setTimeout(() => {
-      logger.debug('[AutoSyncScheduler] 触发变更检测同步');
-      this.scheduleSyncTask('on_change', 0, file.path);
-    }, this.config.debounceDelay);
-  }
+	private isWeaveCardFile(file: TFile): boolean {
+		const weaveFolder = this.plugin.settings.dataFolderVisibility?.folderName || "weave";
+		if (!file.path.startsWith(weaveFolder)) {
+			return false;
+		}
 
-  /**
-   * 判断是否为 Weave 卡片文件
-   */
-  private isWeaveCardFile(file: TFile): boolean {
-    // 检查是否在 Weave 数据文件夹中
-    const weaveFolder = this.plugin.settings.dataFolderVisibility?.folderName || 'weave';
-    if (!file.path.startsWith(weaveFolder)) {
-      return false;
-    }
+		if (file.extension !== "md") {
+			return false;
+		}
 
-    // 检查是否为 markdown 文件
-    if (file.extension !== 'md') {
-      return false;
-    }
+		if (file.path.includes("template") || file.path.includes("settings")) {
+			return false;
+		}
 
-    // 排除模板文件和其他非卡片文件
-    if (file.path.includes('template') || file.path.includes('settings')) {
-      return false;
-    }
+		return true;
+	}
 
-    return true;
-  }
+	private scheduleSyncTask(type: SyncTask["type"], delay = 0, triggeredBy?: string): void {
+		const task: SyncTask = {
+			type,
+			timestamp: Date.now(),
+			triggeredBy,
+		};
 
-  /**
-   * 计划同步任务
-   */
-  private scheduleSyncTask(
-    type: SyncTask['type'],
-    delay = 0,
-    triggeredBy?: string
-  ): void {
-    const task: SyncTask = {
-      type,
-      timestamp: Date.now(),
-      triggeredBy
-    };
+		if (delay > 0) {
+			window.setTimeout(() => void this.executeSync(task), delay);
+			return;
+		}
 
-    if (delay > 0) {
-      setTimeout(() => void this.executeSync(task), delay);
-    } else {
-      void this.executeSync(task);
-    }
-  }
+		void this.executeSync(task);
+	}
 
-  /**
-   * 执行同步任务
-   */
-  private async executeSync(task: SyncTask): Promise<void> {
-    // 防止重复同步
-    if (this.isSyncing) {
-      logger.debug('[AutoSyncScheduler] 同步正在进行中，跳过本次任务');
-      return;
-    }
+	private async executeSync(task: SyncTask): Promise<void> {
+		if (this.isSyncing) {
+			logger.debug("[AutoSyncScheduler] Sync already in progress, skipping task", {
+				type: task.type,
+			});
+			return;
+		}
 
-    // 检查是否仅在 Anki 运行时同步
-    if (this.config.onlyWhenAnkiRunning) {
-      const connectionState = this.ankiService.getConnectionState();
-      if (connectionState.status !== 'connected') {
-        logger.debug('[AutoSyncScheduler] Anki 未连接，跳过同步');
-        return;
-      }
-    }
+		if (this.config.onlyWhenAnkiRunning) {
+			const connectionState = this.ankiService.getConnectionState();
+			if (connectionState.status !== "connected") {
+				logger.debug("[AutoSyncScheduler] Anki is not connected, skipping task");
+				return;
+			}
+		}
 
-    this.isSyncing = true;
+		this.isSyncing = true;
 
-    try {
-      logger.debug('[AutoSyncScheduler] 开始执行同步:', {
-        类型: task.type,
-        触发源: task.triggeredBy || '无'
-      });
+		try {
+			logger.debug("[AutoSyncScheduler] Executing sync task", {
+				type: task.type,
+				triggeredBy: task.triggeredBy || "manual",
+			});
 
-      // 调用 AnkiConnectService 的增量同步方法
-      const result = await this.ankiService.performIncrementalSync();
+			const result = await this.ankiService.performIncrementalSync();
 
-      logger.debug('[AutoSyncScheduler] 同步完成:', {
-        总卡片数: result.totalCards,
-        变更数: result.changedCards,
-        导入数: result.importedCards,
-        导出数: result.exportedCards,
-        跳过数: result.skippedCards,
-        错误数: result.errors.length
-      });
+			logger.debug("[AutoSyncScheduler] Sync completed", {
+				totalCards: result.totalCards,
+				changedCards: result.changedCards,
+				importedCards: result.importedCards,
+				exportedCards: result.exportedCards,
+				skippedCards: result.skippedCards,
+				errorCount: result.errors.length,
+			});
 
-      // 如果是定时同步或手动同步，显示通知
-      if (task.type === 'scheduled' || task.type === 'manual') {
-        this.showCompletionNotice(result);
-      }
+			if (task.type === "scheduled" || task.type === "manual") {
+				this.showCompletionNotice(result);
+			}
+		} catch (error) {
+			logger.error("[AutoSyncScheduler] Sync failed", error);
 
-    } catch (error) {
-      logger.error('[AutoSyncScheduler] 同步失败:', error);
-      
-      // 显示错误通知
-      if (this.plugin.app?.workspace) {
-        new Notice(`同步失败: ${error instanceof Error ? error.message : '未知错误'}`);
-      }
-    } finally {
-      this.isSyncing = false;
-    }
-  }
+			if (this.plugin.app?.workspace) {
+				new Notice(
+					`\u540c\u6b65\u5931\u8d25: ${
+						error instanceof Error ? error.message : "\u672a\u77e5\u9519\u8bef"
+					}`
+				);
+			}
+		} finally {
+			this.isSyncing = false;
+		}
+	}
 
-  /**
-   * 显示同步完成通知
-   */
-  private showCompletionNotice(result: any): void {
-    if (!this.plugin.app || !this.plugin.app.workspace) {
-      return;
-    }
+	private showCompletionNotice(result: IncrementalSyncResult): void {
+		if (!this.plugin.app || !this.plugin.app.workspace) {
+			return;
+		}
 
-    if (result.changedCards === 0) {
-      new Notice('同步完成：无需更新');
-    } else {
-      const message = `同步完成：导入 ${result.importedCards} 张，导出 ${result.exportedCards} 张`;
-      new Notice(message);
-    }
-  }
+		const parts: string[] = [];
 
-  /**
-   * 手动触发同步
-   */
-  public manualSync(): void {
-    logger.debug('[AutoSyncScheduler] 手动触发同步');
-    this.scheduleSyncTask('manual');
-  }
+		if (result.importedCards > 0) {
+			parts.push(`\u5bfc\u5165 ${result.importedCards} \u5f20`);
+		}
+		if (result.createdCards > 0) {
+			parts.push(`\u65b0\u589e ${result.createdCards} \u5f20`);
+		}
+		if (result.updatedCards > 0) {
+			parts.push(`\u66f4\u65b0 ${result.updatedCards} \u5f20`);
+		}
+		if (result.unchangedCards > 0) {
+			parts.push(`\u65e0\u53d8\u5316 ${result.unchangedCards} \u5f20`);
+		}
+		if (result.duplicateCards > 0) {
+			parts.push(`\u91cd\u590d ${result.duplicateCards} \u5f20`);
+		}
+		if (result.failedCards > 0) {
+			parts.push(
+				`\u5931\u8d25 ${result.failedCards} \u5f20\uff08${this.formatFailureSummary(result)}\uff09`
+			);
+		}
+		if (result.warningCards > 0) {
+			parts.push(`\u8b66\u544a ${result.warningCards} \u5f20`);
+		}
 
-  /**
-   * 获取调度器状态
-   */
-  public getStatus(): {
-    isRunning: boolean;
-    isSyncing: boolean;
-  } {
-    return {
-      isRunning: this.isRunning,
-      isSyncing: this.isSyncing
-    };
-  }
+		const message =
+			parts.length > 0
+				? `\u540c\u6b65\u5b8c\u6210\uff1a${parts.join("\uff1b")}`
+				: "\u540c\u6b65\u5b8c\u6210\uff1a\u65e0\u53d8\u5316";
+
+		new Notice(message, 8000);
+	}
+
+	private formatFailureSummary(result: IncrementalSyncResult): string {
+		const summary: string[] = [];
+		const failureReasons = result.summary.failureReasons ?? {};
+		const emptyContentCount = failureReasons.empty_content ?? 0;
+		const missingPrimaryFieldCount = failureReasons.missing_primary_field ?? 0;
+		const otherCount = Math.max(
+			result.failedCards - emptyContentCount - missingPrimaryFieldCount,
+			0
+		);
+
+		if (emptyContentCount > 0) {
+			summary.push(`\u7a7a\u5185\u5bb9 ${emptyContentCount}`);
+		}
+		if (missingPrimaryFieldCount > 0) {
+			summary.push(`\u7f3a\u4e3b\u5b57\u6bb5 ${missingPrimaryFieldCount}`);
+		}
+		if (otherCount > 0) {
+			summary.push(`\u5176\u4ed6 ${otherCount}`);
+		}
+
+		return summary.join("\uff0c") || "\u672a\u5206\u7c7b";
+	}
+
+	public manualSync(): void {
+		logger.debug("[AutoSyncScheduler] Manual sync triggered");
+		this.scheduleSyncTask("manual");
+	}
+
+	public getStatus(): {
+		isRunning: boolean;
+		isSyncing: boolean;
+	} {
+		return {
+			isRunning: this.isRunning,
+			isSyncing: this.isSyncing,
+		};
+	}
 }
-
-
-
-

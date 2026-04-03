@@ -7,18 +7,18 @@ import { logger } from "../utils/logger";
 import type { ReviewLog } from "../data/types";
 import { CardState, Rating } from "../data/types";
 import type {
+	FSRS6AlgorithmState,
 	FSRS6Card,
 	FSRS6Parameters,
-	FSRS6VersionInfo,
 	FSRS6PerformanceMetrics,
-	FSRS6AlgorithmState,
+	FSRS6VersionInfo,
 } from "../types/fsrs6-types";
 import {
-	FSRS6_DEFAULTS,
-	FSRS6_PARAMETER_RANGES,
+	FSRS6ComputationError,
 	FSRS6Error,
 	FSRS6ParameterError,
-	FSRS6ComputationError,
+	FSRS6_DEFAULTS,
+	FSRS6_PARAMETER_RANGES,
 } from "../types/fsrs6-types";
 
 /**
@@ -214,9 +214,15 @@ export class FSRS6CoreAlgorithm {
 
 		updatedCard.lapses += 1;
 		updatedCard.difficulty = this.calculateNextDifficulty(card.difficulty, Rating.Again);
-		updatedCard.stability = this.calculateForgetStability(card);
-		updatedCard.state = card.state === CardState.New ? CardState.Learning : CardState.Relearning;
-		updatedCard.scheduledDays = 0;
+		updatedCard.stability =
+			card.state === CardState.New
+				? this.calculateInitialStability(Rating.Again)
+				: this.calculateForgetStability(card);
+		updatedCard.state =
+			card.state === CardState.Review || card.state === CardState.Relearning
+				? CardState.Relearning
+				: CardState.Learning;
+		updatedCard.scheduledDays = this.calculateNextInterval(updatedCard.stability);
 
 		return updatedCard;
 	}

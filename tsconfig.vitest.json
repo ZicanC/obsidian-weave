@@ -1,0 +1,9 @@
+{
+	"extends": "./tsconfig.json",
+	"compilerOptions": {
+		"moduleResolution": "bundler",
+		"types": ["svelte", "node", "bun-types", "vitest/globals"]
+	},
+	"include": ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.js", "src/**/*.svelte", "vitest.config.ts"],
+	"exclude": ["src/demo/**", "src/test-integration.ts"]
+}

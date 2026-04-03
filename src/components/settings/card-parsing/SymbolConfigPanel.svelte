@@ -70,14 +70,14 @@
   /**
    * 更新排除标签列表
    * 解析逗号分隔的标签字符串
-   * 🆕 自动移除用户输入的 # 符号
+   * 自动移除用户输入的 `#` 符号
    */
   function updateExcludeTags(value: string) {
     // 按逗号分隔，去除空白，移除 # 符号，过滤空值
     const tags = value
       .split(',')
       .map(tag => tag.trim())
-      .map(tag => tag.startsWith('#') ? tag.substring(1) : tag)  // 🆕 自动移除 # 符号
+      .map(tag => tag.startsWith('#') ? tag.substring(1) : tag)  // 自动移除 `#` 符号
       .filter(tag => tag.length > 0);
     
     updateBatchParsing('excludeTags', tags);
@@ -98,7 +98,7 @@
       <div class="config-item">
         <label for="systemExcludeTags" class="config-label">
           {t('settings.cardParsing.systemExcludeTags.label')}
-          <span class="readonly-badge">官方标准</span>
+          <span class="readonly-badge">{t('dataManagement.officialStandard')}</span>
         </label>
         <input
           type="text"

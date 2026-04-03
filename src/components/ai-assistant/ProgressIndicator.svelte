@@ -4,7 +4,7 @@
 
   interface Props {
     progress: GenerationProgress;
-    onOpenPreview?: () => void; // 🆕 打开预览窗口的回调
+    onOpenPreview?: () => void; // 打开预览窗口的回调
   }
 
   let { progress, onOpenPreview }: Props = $props();
@@ -54,7 +54,7 @@
       {/if}
     </div>
     
-    <!-- 🆕 查看卡片按钮（生成中和完成时都显示） -->
+    <!-- 查看卡片按钮，生成中和完成时都显示 -->
     {#if onOpenPreview && (progress.status === 'generating' || progress.status === 'completed')}
       <button class="preview-btn" onclick={onOpenPreview} title="查看生成的卡片">
         <ObsidianIcon name="eye" size={18} />
@@ -167,7 +167,7 @@
     background: var(--color-red);
   }
 
-  /* 🆕 查看卡片按钮 */
+  /* 查看卡片按钮 */
   .preview-btn {
     display: flex;
     align-items: center;

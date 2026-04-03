@@ -12,7 +12,7 @@
   import type { Card } from '../../data/types';
   import type { WeavePlugin } from '../../main';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
-  // 🆕 导入挖空处理工具
+  // 导入挖空处理工具
   import { stripClozeForDisplay } from '../../utils/cloze-utils';
 
   interface Props {
@@ -53,7 +53,7 @@
   const tags = $derived(card.tags || []);
   const sourceDocument = $derived(card.fields?.source_document as string || '');
   
-  //  修复：合并完整内容 - 优先使用 content 字段
+  // 合并完整内容，优先使用 content 字段
   // 渐进式挖空卡片的内容存储在 card.content，而非 fields
   const fullContent = $derived.by(() => {
     // 1. 优先使用原始 content 字段（包含渐进式挖空、语义标记等）
@@ -120,7 +120,7 @@
     if (!element || !content || !plugin?.app) return null;
     
     isRendering = true;
-    element.innerHTML = ''; // 清空内容
+    element.replaceChildren(); // 清空内容
     
     try {
       // 清理旧的组件实例
@@ -361,7 +361,7 @@
 <style>
   .grid-card {
     position: relative;
-    background: var(--background-primary);
+    background: var(--weave-surface-background, var(--background-primary));
     /*  参考复选框方案：使用box-shadow + !important */
     border: none;
     border-radius: var(--weave-radius-lg);
@@ -477,10 +477,10 @@
     font-size: var(--weave-font-size-xs);
     font-weight: 600;
     color: var(--weave-text-faint);
-    background: var(--background-secondary);
+    background: var(--weave-elevated-background, var(--background-secondary));
     padding: 2px 8px;
     border-radius: var(--weave-radius-sm);
-    font-family: 'Courier New', monospace;
+    font-family: var(--font-monospace, 'Courier New', monospace);
     z-index: 2;
   }
 
@@ -502,7 +502,7 @@
   .menu-button {
     width: 28px;
     height: 28px;
-    background: var(--background-secondary);
+    background: var(--weave-elevated-background, var(--background-secondary));
     border: 1px solid var(--weave-border);
     border-radius: 50%;
     display: flex;
@@ -546,7 +546,7 @@
     align-items: center;
     justify-content: center;
     padding: 0;
-    background: var(--background-secondary);
+    background: var(--weave-elevated-background, var(--background-secondary));
     border: 1px solid var(--weave-border);
     border-radius: 50%;
     cursor: pointer;

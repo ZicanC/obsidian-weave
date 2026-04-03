@@ -367,7 +367,7 @@ body.theme-light .weave-app {
 /* 全局视图背景 */
 /* ✅ 移除 !important：.weave-view-content 类选择器已有足够优先级 */
 .weave-view-content {
-  background: var(--weave-surface);
+  background: var(--weave-surface-background, var(--weave-surface, var(--background-primary)));
   height: 100%;
   padding: var(--weave-space-lg);
 }

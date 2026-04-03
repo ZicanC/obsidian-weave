@@ -24,9 +24,9 @@
   const statLabels = $derived.by(() => {
     switch (deckMode) {
       case 'incremental-reading':
-        return { first: '未读', second: '待读', third: '提问' };
+        return { first: t('decks.card.irUnread'), second: t('decks.card.irPending'), third: t('decks.card.irQuestions') };
       case 'question-bank':
-        return { first: '总题', second: '已练', third: '错题' };
+        return { first: t('decks.questionBank.total'), second: t('decks.questionBank.completed'), third: t('decks.questionBank.errors') };
       default:
         return { first: t('decks.card.new'), second: t('decks.card.learning'), third: t('decks.card.review') };
     }
@@ -92,13 +92,12 @@
 
   // 处理菜单按钮点击
   function handleMenuClick(event: MouseEvent) {
-    event.stopPropagation(); // 阻止事件冒泡，避免触发卡片点击
+    event.preventDefault();
     onMenu(event);
   }
 
   // 处理菜单按钮触摸（移动端）
   function handleMenuTouchEnd(event: TouchEvent) {
-    event.stopPropagation(); // 阻止事件冒泡到父元素
     event.preventDefault();
     // 创建一个模拟的 MouseEvent 传递给 onMenu
     const touch = event.changedTouches[0];
@@ -121,7 +120,10 @@
 
 <div 
   class="deck-grid-card"
-  onclick={handleClick}
+  onclick={(event) => {
+    if (event.defaultPrevented) return;
+    handleClick();
+  }}
   ontouchstart={handleTouchStart}
   ontouchend={handleTouchEnd}
   onkeydown={handleKeyDown}
@@ -135,13 +137,13 @@
     <!-- 微妙的光效层 -->
     <div class="light-effect"></div>
     
-    <!-- 🆕 右上角菜单按钮 -->
+    <!-- 右上角菜单按钮 -->
     <button 
       class="menu-btn"
       onclick={handleMenuClick}
       ontouchend={handleMenuTouchEnd}
-      aria-label="更多操作"
-      title="更多操作"
+      aria-label={t('decks.card.moreActions')}
+      title={t('decks.card.moreActions')}
     >
       <EnhancedIcon name="more-horizontal" size={16} />
     </button>
@@ -220,7 +222,7 @@
     pointer-events: none;
   }
 
-  /* 🆕 右上角菜单按钮 */
+  /* 右上角菜单按钮 */
   .menu-btn {
     position: absolute;
     top: 12px;
@@ -255,7 +257,7 @@
     transform: scale(0.95);
   }
 
-  /* 🆕 移动端：始终显示菜单按钮 */
+  /* 移动端始终显示菜单按钮 */
   @media (max-width: 768px) {
     .menu-btn {
       opacity: 1;
@@ -263,7 +265,7 @@
   }
 
   .deck-title {
-    font-family: 'Playfair Display', 'Noto Serif SC', serif;
+    font-family: var(--font-text, 'Playfair Display'), 'Noto Serif SC', serif;
     font-size: 24px;
     font-weight: 700;
     text-align: center;

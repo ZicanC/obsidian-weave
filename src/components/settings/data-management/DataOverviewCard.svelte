@@ -22,10 +22,10 @@
     onCreateBackup?: () => Promise<void>;
   }
 
-  let { 
-    overview, 
-    isLoading = false, 
-    onRefresh, 
+  let {
+    overview,
+    isLoading = false,
+    onRefresh,
     onOpenFolder,
     onCreateBackup
   }: Props = $props();
@@ -74,7 +74,7 @@
   // 事件处理
   async function handleRefresh() {
     if (isLoading) return;
-    
+
     try {
       if (onRefresh) {
         await onRefresh();
@@ -118,7 +118,8 @@
     </div>
     <div class="header-actions">
       <button
-        class="icon-button"
+        class="toolbar-icon-btn clickable-icon"
+        type="button"
         onclick={handleOpenFolder}
         title={t('dataManagement.openFolder')}
         aria-label={t('dataManagement.openFolder')}
@@ -126,16 +127,22 @@
         <ObsidianIcon name="folder-open" size={16} />
       </button>
       <button
-        class="icon-button refresh-button"
+        class="toolbar-icon-btn clickable-icon refresh-button"
+        type="button"
         onclick={handleRefresh}
         disabled={isLoading}
         title={t('common.refresh')}
         aria-label={t('common.refresh')}
       >
-        <ObsidianIcon name="refresh-cw" size={16} class={isLoading ? 'spinning' : ''} />
+        <ObsidianIcon
+          name="refresh-cw"
+          size={16}
+          class={`refresh-icon ${isLoading ? 'spinning' : ''}`}
+        />
       </button>
       <button
-        class="backup-button"
+        class="backup-button mod-cta"
+        type="button"
         onclick={handleCreateBackup}
         disabled={isLoading}
         title={t('dataManagement.backup.operations.createBackup')}
@@ -147,9 +154,8 @@
     </div>
   </div>
 
-  <!-- 数据统计网格 -->
+  <!-- 数据统计列表 -->
   <div class="stats-grid">
-    <!-- 数据文件夹信息 -->
     <div class="stat-item folder-info">
       <div class="stat-content">
         <div class="stat-label">{t('dataManagement.backup.latest.dataFolder')}</div>
@@ -159,7 +165,6 @@
       </div>
     </div>
 
-    <!-- 总大小 -->
     <div class="stat-item">
       <div class="stat-content">
         <div class="stat-label">{t('dataManagement.backup.latest.stats.totalSize')}</div>
@@ -167,7 +172,6 @@
       </div>
     </div>
 
-    <!-- 牌组数量 -->
     <div class="stat-item">
       <div class="stat-content">
         <div class="stat-label">{t('dataManagement.backup.latest.stats.deckCount')}</div>
@@ -175,7 +179,6 @@
       </div>
     </div>
 
-    <!-- 卡片总数 -->
     <div class="stat-item">
       <div class="stat-content">
         <div class="stat-label">{t('dataManagement.backup.latest.stats.cardTotal')}</div>
@@ -183,7 +186,6 @@
       </div>
     </div>
 
-    <!-- 学习会话 -->
     <div class="stat-item">
       <div class="stat-content">
         <div class="stat-label">{t('dataManagement.backup.latest.stats.backupCount')}</div>
@@ -230,32 +232,27 @@
 
   .header-actions {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
   }
 
-  .icon-button {
-    width: 2rem;
-    height: 2rem;
-    padding: 0;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    background: var(--background-primary);
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.2s ease;
+  .toolbar-icon-btn {
+    width: var(--clickable-icon-size, 32px);
+    height: var(--clickable-icon-size, 32px);
+    border-radius: var(--clickable-icon-radius, 4px);
     display: flex;
     align-items: center;
     justify-content: center;
+    color: var(--text-muted);
   }
 
-  .icon-button:hover:not(:disabled) {
-    background: var(--background-modifier-hover);
-    border-color: var(--interactive-normal);
+  .toolbar-icon-btn:hover:not(:disabled) {
     color: var(--text-normal);
   }
 
-  .icon-button:disabled {
-    opacity: 0.5;
+  .toolbar-icon-btn:disabled,
+  .backup-button:disabled {
+    opacity: var(--disabled-opacity);
     cursor: not-allowed;
   }
 
@@ -264,72 +261,66 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    cursor: pointer;
-    transition: all 0.2s ease;
-    font-size: 0.875rem;
-    font-weight: 500;
+    min-height: var(--input-height);
+    padding: 0 0.875rem;
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-medium);
+    white-space: nowrap;
   }
 
-  .backup-button:hover:not(:disabled) {
-    background: var(--interactive-accent-hover);
-    transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  :global(.refresh-icon.spinning svg) {
+    animation: spin 1s linear infinite;
   }
 
-  .backup-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* 统计网格 */
+  /* 统计列表 */
   .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 0.75rem;
+    overflow: hidden;
+    background: var(--weave-secondary-bg, var(--background-primary));
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 12px;
   }
 
   .stat-item {
     display: flex;
-    align-items: flex-start;
-    padding: 0.75rem;
-    background: var(--weave-secondary-bg, var(--background-primary));
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
-    transition: all 0.2s ease;
+    align-items: center;
+    padding: 0.9rem 1rem;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    transition: background-color 0.2s ease;
+  }
+
+  .stat-item + .stat-item {
+    border-top: 1px solid var(--background-modifier-border);
   }
 
   .stat-item:hover {
     background: var(--background-modifier-hover);
-    border-color: var(--interactive-normal);
-  }
-
-  .stat-item.folder-info {
-    grid-column: 1 / -1;
   }
 
   .stat-content {
     flex: 1;
     min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 10rem) minmax(0, 1fr);
+    align-items: center;
+    gap: 1rem;
   }
 
   .stat-label {
-    font-size: 0.75rem;
+    font-size: 0.8125rem;
     color: var(--text-muted);
-    margin-bottom: 0.25rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.3px;
+    min-width: 0;
   }
 
   .stat-value {
-    font-size: 1.125rem;
+    font-size: 1rem;
     font-weight: 600;
     color: var(--text-normal);
+    min-width: 0;
     word-break: break-all;
+    text-align: right;
   }
 
   .folder-path {
@@ -389,12 +380,17 @@
       justify-content: flex-end;
     }
 
-    .stats-grid {
-      grid-template-columns: 1fr;
+    .stat-item {
+      padding: 0.85rem 0.9rem;
     }
 
-    .stat-item.folder-info {
-      grid-column: 1;
+    .stat-content {
+      grid-template-columns: 1fr;
+      gap: 0.35rem;
+    }
+
+    .stat-value {
+      text-align: left;
     }
   }
 </style>

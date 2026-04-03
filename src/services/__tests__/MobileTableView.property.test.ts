@@ -9,8 +9,6 @@
  * 
  * Validates: Requirements 10.2, 10.3
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 
 // ==================== 类型定义 ====================

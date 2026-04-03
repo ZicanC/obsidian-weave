@@ -57,7 +57,7 @@
     if (!container || !content) return;
 
     try {
-      container.innerHTML = '';
+      container.replaceChildren();
       
       // 获取源文件路径
       const activeFile = plugin.app.workspace.getActiveFile();
@@ -77,13 +77,13 @@
       // 加载组件
       component.load();
 
-      //  修复：等待脚注渲染完成
+      // 等待脚注渲染完成
       await new Promise(resolve => setTimeout(resolve, 50));
 
-      //  修复：设置内部链接处理器
+      // 设置内部链接处理器
       setupInternalLinkHandlers(container, sourcePath);
 
-      //  修复：设置脚注处理器
+      // 设置脚注处理器
       setupFootnoteHandlers(container);
 
     } catch (error) {
@@ -574,10 +574,6 @@
     border-bottom: 1px solid var(--background-modifier-border);
   }
 
-  .explanation-icon {
-    font-size: 1.125rem;
-  }
-
   .explanation-title {
     flex: 1;
     font-size: 0.875rem;
@@ -651,7 +647,7 @@
     color: var(--text-normal);
   }
 
-  /*  修复：脚注样式 */
+  /* 脚注样式 */
   /* 脚注引用（上标数字） */
   :global(.footnote-ref) {
     color: var(--text-accent);
@@ -708,7 +704,7 @@
     padding: 0.25rem;
   }
 
-  /*  修复：脚注引用高亮（上标数字） */
+  /* 脚注引用高亮（上标数字） */
   :global(a.footnote-ref.footnote-highlighted),
   :global(sup .footnote-highlighted) {
     background: color-mix(in srgb, var(--text-accent) 25%, transparent);

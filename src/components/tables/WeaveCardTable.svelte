@@ -59,7 +59,7 @@
     onView,
     availableTags = [],
     onJumpToSource,
-    isVisible = true // 🔧 性能优化：默认可见
+    isVisible = true
   }: Props = $props();
 
   // 🔧 修复reconciliation错误：过滤掉无效的卡片
@@ -74,12 +74,12 @@
   const COLUMN_WIDTHS_KEY = 'weave-table-column-widths';
   const DEFAULT_COLUMN_WIDTHS: ColumnWidths = {
     checkbox: 48,
-    front: 200,
-    back: 200,
-    status: 140,
-    deck: 150,
-    tags: 160,
-    priority: 100,
+    front: 250,
+    back: 230,
+    status: 126,
+    deck: 168,
+    tags: 190,
+    priority: 82,
     created: 120,
     modified: 120,
     next_review: 130,
@@ -90,17 +90,16 @@
     actions: 60,
     uuid: 120,
     obsidian_block_link: 150,
-    source_document: 180,
-    field_template: 160,
-    source_document_status: 120,
-    // 🆕 题库专用列宽度
-    question_type: 120,
-    accuracy: 100,
-    test_attempts: 110,
-    last_test: 130,
-    error_level: 110,
-    source_card: 200,
-    // 🆕 增量阅读专用列宽度
+    source_document: 196,
+    field_template: 148,
+    source_document_status: 118,
+    // 题库专用列宽度
+    question_type: 108,
+    accuracy: 92,
+    test_attempts: 92,
+    last_test: 118,
+    error_level: 100,
+    // 增量阅读专用列宽度
     ir_title: 250,
     ir_source_file: 180,
     ir_state: 100,
@@ -113,7 +112,7 @@
     ir_notes: 200,
     ir_extracted_cards: 100,
     ir_created: 120,
-    ir_decks: 180,  // 🆕 所属牌组列宽度
+    ir_decks: 180,  // 所属牌组列宽度
   };
 
   // 表格视图模式列配置
@@ -139,7 +138,7 @@
       'difficulty',
       'review_count',
     ],
-    // 🆕 题库考试模式
+    // 题库考试模式
     questionBank: [
       'front',
       'back',
@@ -151,14 +150,13 @@
       'test_attempts',
       'last_test',
       'error_level',
-      'source_card',
       'created',
     ],
-    // 🆕 增量阅读内容块模式
+    // 增量阅读内容块模式
     irContent: [
       'ir_title',
       'ir_source_file',
-      'ir_decks',       // 🆕 所属牌组（引入式架构）
+      'ir_decks',       // 所属牌组
       'ir_state',
       'ir_priority',
       'ir_tags',
@@ -177,18 +175,25 @@
   let bottomScrollbar = $state<HTMLElement | null>(null);
   let tableElement = $state<HTMLElement | null>(null);
   let scrollbarContent = $state<HTMLElement | null>(null);
+  let tablePixelWidth = $derived.by(() => {
+    const checkboxWidth = columnWidths.checkbox ?? 48;
+    const visibleColumnsWidth = effectiveColumns.reduce((total, columnKey) => {
+      return total + (columnWidths[columnKey as keyof ColumnWidths] ?? 0);
+    }, 0);
+    return checkboxWidth + visibleColumnsWidth;
+  });
 
   // 根据模式和用户设置计算实际显示的列
   let effectiveColumns = $derived.by(() => {
     const modeColumns = TABLE_MODE_COLUMNS[tableViewMode];
     
-    // 🔧 关键修复：如果没有modeColumns，使用默认列
+    // 如果没有 modeColumns，则使用默认列
     if (!modeColumns || modeColumns.length === 0) {
       logger.warn('[WeaveCardTable] 未找到模式列配置:', tableViewMode);
       return ['front', 'back', 'status', 'actions'] as ColumnKey[];
     }
     
-    // 🔧 关键修复：IR模式直接返回模式定义的列（不依赖columnOrder）
+    // IR 模式直接返回模式定义的列（不依赖 columnOrder）
     // 因为columnOrder可能不包含新添加的IR列
     if (tableViewMode === 'irContent') {
       // 直接使用模式定义的列 + actions
@@ -201,7 +206,7 @@
     const forceShowColumns: Record<TableViewMode, ColumnKey[]> = {
       basic: [] as ColumnKey[],
       review: ['modified', 'next_review', 'retention', 'interval', 'difficulty', 'review_count'] as ColumnKey[],
-      questionBank: ['question_type', 'accuracy', 'test_attempts', 'last_test', 'error_level', 'source_card'] as ColumnKey[],
+      questionBank: ['question_type', 'accuracy', 'test_attempts', 'last_test', 'error_level'] as ColumnKey[],
       irContent: ['ir_title', 'ir_source_file', 'ir_state', 'ir_priority', 'ir_next_review', 'ir_review_count'] as ColumnKey[],
     };
     
@@ -324,7 +329,6 @@
     saveColumnWidths();
   }
 
-  // 重置列宽到默认值
   function resetColumnWidths() {
     columnWidths = { ...DEFAULT_COLUMN_WIDTHS };
     saveColumnWidths();
@@ -503,7 +507,11 @@
   >
     {#if !loading}
       <div bind:this={bottomScrollbar} style="overflow-x: auto; overflow-y: hidden;">
-        <table class="weave-table" bind:this={tableElement}>
+        <table
+          class="weave-table"
+          bind:this={tableElement}
+          style={`min-width:${tablePixelWidth}px;width:max(100%, ${tablePixelWidth}px);table-layout:fixed;`}
+        >
           <TableHeader
             {columnVisibility}
             columnOrder={effectiveColumns}
@@ -546,11 +554,13 @@
 
 <style>
   .weave-table-wrapper {
+    --weave-table-page-bg: var(--weave-card-management-page-bg, var(--weave-surface-background, var(--weave-surface, var(--background-primary))));
+    --weave-table-surface-bg: var(--weave-card-management-surface-bg, var(--weave-elevated-background, var(--weave-surface-secondary, var(--background-secondary))));
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
-    background: var(--background-primary);
+    background: var(--weave-table-page-bg);
     border-radius: var(--radius-m);
     border: 1px solid var(--background-modifier-border);
   }
@@ -560,6 +570,7 @@
     overflow-x: auto;
     overflow-y: hidden;
     height: 12px;
+    background: var(--weave-table-page-bg);
     border-bottom: 1px solid var(--background-modifier-border);
   }
 
@@ -572,8 +583,9 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    background: var(--background-primary);
+    background: var(--weave-table-page-bg);
   }
+
 
   .weave-table {
     width: 100%;
@@ -598,4 +610,5 @@
     cursor: col-resize !important;
     user-select: none !important;
   }
+
 </style>

@@ -10,11 +10,12 @@
  */
 
 import { Notice } from "obsidian";
-import type { ReviewLog } from "../../data/types";
 import type { WeaveDataStorage } from "../../data/storage";
+import type { ReviewLog } from "../../data/types";
 import type { WeavePlugin } from "../../main";
-import { type BaselineMetrics, GradientWeightOptimizer } from "./GradientWeightOptimizer";
 import { logger } from "../../utils/logger";
+import { vaultStorage } from "../../utils/vault-local-storage";
+import { type BaselineMetrics, GradientWeightOptimizer } from "./GradientWeightOptimizer";
 
 type OptimizationState = "baseline" | "phase1" | "phase2" | "optimized";
 
@@ -53,7 +54,7 @@ export class PersonalizationManager {
 	 */
 	async loadPersonalizationData(): Promise<PersonalizationData> {
 		try {
-			const stored = this.plugin.app.loadLocalStorage(`weave_personalization_${this.userId}`);
+			const stored = vaultStorage.getItem(`weave_personalization_${this.userId}`);
 			if (stored) {
 				this.personalizationData = JSON.parse(stored);
 				logger.debug("📥 [PersonalizationManager] 加载个性化数据:", this.personalizationData.state);
@@ -70,7 +71,7 @@ export class PersonalizationManager {
 	 */
 	private async savePersonalizationData(): Promise<void> {
 		try {
-			this.plugin.app.saveLocalStorage(
+			vaultStorage.setItem(
 				`weave_personalization_${this.userId}`,
 				JSON.stringify(this.personalizationData)
 			);
@@ -111,7 +112,7 @@ export class PersonalizationManager {
 			this.personalizationData.state = "phase1";
 			this.personalizationData.lastUpdate = Date.now();
 
-			new Notice("🎯 Weave正在学习您的记忆模式...", 3000);
+			new Notice("🎯 正在学习您的记忆模式...", 3000);
 
 			logger.debug("✅ [PersonalizationManager] 基准数据收集完成");
 		} catch (error) {
@@ -184,7 +185,7 @@ export class PersonalizationManager {
 	 */
 	protected async applyOptimizedWeights(weights: number[]): Promise<void> {
 		try {
-			this.plugin.app.saveLocalStorage(`weave_optimized_weights_${this.userId}`, JSON.stringify(weights));
+			vaultStorage.setItem(`weave_optimized_weights_${this.userId}`, JSON.stringify(weights));
 
 			logger.debug("✅ [PersonalizationManager] 优化权重已应用");
 		} catch (error) {
@@ -197,7 +198,7 @@ export class PersonalizationManager {
 	 */
 	async loadOptimizedWeights(): Promise<number[]> {
 		try {
-			const stored = this.plugin.app.loadLocalStorage(`weave_optimized_weights_${this.userId}`);
+			const stored = vaultStorage.getItem(`weave_optimized_weights_${this.userId}`);
 			if (stored) {
 				return JSON.parse(stored);
 			}
@@ -311,7 +312,7 @@ export class PersonalizationManager {
 		await this.savePersonalizationData();
 
 		// 清除优化权重
-		this.plugin.app.saveLocalStorage(`weave_optimized_weights_${this.userId}`, undefined as any);
+		vaultStorage.removeItem(`weave_optimized_weights_${this.userId}`);
 
 		new Notice("🔄 个性化数据已重置", 3000);
 		logger.debug("🔄 [PersonalizationManager] 个性化数据已重置");

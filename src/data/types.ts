@@ -1,7 +1,7 @@
 // Anki Plugin Data Types
 // 定义所有数据结构，包括牌组、卡片和FSRS学习数据
 
-// 🆕 v0.8: 导入关系系统类型
+// 导入关系系统类型
 import type { CardRelationMetadata } from "../services/relation/types";
 //  导入国际化语言类型
 import type { SupportedLanguage } from "../utils/i18n";
@@ -137,7 +137,7 @@ export interface Card {
 	uuid: string; // 唯一标识符（原id字段已废弃）
 
 	/**
-	 * @deprecated v2.0 引用式牌组架构 - 此字段将被移除
+	 * Compatibility note: retained for legacy reference deck data and planned for removal
 	 *
 	 * 迁移说明：
 	 * - 旧架构：卡片通过 deckId 绑定到单个牌组
@@ -149,7 +149,7 @@ export interface Card {
 	deckId?: string;
 
 	/**
-	 * @deprecated v2.1 YAML 元数据架构 - 此字段将被移除
+	 * Compatibility note: retained for legacy YAML metadata and planned for removal
 	 *
 	 * 迁移说明：
 	 * - 旧架构：卡片通过 referencedByDecks 存储牌组ID引用
@@ -164,7 +164,7 @@ export interface Card {
 	templateId?: string; // 关联的字段模板ID（可选，仅用于 Anki 导出）
 
 	/**
-	 * @deprecated v2.1 YAML 元数据架构 - 此字段将被移除
+	 * Compatibility note: retained for legacy YAML metadata and planned for removal
 	 *
 	 * 迁移说明：
 	 * - 旧架构：卡片类型存储在 type 字段
@@ -175,11 +175,11 @@ export interface Card {
 	 */
 	type?: CardType;
 
-	// 🆕 题库功能（v0.10 - 题库系统）
+	// 题库功能
 	cardPurpose?: "memory" | "test"; // 卡片用途：memory=记忆学习, test=题库测试
 	difficulty?: "easy" | "medium" | "hard"; // 题目难度（题库卡片专用）
 
-	// 🆕 父子卡片关系（v0.8）
+	// 父子卡片关系
 	parentCardId?: string; // 父卡片UUID（子卡片填写，用于建立层级关系）
 	relationMetadata?: CardRelationMetadata; // 完整的卡片关系元数据
 
@@ -189,7 +189,7 @@ export interface Card {
 	content: string; //  唯一权威数据源 - 原始Markdown内容（包含语义标记）
 
 	/**
-	 * @deprecated 此字段已废弃，将在下个版本移除
+	 * Compatibility note: 此字段已废弃，将在下个版本移除
 	 *
 	 * Content-Only 架构迁移说明：
 	 * - 旧版本：卡片内容存储在 content 和 fields 两处（数据冗余）
@@ -219,7 +219,7 @@ export interface Card {
 
 	// ===== Obsidian溯源信息 =====
 	/**
-	 * @deprecated v2.1 YAML 元数据架构 - 此字段将被移除
+	 * Compatibility note: retained for legacy YAML metadata and planned for removal
 	 *
 	 * 迁移说明：
 	 * - 旧架构：源文档路径存储在 sourceFile 字段
@@ -229,7 +229,7 @@ export interface Card {
 	sourceFile?: string;
 
 	/**
-	 * @deprecated v2.1 YAML 元数据架构 - 此字段将被移除
+	 * Compatibility note: retained for legacy YAML metadata and planned for removal
 	 *
 	 * 迁移说明：
 	 * - 旧架构：块引用ID存储在 sourceBlock 字段
@@ -240,7 +240,7 @@ export interface Card {
 	sourceRange?: SourceRange; // 精确位置（新增）
 	sourceExists?: boolean; // 源文档是否仍存在
 
-	// 🆕 批量扫描元数据 (v0.8 - 批量解析增强)
+	// 批量扫描元数据
 	isBatchScanned?: boolean; // 是否通过批量扫描创建
 	lastScannedContent?: string; // 最后扫描时的内容快照（用于三方合并）
 	lastScannedAt?: string; // 最后扫描时间 (ISO 8601)
@@ -248,7 +248,7 @@ export interface Card {
 	isNewCard?: boolean; // 是否是新创建的卡片（批量解析标记）
 	fileMtime?: number; // 源文件修改时间戳（用于同步判断）
 
-	// 🆕 增量同步元数据 (v0.9 - 批量解析重构)
+	// 增量同步元数据
 	deletedAt?: number; // 删除时间戳（Unix时间戳，毫秒）
 	deletionSource?: "obsidian" | "weave" | "manual"; // 删除来源
 	lastSyncTime?: number; // 上次同步时间戳（Unix时间戳，毫秒）
@@ -273,7 +273,7 @@ export interface Card {
 		stabilityTrend?: number; // 稳定性趋势
 		difficultyTrend?: number; // 难度趋势
 
-		// 🆕 通用错题追踪（适用于所有题型）
+		// 通用错题追踪（适用于所有题型）
 		errorTracking?: {
 			isInErrorBook: boolean; // 是否在错题集中
 			errorCount: number; // 累计错误次数
@@ -286,7 +286,7 @@ export interface Card {
 		// 选择题专用统计（仅选择题类型有效）
 		choiceStats?: ChoiceQuestionStats;
 
-		// 🆕 题库测试统计（v0.10 - 题库系统，仅test类型卡片有效）
+		// 题库测试统计，仅 test 类型卡片有效
 		testStats?: import("../types/question-bank-types").QuestionTestStats;
 	};
 
@@ -304,7 +304,7 @@ export interface Card {
 
 	// ===== 标签和优先级 =====
 	/**
-	 * @deprecated v2.1 YAML 元数据架构 - 此字段将被移除
+	 * Compatibility note: retained for legacy YAML metadata and planned for removal
 	 *
 	 * 迁移说明：
 	 * - 旧架构：标签存储在 tags 字段
@@ -315,7 +315,7 @@ export interface Card {
 	tags?: string[];
 
 	/**
-	 * @deprecated v2.1 YAML 元数据架构 - 此字段将被移除
+	 * Compatibility note: retained for legacy YAML metadata and planned for removal
 	 *
 	 * 迁移说明：
 	 * - 旧架构：优先级存储在 priority 字段
@@ -348,10 +348,10 @@ export interface Card {
 			fields: string[];
 		};
 
-		// 🆕 题库题目元数据（v0.10 - 题库系统）
+		// 题库题目元数据
 		questionMetadata?: import("../types/question-bank-types").QuestionMetadata;
 
-		// 🆕 回收信息（v1.1 - 搁置重构为回收）
+		// 回收信息
 		recycleInfo?: import("../utils/recycle-utils").RecycleInfo;
 
 		[key: string]: unknown;
@@ -360,7 +360,7 @@ export interface Card {
 	//  向后兼容：额外数据字段（用于扩展）
 	extra?: Record<string, unknown>;
 
-	// 🆕 增量阅读视图扩展字段（运行时临时字段，非持久化）
+	// 增量阅读视图扩展字段（运行时临时字段，非持久化）
 	ir_title?: string;
 	ir_source_file?: string;
 	ir_deck?: string;
@@ -382,11 +382,11 @@ export enum CardType {
 	Multiple = "multiple", // 多选卡片
 	Code = "code", // 代码卡片
 
-	// 🆕 V2 渐进式挖空架构
+	// 渐进式挖空架构
 	ProgressiveParent = "progressive-parent", // 渐进式挖空父卡片（仅存储content）
 	ProgressiveChild = "progressive-child", // 渐进式挖空子卡片（独立UUID和FSRS）
 
-	// 🆕 增量阅读内容块类型（用于卡片管理界面显示）
+	// 增量阅读内容块类型（用于卡片管理界面显示）
 	IRBlock = "ir-block", // 增量阅读内容块（旧格式）
 	IRChunk = "ir-chunk", // 增量阅读内容块（新格式）
 }
@@ -457,12 +457,12 @@ export interface Deck {
 	category: string; // 分类标签（已弃用，保留向后兼容）
 	categoryIds?: string[]; // 新的多分类支持
 
-	//  正向引用：引用的卡片UUID数组（v2.0 引用式牌组架构）
+	// 正向引用：引用的卡片 UUID 数组
 	cardUUIDs?: string[]; // 牌组引用的卡片UUID列表
 
 	// ===== 层级结构（已废弃 - 不再支持父子牌组层级）=====
 	/**
-	 * @deprecated v2.0 引用式牌组架构 - 父子牌组层级结构已废弃，请使用 categoryIds
+	 * Compatibility note: retained for legacy deck hierarchy data; use categoryIds instead
 	 *
 	 * 迁移说明：
 	 * - 旧架构：父子牌组层级结构存储在 parentId 和 parentDeckId 字段
@@ -472,11 +472,11 @@ export interface Deck {
 	 */
 	parentId?: string; // 父牌组ID（原parentDeckId，统一命名）
 	/**
-	 * @deprecated v2.0 引用式牌组架构 - 使用 parentId（但整个层级系统已废弃）
+	 * Compatibility note: retained for legacy deck hierarchy data
 	 */
 	parentDeckId?: string;
 	/**
-	 * @deprecated v2.0 引用式牌组架构 - 层级路径已废弃，请使用 name 字段
+	 * Compatibility note: retained for legacy deck hierarchy data; use name instead
 	 *
 	 * 迁移说明：
 	 * - 旧架构：层级路径存储在 path 字段
@@ -486,7 +486,7 @@ export interface Deck {
 	 */
 	path: string; // 层级路径（如"语言学习::英语::词汇"）
 	/**
-	 * @deprecated v2.0 引用式牌组架构 - 层级深度已废弃，请使用 categoryIds
+	 * Compatibility note: retained for legacy deck hierarchy data; use categoryIds instead
 	 *
 	 * 迁移说明：
 	 * - 旧架构：层级深度存储在 level 字段
@@ -499,7 +499,7 @@ export interface Deck {
 
 	// ===== 设置继承（已废弃）=====
 	/**
-	 * @deprecated v2.0 引用式牌组架构 - 设置继承已废弃，请使用独立设置
+	 * Compatibility note: retained for legacy settings inheritance data; use independent settings instead
 	 *
 	 * 迁移说明：
 	 * - 旧架构：设置继承存储在 inheritSettings 字段
@@ -513,7 +513,7 @@ export interface Deck {
 	// ===== 统计信息（增强）=====
 	stats: DeckStats;
 	/**
-	 * @deprecated v2.0 引用式牌组架构 - 子牌组统计已废弃，请使用独立统计
+	 * Compatibility note: retained for legacy child deck statistics; use independent statistics instead
 	 *
 	 * 迁移说明：
 	 * - 旧架构：子牌组统计存储在 includeSubdecks 字段
@@ -582,7 +582,7 @@ export interface DeckStats {
 	memoryRate: number; // 整体记忆率
 	averageEase: number; // 平均难度
 
-	// 🆕 最后学习时间 (ISO 8601)
+	// 最后学习时间 (ISO 8601)
 	lastStudied?: string;
 
 	// 未来预测
@@ -662,7 +662,7 @@ export interface SourceRange {
 	end: { line: number; ch: number };
 }
 
-// 🆕 导入映射接口
+// 导入映射接口
 export interface ImportMapping {
 	// 映射ID (uuid)
 	id: string;
@@ -699,7 +699,7 @@ export interface ImportMapping {
 	syncStatus?: "synced" | "weave_modified" | "anki_modified";
 }
 
-// 🆕 错题等级类型
+// 错题等级类型
 export type ErrorLevel = "light" | "medium" | "severe";
 
 // ===== 媒体管理相关类型（新增）=====
@@ -733,7 +733,7 @@ export interface MediaIndex {
 	lastUpdated: string;
 }
 
-// ===== 引用式牌组系统类型（v2.0）=====
+// ===== 引用式牌组系统类型 =====
 
 /**
  * 卡片文件索引

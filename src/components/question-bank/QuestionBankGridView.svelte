@@ -1,8 +1,9 @@
 <script lang="ts">
   import { showObsidianConfirm } from '../../utils/obsidian-confirm';
 import { logger } from '../../utils/logger';
+  import { resolveQuestionBankSessionEntryAction } from '../../utils/question-bank-resume';
 
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { Menu, Modal, Notice, Setting } from 'obsidian';
   import type { Deck, Card } from '../../data/types';
   import type { DeckTreeNode } from '../../services/deck/DeckHierarchyService';
@@ -14,7 +15,7 @@ import { logger } from '../../utils/logger';
   import type { DeckCardStyle } from '../../types/plugin-settings.d';
   import BouncingBallsLoader from '../ui/BouncingBallsLoader.svelte';
   import TestModeSelectionModal from '../modals/TestModeSelectionModal.svelte';
-  import QuestionBankAnalyticsModal from '../modals/QuestionBankAnalyticsModal.svelte';
+  import { QuestionBankAnalyticsModalObsidian } from '../modals/QuestionBankAnalyticsModalObsidian';
 
   interface QuestionBankStats {
     total: number;      // 总题数
@@ -51,10 +52,9 @@ import { logger } from '../../utils/logger';
   let selectedBankQuestions = $state<Card[]>([]);
   
   // 分析模态窗状态
-  let showAnalyticsModal = $state(false);
-  let analyticsBank = $state<import('../../data/types').Deck | null>(null);
+  let analyticsModalInstance: QuestionBankAnalyticsModalObsidian | null = null;
 
-  // 加载考试牌组树
+  // 加载考试题组树
   async function loadQuestionBankTree() {
     isLoading = true;
     try {
@@ -67,7 +67,7 @@ import { logger } from '../../utils/logger';
       // 1. 获取记忆牌组树
       const memoryDeckTree = await plugin.deckHierarchy.getDeckTree();
       
-      // 2. 基于记忆牌组树构建考试牌组树
+      // 2. 基于记忆牌组树构建考试题组树
       questionBankTree = await plugin.questionBankHierarchy.buildQuestionBankTree(memoryDeckTree);
       
       // 3. 加载统计数据
@@ -131,15 +131,30 @@ import { logger } from '../../utils/logger';
     
     const questions = await plugin.questionBankService.getQuestionsByBank(bankId);
     const bank = await plugin.questionBankService.getBankById(bankId);
+    const bankName = bank?.name || "未知题库";
     
     if (questions.length === 0) {
       new Notice("该题库暂无题目");
       return;
     }
+
+    const entryAction = await resolveQuestionBankSessionEntryAction(plugin, bankId, bankName);
+    if (entryAction === 'cancel') {
+      return;
+    }
+
+    if (entryAction === 'resume') {
+      await plugin.openQuestionBankSession({
+        bankId,
+        bankName,
+        resumeBehavior: 'resume'
+      });
+      return;
+    }
     
     // 设置选择状态并显示模式选择窗口
     selectedBankId = bankId;
-    selectedBankName = bank?.name || "未知题库";
+    selectedBankName = bankName;
     selectedBankQuestionCount = questions.length;
     selectedBankQuestions = questions;
     showModeSelectionModal = true;
@@ -204,8 +219,15 @@ import { logger } from '../../utils/logger';
         return;
       }
       
-      analyticsBank = bank;
-      showAnalyticsModal = true;
+      analyticsModalInstance?.close();
+      analyticsModalInstance = new QuestionBankAnalyticsModalObsidian(plugin.app, {
+        plugin,
+        questionBank: bank,
+        onClose: () => {
+          analyticsModalInstance = null;
+        }
+      });
+      analyticsModalInstance.open();
     } catch (error) {
       logger.error('[QuestionBankGridView] 分析题库失败:', error);
       new Notice('打开分析界面失败');
@@ -254,6 +276,11 @@ import { logger } from '../../utils/logger';
     }
   });
 
+  onDestroy(() => {
+    analyticsModalInstance?.close();
+    analyticsModalInstance = null;
+  });
+
   // 扁平化题库树（保持层级结构）
   function flattenBankTree(nodes: DeckTreeNode[]): Deck[] {
     const result: Deck[] = [];
@@ -268,10 +295,9 @@ import { logger } from '../../utils/logger';
 
   const allBanks = $derived(flattenBankTree(questionBankTree));
 
-  // 显示题库菜单（考试牌组专用菜单）
+  // 显示题库菜单（考试题组专用菜单）
   function showBankMenu(event: MouseEvent, bankId: string) {
     event.preventDefault();
-    event.stopPropagation();
     const menu = new Menu();
 
     // 牌组编辑
@@ -436,8 +462,8 @@ import { logger } from '../../utils/logger';
   {:else}
     <!-- 空状态占位符 -->
     <div class="mode-placeholder">
-      <h2 class="placeholder-title">暂无考试牌组</h2>
-      <p class="placeholder-desc">请在卡片管理中从选择题引入组建考试牌组</p>
+      <h2 class="placeholder-title">暂无考试题组</h2>
+      <p class="placeholder-desc">请在卡片管理中从选择题引入组建考试题组</p>
     </div>
   {/if}
 </div>
@@ -451,25 +477,13 @@ import { logger } from '../../utils/logger';
   onCancel={handleModeSelectionCancel}
 />
 
-<!-- 题库分析模态窗 -->
-{#if analyticsBank}
-<QuestionBankAnalyticsModal
-  bind:open={showAnalyticsModal}
-  {plugin}
-  questionBank={analyticsBank}
-  onClose={() => {
-    showAnalyticsModal = false;
-    analyticsBank = null;
-  }}
-/>
-{/if}
-
 <style>
   .question-bank-grid-view {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    padding: 20px;
+    padding: 0;
     overflow-y: auto;
     background: var(--background-primary);
   }
@@ -500,12 +514,6 @@ import { logger } from '../../utils/logger';
     text-align: center;
   }
 
-  .placeholder-icon {
-    font-size: 4rem;
-    margin-bottom: 1.5rem;
-    opacity: 0.6;
-  }
-
   .placeholder-title {
     font-size: 1.5rem;
     font-weight: 600;
@@ -521,10 +529,6 @@ import { logger } from '../../utils/logger';
 
   /* 响应式 */
   @media (max-width: 768px) {
-    .question-bank-grid-view {
-      padding: 16px;
-    }
-
     .cards-grid {
       grid-template-columns: 1fr;
       gap: 16px;
@@ -533,10 +537,6 @@ import { logger } from '../../utils/logger';
     .mode-placeholder {
       min-height: 300px;
       padding: 2rem 1rem;
-    }
-
-    .placeholder-icon {
-      font-size: 3rem;
     }
 
     .placeholder-title {
@@ -559,17 +559,9 @@ import { logger } from '../../utils/logger';
   }
 
   /* 📱 Obsidian 移动端特定样式 - 内容区贴边 */
-  :global(body.is-mobile) .question-bank-grid-view {
-    padding: 8px 2px; /* 🔧 减少左右间距，让卡片更贴边 */
-  }
-
   :global(body.is-mobile) .cards-grid {
     gap: 8px; /* 🔧 减少卡片之间的间距 */
     padding: 4px 0;
-  }
-
-  :global(body.is-phone) .question-bank-grid-view {
-    padding: 4px 1px; /* 🔧 手机端进一步减少间距 */
   }
 
   :global(body.is-phone) .cards-grid {

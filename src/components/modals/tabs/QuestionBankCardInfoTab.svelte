@@ -1,12 +1,13 @@
 <script lang="ts">
   import { logger } from '../../../utils/logger';
-  // 🔧 v2.1.1: 静态导入 parseSourceInfo（修复响应式问题）
+  // 静态导入 parseSourceInfo，确保响应式追踪正常
   import { parseSourceInfo, getCardProperty } from '../../../utils/yaml-utils';
   import { detectCardTypeFromContent } from '../../../utils/card-markdown-serializer';
 
   import { onMount } from 'svelte';
   import { formatRelativeTimeDetailed } from '../../../utils/helpers';
   import { truncateText } from '../../../utils/ui-helpers';
+  import { getQuestionTypeLabel } from '../../../utils/question-type-utils';
   import { Notice, MarkdownView } from 'obsidian';
   import type WeavePlugin from '../../../main';
   import type { Card } from '../../../data/types';
@@ -42,8 +43,8 @@
     card.metadata?.sourceCardId as string
   );
 
-  // 🔧 v2.1.1: 响应式来源信息 - 使用统一的 parseSourceInfo 工具函数
-  // 🔧 修复：使用静态 import 确保响应式追踪正常工作
+  // 响应式来源信息，使用统一的 parseSourceInfo 工具函数
+  // 静态导入可确保响应式追踪正常工作
   let sourceInfo = $derived.by(() => {
     const content = card?.content;
     if (!content) return { sourceFile: card?.sourceFile, sourceBlock: card?.sourceBlock };
@@ -63,14 +64,14 @@
   }
 
   // 跳转到来源文档
-  // 🔧 v2.1.1: 使用 Obsidian 原生 openLinkText API，支持仅文件名格式
+  // 使用 Obsidian 原生 openLinkText API，支持仅文件名格式
   async function navigateToSource() {
     try {
       const contextPath = plugin.app.workspace.getActiveFile()?.path ?? '';
       let filePath: string | undefined;
       let blockId: string | undefined;
       
-      // 🔧 v2.1 修复：使用响应式 sourceInfo 从 content YAML 获取来源
+      // 使用响应式 sourceInfo 从 content YAML 获取来源
       if (sourceInfo.sourceFile) {
         filePath = sourceInfo.sourceFile;
         blockId = sourceInfo.sourceBlock?.replace(/^\^/, ''); // 移除^前缀
@@ -81,10 +82,10 @@
         return;
       }
       
-      // 🔧 v2.1.1: 使用 openLinkText 处理 wikilink 格式，支持仅文件名
+      // 使用 openLinkText 处理 wikilink 格式，支持仅文件名
       const docName = filePath.replace(/\.md$/, '');
       
-      // 🔧 v2.1.2: 验证文件是否存在，防止创建新文档
+      // 验证文件是否存在，防止创建新文档
       const file = plugin.app.metadataCache.getFirstLinkpathDest(docName, contextPath);
       if (!file) {
         new Notice('源文档不存在或已删除');
@@ -123,24 +124,7 @@
     }
   }
 
-  // 获取题目类型显示名
-  function getQuestionTypeName(type?: string): string {
-    if (!type) return '未知';
-    switch (type) {
-      case 'single_choice':
-        return '单选题';
-      case 'multiple_choice':
-        return '多选题';
-      case 'qa':
-        return '问答题';
-      case 'cloze':
-        return '挖空题';
-      default:
-        return type;
-    }
-  }
-
-  // 加载源记忆卡片
+  // 加载测试卡片关联的源记忆卡片
   async function loadSourceMemoryCard() {
     const cardId = sourceCardId;
     if (!cardId || loadingSourceCard) return;
@@ -197,7 +181,7 @@
         <div class="info-row" class:mobile={isMobile}>
           <span class="info-label">题目类型</span>
           <span class="info-value">
-            <span class="type-badge">{getQuestionTypeName(card.metadata.questionType as string)}</span>
+            <span class="type-badge">{getQuestionTypeLabel(card.metadata.questionType as string, 'long')}</span>
           </span>
         </div>
       {/if}
@@ -261,7 +245,7 @@
       来源信息
     </h3>
     
-    <!-- 🔧 v2.1: 使用响应式 sourceInfo 从 content YAML 实时解析 -->
+    <!-- 使用响应式 sourceInfo 从 content YAML 实时解析 -->
     <div class="info-grid" class:mobile={isMobile}>
       <div class="info-row" class:mobile={isMobile}>
         <span class="info-label">源文档</span>
@@ -302,7 +286,7 @@
         </span>
       </div>
 
-      <!-- 🆕 v2.1.1: 关联文档列表 -->
+      <!-- 关联文档列表 -->
       {#if sourceInfo.refs && sourceInfo.refs.length > 0}
         <div class="info-row" class:mobile={isMobile}>
           <span class="info-label">关联文档</span>
@@ -680,7 +664,7 @@
     background: var(--background-modifier-border-hover);
   }
 
-  /* 🆕 v2.1.1: 关联文档列表样式 */
+  /* 关联文档列表样式 */
   .refs-list {
     display: flex;
     flex-wrap: wrap;

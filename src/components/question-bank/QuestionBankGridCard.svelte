@@ -75,7 +75,6 @@
   // 处理菜单按钮点击
   function handleMenuClick(event: MouseEvent) {
     event.preventDefault();
-    event.stopPropagation();
     onMenu(event);
   }
 
@@ -91,7 +90,10 @@
 <div 
   class="question-bank-grid-card"
   class:empty={stats.total === 0}
-  onclick={handleClick}
+  onclick={(event) => {
+    if (event.defaultPrevented) return;
+    handleClick();
+  }}
   onkeydown={handleKeyDown}
   oncontextmenu={handleContextMenu}
   role="button"
@@ -252,7 +254,7 @@
   }
 
   .bank-title {
-    font-family: 'Playfair Display', 'Noto Serif SC', serif;
+    font-family: var(--font-text, 'Playfair Display'), 'Noto Serif SC', serif;
     font-size: 24px;
     font-weight: 700;
     text-align: center;

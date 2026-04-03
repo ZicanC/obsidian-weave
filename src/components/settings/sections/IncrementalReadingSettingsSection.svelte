@@ -2,18 +2,18 @@
   增量阅读设置组件
   职责：处理增量阅读牌组的配置（调度、拆分、交错学习、导入设置）
   
-  v2.0 重构：移除弃用的聚焦阅读模式相关设置
+  已移除弃用的聚焦阅读模式相关设置
 -->
 <script lang="ts">
   import { logger } from '../../../utils/logger';
   import type WeavePlugin from '../../../main';
   import { tr } from '../../../utils/i18n';
   import type { IncrementalReadingSettings, CalloutSignalSettings, CalloutTypeWeight } from '../../../types/plugin-settings.d';
-  import { TFolder } from 'obsidian';
-  import FolderSuggestModal from '../../ui/FolderSuggestModal.svelte';
   import ObsidianDropdown from '../../ui/ObsidianDropdown.svelte';
-  import { getDefaultIRImportFolder, resolveIRImportFolder } from '../../../config/paths';
+  import { getDefaultIRImportFolder } from '../../../config/paths';
   import IRTagGroupManager from './IRTagGroupManager.svelte';
+
+  let t = $derived($tr);
 
   // 增量阅读默认设置（使用统一的 PATHS 配置）
   const DEFAULT_IR_SETTINGS: IncrementalReadingSettings = {
@@ -26,6 +26,10 @@
     reviewThreshold: 7,
     maxInterval: 365,
     importFolder: '',
+    selectionQuickCreateDeleteSource: false,
+    selectionQuickCreateLastFolder: '',
+    selectionQuickCreateBacklinkPosition: 'start',
+    selectionQuickCreateSourceDocumentBacklinkPosition: 'start',
     // v3.0 新调度系统设置
     scheduleStrategy: 'processing',
     dailyTimeBudgetMinutes: 40,
@@ -38,24 +42,24 @@
   };
   
   // v3.0 调度策略选项
-  const STRATEGY_OPTIONS = [
-    { id: 'processing', label: '加工流', desc: '同日可多次回访，适合深度处理' },
-    { id: 'reading-list', label: '阅读清单', desc: '每天最多出现1次，适合轻度浏览' }
-  ];
+  let STRATEGY_OPTIONS = $derived([
+    { id: 'processing', label: t('irSettings.strategyProcessingLabel'), desc: t('irSettings.strategyProcessingDesc') },
+    { id: 'reading-list', label: t('irSettings.strategyReadingListLabel'), desc: t('irSettings.strategyReadingListDesc') }
+  ]);
   
   // v3.0 aging 强度选项
-  const AGING_OPTIONS = [
-    { id: 'low', label: '低', desc: '长期未读内容缓慢提升优先级' },
-    { id: 'medium', label: '中', desc: '适度防沉底' },
-    { id: 'high', label: '高', desc: '积极防止内容被遗忘' }
-  ];
+  let AGING_OPTIONS = $derived([
+    { id: 'low', label: t('irSettings.agingLowLabel'), desc: t('irSettings.agingLowDesc') },
+    { id: 'medium', label: t('irSettings.agingMediumLabel'), desc: t('irSettings.agingMediumDesc') },
+    { id: 'high', label: t('irSettings.agingHighLabel'), desc: t('irSettings.agingHighDesc') }
+  ]);
   
   // v3.0 自动后推策略选项
-  const POSTPONE_OPTIONS = [
-    { id: 'off', label: '关闭', desc: '不自动后推' },
-    { id: 'gentle', label: '温和', desc: '仅后推低优先级内容' },
-    { id: 'aggressive', label: '积极', desc: '更多内容被后推以控制负载' }
-  ];
+  let POSTPONE_OPTIONS = $derived([
+    { id: 'off', label: t('irSettings.postponeOffLabel'), desc: t('irSettings.postponeOffDesc') },
+    { id: 'gentle', label: t('irSettings.postponeGentleLabel'), desc: t('irSettings.postponeGentleDesc') },
+    { id: 'aggressive', label: t('irSettings.postponeAggressiveLabel'), desc: t('irSettings.postponeAggressiveDesc') }
+  ]);
   
   // v3.1 默认 Callout 类型权重配置
   const DEFAULT_CALLOUT_TYPES: CalloutTypeWeight[] = [
@@ -83,9 +87,6 @@
   let { plugin }: Props = $props();
   let settings = $state(plugin.settings);
   
-  // 文件夹选择器状态
-  let showFolderModal = $state(false);
-  
   // 确保 incrementalReading 设置存在
   $effect(() => {
     if (!settings.incrementalReading) {
@@ -105,25 +106,6 @@
 } catch (error) {
       logger.error('保存设置失败:', error);
 }
-  }
-
-  // ============================================
-  // 导入设置处理函数
-  // ============================================
-
-  // 处理导入文件夹变更
-  function handleImportFolderChange(folderPath: string) {
-    if (!settings.incrementalReading) {
-      settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
-    }
-    settings.incrementalReading.importFolder = folderPath;
-    saveSettings();
-    showFolderModal = false;
-  }
-
-  // 打开文件夹选择器
-  function openFolderPicker() {
-    showFolderModal = true;
   }
 
   // ============================================
@@ -162,18 +144,6 @@
         settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
       }
       settings.incrementalReading.dailyReviewLimit = value;
-      saveSettings();
-    }
-  }
-
-  // 处理默认拆分级别变更
-  function handleDefaultSplitLevelChange(event: Event) {
-    const value = parseInt((event.target as HTMLInputElement).value, 10);
-    if (!isNaN(value) && value >= 1 && value <= 6) {
-      if (!settings.incrementalReading) {
-        settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
-      }
-      settings.incrementalReading.defaultSplitLevel = value;
       saveSettings();
     }
   }
@@ -494,47 +464,16 @@
 </script>
 
 <div class="weave-settings settings-section incremental-reading-settings">
-  <!-- 导入设置 -->
-  <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-blue">导入设置</h4>
-    
-    <div class="group-content">
-      <!-- 导入材料存储文件夹 -->
-      <div class="row">
-        <div class="label-with-desc">
-          <label for="importFolder">导入材料存储文件夹</label>
-          <p class="desc">导入的文件将复制保存到此文件夹，原文件保持不变</p>
-        </div>
-        <div class="folder-input-group">
-          <input
-            id="importFolder"
-            type="text"
-            value={resolveIRImportFolder(settings.incrementalReading?.importFolder, plugin.settings?.weaveParentFolder)}
-            class="modern-input folder-input"
-            readonly
-          />
-          <button 
-            class="folder-select-btn"
-            onclick={openFolderPicker}
-            type="button"
-          >
-            选择
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- 牌组调度设置 -->
   <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-amber">牌组调度</h4>
+    <h4 class="group-title with-accent-bar accent-amber">{t('irSettings.scheduleTitle')}</h4>
     
     <div class="group-content">
       <!-- 每日新块上限 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irDailyNewLimit">每日新块上限</label>
-          <p class="desc">每天学习的新内容块数量上限</p>
+          <label for="irDailyNewLimit">{t('irSettings.dailyNewLabel')}</label>
+          <p class="desc">{t('irSettings.dailyNewDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -554,8 +493,8 @@
       <!-- 每日复习上限 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irDailyReviewLimit">每日复习上限</label>
-          <p class="desc">每天复习的内容块数量上限</p>
+          <label for="irDailyReviewLimit">{t('irSettings.dailyReviewLabel')}</label>
+          <p class="desc">{t('irSettings.dailyReviewDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -575,8 +514,8 @@
       <!-- 待读天数（统一用于统计和提前阅读范围） -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irLearnAheadDays">待读天数</label>
-          <p class="desc">统计N天内到期的内容块显示为"待读"，可提前阅读</p>
+          <label for="irLearnAheadDays">{t('irSettings.learnAheadLabel')}</label>
+          <p class="desc">{t('irSettings.learnAheadDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -589,15 +528,15 @@
             class="modern-slider"
             oninput={handleLearnAheadDaysChange}
           />
-          <span class="slider-value">{settings.incrementalReading?.learnAheadDays ?? 3}天</span>
+          <span class="slider-value">{settings.incrementalReading?.learnAheadDays ?? 3}{t('irSettings.unitDays')}</span>
         </div>
       </div>
 
       <!-- 默认间隔因子 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irIntervalFactor">间隔增长因子</label>
-          <p class="desc">每次复习后间隔天数的增长倍数</p>
+          <label for="irIntervalFactor">{t('irSettings.intervalFactorLabel')}</label>
+          <p class="desc">{t('irSettings.intervalFactorDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -617,8 +556,8 @@
       <!-- 复习阈值 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irReviewThreshold">复习阈值（天）</label>
-          <p class="desc">间隔达到此天数后进入复习状态</p>
+          <label for="irReviewThreshold">{t('irSettings.reviewThresholdLabel')}</label>
+          <p class="desc">{t('irSettings.reviewThresholdDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -631,15 +570,15 @@
             class="modern-slider"
             oninput={handleReviewThresholdChange}
           />
-          <span class="slider-value">{settings.incrementalReading?.reviewThreshold ?? 7}天</span>
+          <span class="slider-value">{settings.incrementalReading?.reviewThreshold ?? 7}{t('irSettings.unitDays')}</span>
         </div>
       </div>
 
       <!-- 最大间隔 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irMaxInterval">最大间隔（天）</label>
-          <p class="desc">复习间隔的上限天数</p>
+          <label for="irMaxInterval">{t('irSettings.maxIntervalLabel')}</label>
+          <p class="desc">{t('irSettings.maxIntervalDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -652,35 +591,7 @@
             class="modern-slider"
             oninput={handleMaxIntervalChange}
           />
-          <span class="slider-value">{settings.incrementalReading?.maxInterval ?? 365}天</span>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- 内容拆分设置 -->
-  <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-cyan">内容拆分</h4>
-    
-    <div class="group-content">
-      <!-- 默认拆分级别 -->
-      <div class="row">
-        <div class="label-with-desc">
-          <label for="irDefaultSplitLevel">默认拆分级别</label>
-          <p class="desc">导入文件时按此级别的标题拆分（1-6对应#到######）</p>
-        </div>
-        <div class="slider-container">
-          <input
-            id="irDefaultSplitLevel"
-            type="range"
-            min="1"
-            max="6"
-            step="1"
-            value={settings.incrementalReading?.defaultSplitLevel ?? 2}
-            class="modern-slider"
-            oninput={handleDefaultSplitLevelChange}
-          />
-          <span class="slider-value">H{settings.incrementalReading?.defaultSplitLevel ?? 2}</span>
+          <span class="slider-value">{settings.incrementalReading?.maxInterval ?? 365}{t('irSettings.unitDays')}</span>
         </div>
       </div>
     </div>
@@ -688,42 +599,44 @@
 
   <!-- v3.0 调度策略设置 -->
   <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-purple">调度策略 <span class="badge">v3.0</span></h4>
+    <h4 class="group-title with-accent-bar accent-purple">{t('irSettings.strategyTitle')} <span class="badge">v3.0</span></h4>
     
     <div class="group-content">
       <!-- 调度策略选择 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irScheduleStrategy">调度策略</label>
-          <p class="desc">选择适合您阅读习惯的调度模式</p>
+          <label for="irScheduleStrategy">{t('irSettings.strategyLabel')}</label>
+          <p class="desc">{t('irSettings.strategyDesc')}</p>
         </div>
-        <ObsidianDropdown
-          options={STRATEGY_OPTIONS.map(opt => ({ id: opt.id, label: opt.label, description: opt.desc }))}
-          value={settings.incrementalReading?.scheduleStrategy ?? 'processing'}
-          onchange={(value) => {
-            if (!settings.incrementalReading) {
-              settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
-            }
-            settings.incrementalReading.scheduleStrategy = value as 'processing' | 'reading-list';
-            saveSettings();
-          }}
-        />
+        <div class="ir-dropdown-compact">
+          <ObsidianDropdown
+            options={STRATEGY_OPTIONS.map(opt => ({ id: opt.id, label: opt.label, description: opt.desc }))}
+            value={settings.incrementalReading?.scheduleStrategy ?? 'processing'}
+            onchange={(value) => {
+              if (!settings.incrementalReading) {
+                settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
+              }
+              settings.incrementalReading.scheduleStrategy = value as 'processing' | 'reading-list';
+              saveSettings();
+            }}
+          />
+        </div>
       </div>
       
       <!-- 策略说明 -->
       <div class="strategy-hint">
         {#if settings.incrementalReading?.scheduleStrategy === 'reading-list'}
-          阅读清单模式：每个内容块每天最多出现1次，适合轻度浏览和广泛阅读
+          {t('irSettings.strategyHintReadingList')}
         {:else}
-          加工流模式：同日可多次回访同一内容，适合深度处理、摘录和制卡
+          {t('irSettings.strategyHintProcessing')}
         {/if}
       </div>
 
       <!-- 每日时间预算 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irTimeBudget">每日时间预算</label>
-          <p class="desc">每天计划用于增量阅读的时间</p>
+          <label for="irTimeBudget">{t('irSettings.timeBudgetLabel')}</label>
+          <p class="desc">{t('irSettings.timeBudgetDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -736,7 +649,7 @@
             class="modern-slider"
             oninput={handleTimeBudgetChange}
           />
-          <span class="slider-value">{settings.incrementalReading?.dailyTimeBudgetMinutes ?? 40}分钟</span>
+          <span class="slider-value">{settings.incrementalReading?.dailyTimeBudgetMinutes ?? 40}{t('irSettings.unitMinutes')}</span>
         </div>
       </div>
 
@@ -744,8 +657,8 @@
       {#if settings.incrementalReading?.scheduleStrategy !== 'reading-list'}
       <div class="row">
         <div class="label-with-desc">
-          <label for="irMaxAppearances">同块每日上限</label>
-          <p class="desc">同一内容块每天最多出现的次数（防刷屏）</p>
+          <label for="irMaxAppearances">{t('irSettings.maxAppearancesLabel')}</label>
+          <p class="desc">{t('irSettings.maxAppearancesDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -758,7 +671,7 @@
             class="modern-slider"
             oninput={handleMaxAppearancesChange}
           />
-          <span class="slider-value">{settings.incrementalReading?.maxAppearancesPerDay ?? 2}次</span>
+          <span class="slider-value">{settings.incrementalReading?.maxAppearancesPerDay ?? 2}{t('irSettings.unitTimes')}</span>
         </div>
       </div>
       {/if}
@@ -767,14 +680,14 @@
 
   <!-- v3.0 高级调度设置 -->
   <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-rose">高级调度</h4>
+    <h4 class="group-title with-accent-bar accent-rose">{t('irSettings.advancedTitle')}</h4>
     
     <div class="group-content">
       <!-- 启用标签组先验 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irTagGroupPrior">启用标签组先验</label>
-          <p class="desc">根据材料类型自动调整间隔增长因子</p>
+          <label for="irTagGroupPrior">{t('irSettings.tagGroupPriorLabel')}</label>
+          <p class="desc">{t('irSettings.tagGroupPriorDesc')}</p>
         </div>
         <label class="modern-switch">
           <input
@@ -787,77 +700,83 @@
         </label>
       </div>
 
-      <!-- 🆕 v3.0 标签组管理器（仅在启用时显示） -->
+      <!-- 标签组管理器（仅在启用时显示） -->
       {#if settings.incrementalReading?.enableTagGroupPrior !== false}
         <IRTagGroupManager {plugin} />
 
         <!-- 标签组自动跟随 -->
         <div class="row">
           <div class="label-with-desc">
-            <label for="irTagGroupFollowMode">标签组自动跟随</label>
-            <p class="desc">文档标签变化后，自动检测并切换到匹配的标签组</p>
+            <label for="irTagGroupFollowMode">{t('irSettings.tagGroupFollowLabel')}</label>
+            <p class="desc">{t('irSettings.tagGroupFollowDesc')}</p>
           </div>
-          <ObsidianDropdown
-            options={[
-              { id: 'off', label: '关闭', description: '导入时确定后不再变化' },
-              { id: 'ask', label: '询问', description: '检测到变化时通知确认' },
-              { id: 'auto', label: '自动', description: '静默自动切换标签组' }
-            ]}
-            value={settings.incrementalReading?.tagGroupFollowMode ?? 'ask'}
-            onchange={(value) => {
-              if (!settings.incrementalReading) {
-                settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
-              }
-              settings.incrementalReading.tagGroupFollowMode = value as 'off' | 'ask' | 'auto';
-              saveSettings();
-            }}
-          />
+          <div class="ir-dropdown-compact">
+            <ObsidianDropdown
+              options={[
+                { id: 'off', label: t('irSettings.followOff'), description: t('irSettings.followOffDesc') },
+                { id: 'ask', label: t('irSettings.followAsk'), description: t('irSettings.followAskDesc') },
+                { id: 'auto', label: t('irSettings.followAuto'), description: t('irSettings.followAutoDesc') }
+              ]}
+              value={settings.incrementalReading?.tagGroupFollowMode ?? 'ask'}
+              onchange={(value) => {
+                if (!settings.incrementalReading) {
+                  settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
+                }
+                settings.incrementalReading.tagGroupFollowMode = value as 'off' | 'ask' | 'auto';
+                saveSettings();
+              }}
+            />
+          </div>
         </div>
       {/if}
 
       <!-- 防沉底强度 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irAgingStrength">防沉底强度</label>
-          <p class="desc">长期未读内容获得额外优先级提升的力度</p>
+          <label for="irAgingStrength">{t('irSettings.agingStrengthLabel')}</label>
+          <p class="desc">{t('irSettings.agingStrengthDesc')}</p>
         </div>
-        <ObsidianDropdown
-          options={AGING_OPTIONS.map(opt => ({ id: opt.id, label: opt.label, description: opt.desc }))}
-          value={settings.incrementalReading?.agingStrength ?? 'low'}
-          onchange={(value) => {
-            if (!settings.incrementalReading) {
-              settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
-            }
-            settings.incrementalReading.agingStrength = value as 'low' | 'medium' | 'high';
-            saveSettings();
-          }}
-        />
+        <div class="ir-dropdown-compact">
+          <ObsidianDropdown
+            options={AGING_OPTIONS.map(opt => ({ id: opt.id, label: opt.label, description: opt.desc }))}
+            value={settings.incrementalReading?.agingStrength ?? 'low'}
+            onchange={(value) => {
+              if (!settings.incrementalReading) {
+                settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
+              }
+              settings.incrementalReading.agingStrength = value as 'low' | 'medium' | 'high';
+              saveSettings();
+            }}
+          />
+        </div>
       </div>
 
       <!-- 自动后推策略 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irPostponeStrategy">过载自动后推</label>
-          <p class="desc">到期内容过多时自动后推低优先级内容</p>
+          <label for="irPostponeStrategy">{t('irSettings.postponeLabel')}</label>
+          <p class="desc">{t('irSettings.postponeDesc')}</p>
         </div>
-        <ObsidianDropdown
-          options={POSTPONE_OPTIONS.map(opt => ({ id: opt.id, label: opt.label, description: opt.desc }))}
-          value={settings.incrementalReading?.autoPostponeStrategy ?? 'gentle'}
-          onchange={(value) => {
-            if (!settings.incrementalReading) {
-              settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
-            }
-            settings.incrementalReading.autoPostponeStrategy = value as 'off' | 'gentle' | 'aggressive';
-            saveSettings();
-          }}
-        />
+        <div class="ir-dropdown-compact">
+          <ObsidianDropdown
+            options={POSTPONE_OPTIONS.map(opt => ({ id: opt.id, label: opt.label, description: opt.desc }))}
+            value={settings.incrementalReading?.autoPostponeStrategy ?? 'gentle'}
+            onchange={(value) => {
+              if (!settings.incrementalReading) {
+                settings.incrementalReading = { ...DEFAULT_IR_SETTINGS };
+              }
+              settings.incrementalReading.autoPostponeStrategy = value as 'off' | 'gentle' | 'aggressive';
+              saveSettings();
+            }}
+          />
+        </div>
       </div>
 
       <!-- 优先级半衰期 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irPriorityHalfLife">优先级平滑半衰期</label>
-          <p class="desc">优先级变化的平滑程度（天数越大越平滑）</p>
+          <label for="irPriorityHalfLife">{t('irSettings.priorityHalfLifeLabel')}</label>
+          <p class="desc">{t('irSettings.priorityHalfLifeDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -870,7 +789,7 @@
             class="modern-slider"
             oninput={handlePriorityHalfLifeChange}
           />
-          <span class="slider-value">{settings.incrementalReading?.priorityHalfLifeDays ?? 7}天</span>
+          <span class="slider-value">{settings.incrementalReading?.priorityHalfLifeDays ?? 7}{t('irSettings.unitDays')}</span>
         </div>
       </div>
     </div>
@@ -878,14 +797,14 @@
 
   <!-- 交错学习设置 -->
   <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-green">交错学习</h4>
+    <h4 class="group-title with-accent-bar accent-green">{t('irSettings.interleaveTitle')}</h4>
     
     <div class="group-content">
       <!-- 启用交错学习 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irInterleaveMode">启用交错学习</label>
-          <p class="desc">混合不同牌组/主题的内容块，提升学习效果</p>
+          <label for="irInterleaveMode">{t('irSettings.interleaveModeLabel')}</label>
+          <p class="desc">{t('irSettings.interleaveModeDesc')}</p>
         </div>
         <label class="modern-switch">
           <input
@@ -902,8 +821,8 @@
       {#if settings.incrementalReading?.interleaveMode !== false}
       <div class="row">
         <div class="label-with-desc">
-          <label for="irMaxConsecutive">最大连续同主题数</label>
-          <p class="desc">超过此数量后强制切换到其他主题</p>
+          <label for="irMaxConsecutive">{t('irSettings.maxConsecutiveLabel')}</label>
+          <p class="desc">{t('irSettings.maxConsecutiveDesc')}</p>
         </div>
         <div class="slider-container">
           <input
@@ -916,7 +835,7 @@
             class="modern-slider"
             oninput={handleMaxConsecutiveChange}
           />
-          <span class="slider-value">{settings.incrementalReading?.maxConsecutiveSameTopic ?? 3}块</span>
+          <span class="slider-value">{settings.incrementalReading?.maxConsecutiveSameTopic ?? 3}{t('irSettings.unitBlocks')}</span>
         </div>
       </div>
       {/if}
@@ -925,14 +844,14 @@
 
   <!-- v3.1 标注信号配置 -->
   <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-indigo">标注信号 <span class="badge">v3.1</span></h4>
+    <h4 class="group-title with-accent-bar accent-indigo">{t('irSettings.calloutSignalTitle')} <span class="badge">v3.1</span></h4>
     
     <div class="group-content">
       <!-- 启用标注信号 -->
       <div class="row">
         <div class="label-with-desc">
-          <label for="irCalloutSignalEnabled">启用标注信号</label>
-          <p class="desc">使用 Callout 标注影响内容块的调度优先级</p>
+          <label for="irCalloutSignalEnabled">{t('irSettings.calloutSignalLabel')}</label>
+          <p class="desc">{t('irSettings.calloutSignalDesc')}</p>
         </div>
         <label class="modern-switch">
           <input
@@ -949,8 +868,8 @@
       {#if getCalloutSignal().enabled !== false}
         <!-- 类型权重配置 -->
         <div class="callout-types-section">
-          <div class="section-label">Callout 类型权重</div>
-          <p class="section-desc">选择参与调度的标注类型并配置权重（0.5~3.0）</p>
+          <div class="section-label">{t('irSettings.calloutTypeWeightsLabel')}</div>
+          <p class="section-desc">{t('irSettings.calloutTypeWeightsDesc')}</p>
           
           <div class="callout-types-list">
             {#each getTypeWeights() as typeWeight (typeWeight.type)}
@@ -969,7 +888,7 @@
                       class="type-remove-btn"
                       onclick={() => handleRemoveCustomType(typeWeight.type)}
                       type="button"
-                      title="删除"
+                      title={t('irSettings.deleteBtn')}
                     >×</button>
                   {/if}
                 </div>
@@ -995,7 +914,7 @@
             <input
               type="text"
               class="custom-type-input"
-              placeholder="输入 Callout 类型名称"
+              placeholder={t('irSettings.calloutTypePlaceholder')}
               bind:value={newCalloutType}
               onkeydown={(e) => e.key === 'Enter' && handleAddCustomType()}
             />
@@ -1015,15 +934,15 @@
               onclick={handleAddCustomType}
               type="button"
               disabled={!newCalloutType.trim()}
-            >添加</button>
+            >{t('irSettings.addBtn')}</button>
           </div>
         </div>
 
         <!-- 最大增益 -->
         <div class="row">
           <div class="label-with-desc">
-            <label for="irMaxBoost">最大增益</label>
-            <p class="desc">标注对优先级的最大修正幅度（1.0~2.0）</p>
+            <label for="irMaxBoost">{t('irSettings.maxBoostLabel')}</label>
+            <p class="desc">{t('irSettings.maxBoostDesc')}</p>
           </div>
           <div class="slider-container">
             <input
@@ -1043,8 +962,8 @@
         <!-- 饱和参数 -->
         <div class="row">
           <div class="label-with-desc">
-            <label for="irSaturationParam">饱和速度</label>
-            <p class="desc">标注数量增益的饱和速度（越小越快饱和，防刷标注）</p>
+            <label for="irSaturationParam">{t('irSettings.saturationLabel')}</label>
+            <p class="desc">{t('irSettings.saturationDesc')}</p>
           </div>
           <div class="slider-container">
             <input
@@ -1064,8 +983,8 @@
         <!-- 最小内容阈值 -->
         <div class="row">
           <div class="label-with-desc">
-            <label for="irMinContentLength">最小内容阈值</label>
-            <p class="desc">Callout 内容少于此字符数不计入（0=不启用）</p>
+            <label for="irMinContentLength">{t('irSettings.minContentLabel')}</label>
+            <p class="desc">{t('irSettings.minContentDesc')}</p>
           </div>
           <div class="slider-container">
             <input
@@ -1078,31 +997,21 @@
               class="modern-slider"
               oninput={handleMinContentLengthChange}
             />
-            <span class="slider-value">{getCalloutSignal().minContentLength ?? 0}字</span>
+            <span class="slider-value">{getCalloutSignal().minContentLength ?? 0}{t('irSettings.unitChars')}</span>
           </div>
         </div>
 
         <!-- 算法说明 -->
         <div class="algorithm-hint">
-          <div class="hint-title">算法说明</div>
+          <div class="hint-title">{t('irSettings.algorithmHintTitle')}</div>
           <div class="hint-content">
             <code>signal = maxBoost × tanh(Σ(count × weight) / s)</code>
-            <p>前几个标注带来明显增益，随后收益递减。最终修正值限制在 [0, maxBoost] 区间内。</p>
+            <p>{t('irSettings.algorithmHintContent')}</p>
           </div>
         </div>
       {/if}
     </div>
   </div>
-
-  <!-- 文件夹选择模态窗 -->
-  {#if showFolderModal}
-    <FolderSuggestModal
-      {plugin}
-      currentFolder={resolveIRImportFolder(settings.incrementalReading?.importFolder, plugin.settings?.weaveParentFolder)}
-      onSelect={handleImportFolderChange}
-      onClose={() => showFolderModal = false}
-    />
-  {/if}
 
 </div>
 
@@ -1113,35 +1022,34 @@
     gap: 1.5rem;
   }
 
-  /* 文件夹输入组样式 */
-  .folder-input-group {
+  /* 标题与注释层级：标题更大，注释更小 */
+  .incremental-reading-settings .label-with-desc {
     display: flex;
-    gap: 0.5rem;
-    align-items: center;
-    min-width: 280px;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
   }
 
-  .folder-input {
-    flex: 1;
-    min-width: 180px;
-    background: var(--background-secondary);
-    cursor: default;
+  .incremental-reading-settings .label-with-desc > label {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--text-normal);
   }
 
-  .folder-select-btn {
-    padding: 0.4rem 0.8rem;
-    border-radius: var(--radius-s);
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    border: none;
-    cursor: pointer;
-    font-size: 0.85rem;
-    white-space: nowrap;
-    transition: background 0.15s ease;
+  .incremental-reading-settings .label-with-desc > .desc {
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--text-muted);
   }
 
-  .folder-select-btn:hover {
-    background: var(--interactive-accent-hover);
+  .incremental-reading-settings .ir-dropdown-compact {
+    flex: 0 0 220px;
+    width: 220px;
+    max-width: 100%;
+    margin-left: auto;
   }
 
   /* 蓝色强调条（导入设置） */
@@ -1160,15 +1068,6 @@
 
   :global(.with-accent-bar.accent-amber::before) {
     background: linear-gradient(180deg, #f59e0b, #d97706);
-  }
-
-  /* 青色强调条（内容拆分） */
-  :global(.accent-cyan) {
-    --accent-color: #06b6d4;
-  }
-
-  :global(.with-accent-bar.accent-cyan::before) {
-    background: linear-gradient(180deg, #06b6d4, #0891b2);
   }
 
   /* 绿色强调条（交错学习） */
@@ -1450,5 +1349,14 @@
 
   .algorithm-hint p {
     margin: 0;
+  }
+
+  @media (max-width: 768px) {
+    .incremental-reading-settings .ir-dropdown-compact {
+      flex: 1 1 auto;
+      width: 100%;
+      max-width: 100%;
+      margin-left: 0;
+    }
   }
 </style>

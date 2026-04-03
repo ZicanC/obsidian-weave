@@ -3,17 +3,20 @@
   import type AnkiObsidianPlugin from '../../main';
   import type { DeckTagGroup } from '../../types/deck-kanban-types';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
+  import { tr } from '../../utils/i18n';
 
   interface Props {
     plugin: AnkiObsidianPlugin;
-    editingTagGroup?: DeckTagGroup; // 🆕 可选的编辑模式
+    editingTagGroup?: DeckTagGroup; // 可选的编辑模式
     onSave: (tagGroup: DeckTagGroup) => void;
     onCancel: () => void;
   }
 
   let { plugin, editingTagGroup, onSave, onCancel }: Props = $props();
 
-  // 🆕 初始化时加载编辑数据
+  let t = $derived($tr);
+
+  // 初始化时加载编辑数据
   let name = $state(editingTagGroup?.name || '');
   let tags = $state<string[]>(editingTagGroup?.tags || []);
   let tagInput = $state('');
@@ -48,7 +51,7 @@
   function addTag(tag: string) {
     if (!tag.trim()) return;
     if (tags.includes(tag)) {
-      new Notice('标签已存在');
+      new Notice(t('decks.tagGroupCreator.tagExists'));
       return;
     }
     tags = [...tags, tag.trim()];
@@ -78,30 +81,49 @@
   // 保存
   function handleSave() {
     if (!name.trim()) {
-      new Notice('请输入标签组名称');
+      new Notice(t('decks.tagGroupCreator.nameRequired'));
       return;
     }
     if (tags.length === 0) {
-      new Notice('请至少添加一个标签');
+      new Notice(t('decks.tagGroupCreator.tagRequired'));
       return;
     }
 
     const savedTagGroup: DeckTagGroup = {
-      id: editingTagGroup?.id || `tag-group-${Date.now()}`, // 🆕 编辑模式保留原ID
+      id: editingTagGroup?.id || `tag-group-${Date.now()}`, // 编辑模式保留原 ID
       name: name.trim(),
       tags,
-      icon: editingTagGroup?.icon || '📦', // 🆕 保留原图标
-      color: editingTagGroup?.color || '#3b82f6' // 🆕 保留原颜色
+      icon: editingTagGroup?.icon || '📦', // 保留原图标
+      color: editingTagGroup?.color || '#3b82f6' // 保留原颜色
     };
 
     onSave(savedTagGroup);
   }
+
+  function handleOverlayClick(event: MouseEvent) {
+    if (event.target === event.currentTarget) {
+      onCancel();
+    }
+  }
+
+  function handleOverlayKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      onCancel();
+    }
+  }
 </script>
 
-<div class="quick-creator-overlay" onclick={(e) => { if (e.target === e.currentTarget) onCancel(); }}>
-  <div class="quick-creator-dialog" onclick={(e) => e.stopPropagation()}>
+<div
+  class="quick-creator-overlay"
+  onclick={handleOverlayClick}
+  onkeydown={handleOverlayKeydown}
+  role="dialog"
+  aria-modal="true"
+  tabindex="-1"
+>
+  <div class="quick-creator-dialog">
     <div class="creator-header">
-      <h3>{editingTagGroup ? '编辑标签组' : '创建标签组'}</h3>
+      <h3>{editingTagGroup ? t('decks.tagGroupCreator.titleEdit') : t('decks.tagGroupCreator.titleCreate')}</h3>
       <button class="close-btn" onclick={onCancel}>
         <EnhancedIcon name="x" size={18} />
       </button>
@@ -109,18 +131,18 @@
 
     <div class="creator-body">
       <div class="form-field">
-        <label>标签组名称</label>
+        <label for="quick-tag-group-name">{t('decks.tagGroupCreator.nameLabel')}</label>
         <input
+          id="quick-tag-group-name"
           type="text"
           class="text-input"
-          placeholder="例如：循环系统、前端开发"
+          placeholder={t('decks.tagGroupCreator.namePlaceholder')}
           bind:value={name}
-          autofocus
         />
       </div>
 
       <div class="form-field">
-        <label>包含的标签</label>
+        <label for="quick-tag-group-tag-input">{t('decks.tagGroupCreator.tagsLabel')}</label>
         <div class="tag-container">
           {#if tags.length > 0}
             <div class="tag-chips">
@@ -137,9 +159,10 @@
 
           <div class="input-wrapper">
             <input
+              id="quick-tag-group-tag-input"
               type="text"
               class="tag-input"
-              placeholder="输入标签后按回车添加"
+              placeholder={t('decks.tagGroupCreator.tagInputPlaceholder')}
               bind:value={tagInput}
               onkeydown={handleTagInput}
               onfocus={() => showSuggestions = true}
@@ -149,21 +172,21 @@
             {#if showSuggestions && filteredTags.length > 0}
               <div class="suggestions">
                 {#each filteredTags as tag}
-                  <div class="suggestion-item" onclick={() => addTag(tag)}>
+                  <button type="button" class="suggestion-item" onclick={() => addTag(tag)}>
                     {tag}
-                  </div>
+                  </button>
                 {/each}
               </div>
             {/if}
           </div>
         </div>
-        <div class="hint">从现有牌组标签中选择，或输入新标签</div>
+        <div class="hint">{t('decks.tagGroupCreator.tagHint')}</div>
       </div>
     </div>
 
     <div class="creator-footer">
-      <button class="btn" onclick={onCancel}>取消</button>
-      <button class="btn primary" onclick={handleSave}>{editingTagGroup ? '保存' : '创建'}</button>
+      <button class="btn" onclick={onCancel}>{t('decks.tagGroupCreator.cancel')}</button>
+      <button class="btn primary" onclick={handleSave}>{editingTagGroup ? t('decks.tagGroupCreator.save') : t('decks.tagGroupCreator.create')}</button>
     </div>
   </div>
 </div>

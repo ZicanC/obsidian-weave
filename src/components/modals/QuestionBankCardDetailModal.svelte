@@ -8,7 +8,6 @@
   import { Platform } from 'obsidian';
   import type { WeavePlugin } from '../../main';
   import type { Card } from '../../data/types';
-  import ResizableModal from '../ui/ResizableModal.svelte';
   import TabNavigation from '../ui/TabNavigation.svelte';
   import QuestionBankCardInfoTab from './tabs/QuestionBankCardInfoTab.svelte';
   import TestStatsTab from './tabs/TestStatsTab.svelte';
@@ -22,12 +21,6 @@
   let t = $derived($tr);
 
   interface Props {
-    /** 是否显示模态窗 */
-    open: boolean;
-
-    /** 关闭回调 */
-    onClose: () => void;
-
     /** 卡片数据 */
     card: Card;
 
@@ -39,8 +32,6 @@
   }
 
   let {
-    open = $bindable(),
-    onClose,
     card,
     plugin,
     allDecks
@@ -68,7 +59,7 @@
 
   // 监听模态窗打开状态，重新读取最新卡片数据
   $effect(() => {
-    if (open && card.uuid) {
+    if (card.uuid) {
       // 异步刷新卡片数据
       (async () => {
         try {
@@ -117,46 +108,27 @@
   function handleTabChange(tabId: string) {
     activeTab = tabId;
   }
-
-  // 处理关闭
-  function handleClose() {
-    if (typeof onClose === 'function') {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-<ResizableModal
-  bind:open
-  {plugin}
-  title="测试卡片详情"
-  onClose={handleClose}
-  enableTransparentMask={false}
-  enableWindowDrag={false}
-  accentColor="blue"
->
-  <div class="question-bank-detail-modal" class:mobile={isMobile}>
-    <!-- Tab导航 -->
-    <div class="modal-tabs" class:mobile={isMobile}>
-      <TabNavigation
-        {tabs}
-        {activeTab}
-        onTabChange={handleTabChange}
-      />
-    </div>
-
-    <!-- Tab内容 -->
-    <div class="modal-tab-content" class:mobile={isMobile}>
-      {#if activeTab === 'info'}
-        <QuestionBankCardInfoTab card={currentCard} {plugin} {deckName} {isMobile} />
-      {:else if activeTab === 'stats'}
-        <TestStatsTab card={currentCard} {isMobile} />
-      {/if}
-    </div>
+<div class="question-bank-detail-modal" class:mobile={isMobile}>
+  <!-- Tab导航 -->
+  <div class="modal-tabs" class:mobile={isMobile}>
+    <TabNavigation
+      {tabs}
+      {activeTab}
+      onTabChange={handleTabChange}
+    />
   </div>
-</ResizableModal>
-{/if}
+
+  <!-- Tab内容 -->
+  <div class="modal-tab-content" class:mobile={isMobile}>
+    {#if activeTab === 'info'}
+      <QuestionBankCardInfoTab card={currentCard} {plugin} {deckName} {isMobile} />
+    {:else if activeTab === 'stats'}
+      <TestStatsTab card={currentCard} {isMobile} />
+    {/if}
+  </div>
+</div>
 
 <style>
   .question-bank-detail-modal {

@@ -1,11 +1,14 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { Card } from "../../data/types";
+  import { CardType } from "../../data/types";
   import type { EmbeddableEditorManager } from "../../services/editor/EmbeddableEditorManager";
   import { cardToMarkdown, markdownToCard } from "../../utils/card-markdown-serializer";
+  import { detectClozeModeFromContent, hasClozeSyntax, setClozeModeInContent, type ClozeMode } from "../../utils/cloze-mode";
   import type { WeaveDataStorage } from "../../data/storage";
   import { logger } from "../../utils/logger";
   import { Notice, Platform } from "obsidian";
+  import { tr } from '../../utils/i18n';
 
   interface Props {
     card: Card | null;
@@ -21,8 +24,6 @@
     onEditComplete: (updatedCard: Card) => void | Promise<void>;
     onEditCancel: () => void;
     onToggleCloze?: () => void;
-    onKeyboardStateChange?: (isVisible: boolean) => void;  // 键盘状态变化回调
-    keyboardVisible?: boolean;
   }
 
   let {
@@ -38,57 +39,111 @@
     statsCollapsed,
     onEditComplete,
     onEditCancel,
-    onToggleCloze,
-    onKeyboardStateChange,
-    keyboardVisible
+    onToggleCloze
   }: Props = $props();
+
+  function getEditableSourceContent(targetCard: Card | null | undefined): string {
+    if (!targetCard) return '';
+    return tempFileUnavailable ? cardToMarkdown(targetCard) : (targetCard.content || '');
+  }
+
+  let t = $derived($tr);
 
   let inlineEditorContainer: HTMLDivElement | null = $state(null);
   let editorHostEl: HTMLDivElement | null = $state(null);
   let editorInitialized = $state(false);
   let editCleanupFn: (() => void) | null = $state(null);
   let plainTextEditorEl: HTMLTextAreaElement | null = $state(null);
+  let currentContent = $state(getEditableSourceContent(card));
+  let isClozeModeUpdating = $state(false);
 
   const localEditorSessionId = `weave-study-session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  const supportsClozeModeToggle = $derived.by(() => {
+    const content = currentContent || card?.content || '';
+    const isProgressiveCard = card?.type === CardType.ProgressiveParent || card?.type === CardType.ProgressiveChild;
+    return !!card && !isProgressiveCard && (hasClozeSyntax(content) || card?.type === CardType.Cloze);
+  });
+
+  const currentClozeMode = $derived.by(() => {
+    return detectClozeModeFromContent(currentContent || card?.content || '');
+  });
+
+  const isClozeModeToggleDisabled = $derived.by(() => {
+    return !card || isClozeModeUpdating || (!tempFileUnavailable && !editorInitialized);
+  });
   
   // 移动端键盘管理
   let isKeyboardVisible = $state(false);
   let keyboardCleanup: (() => void) | null = null;
-  let lastExternalKeyboardVisible: boolean | null = null;
-
-  $effect(() => {
-    if (!Platform.isMobile) {
-      return;
-    }
-
-    if (typeof keyboardVisible !== 'boolean') {
-      return;
-    }
-
-    if (lastExternalKeyboardVisible === null) {
-      lastExternalKeyboardVisible = keyboardVisible;
-      isKeyboardVisible = keyboardVisible;
-      return;
-    }
-
-    if (keyboardVisible !== lastExternalKeyboardVisible) {
-      lastExternalKeyboardVisible = keyboardVisible;
-      isKeyboardVisible = keyboardVisible;
-      onKeyboardStateChange?.(keyboardVisible);
-    }
-  });
 
   // 键盘状态变化处理（通知父组件）
   //  高度计算已移到 StudyInterface，这里只负责通知状态变化
   function handleKeyboardStateChange(visible: boolean, viewportHeight?: number, viewportOffsetTop?: number): void {
     isKeyboardVisible = visible;
-    onKeyboardStateChange?.(visible);
     
     logger.debug('[CardEditorContainer] 📱 键盘状态变化:', {
       visible,
       viewportHeight,
       viewportOffsetTop
     });
+  }
+
+  function handleEditorContentChange(content: string): void {
+    currentContent = content;
+  }
+
+  async function updateEditorContent(nextContent: string): Promise<void> {
+    currentContent = nextContent;
+
+    if (tempFileUnavailable) {
+      if (plainTextEditorEl) {
+        plainTextEditorEl.value = nextContent;
+      }
+      return;
+    }
+
+    if (!editorPoolManager || !editorInitialized) {
+      throw new Error('编辑器尚未初始化');
+    }
+
+    const sessionCardId = editorSessionId || localEditorSessionId;
+    const editorContainer = editorHostEl as HTMLElement | null;
+    if (!editorContainer) {
+      throw new Error('编辑器容器未找到');
+    }
+
+    const updateResult = await editorPoolManager.updateSessionContent(
+      sessionCardId,
+      nextContent,
+      editorContainer
+    );
+
+    if (!updateResult.success) {
+      throw new Error(updateResult.error || '更新编辑器内容失败');
+    }
+  }
+
+  async function handleClozeModeToggle(mode: ClozeMode): Promise<void> {
+    if (!card) return;
+
+    const content = currentContent || card.content || '';
+    const nextContent = setClozeModeInContent(content, mode);
+
+    if (nextContent === content) {
+      return;
+    }
+
+    try {
+      isClozeModeUpdating = true;
+      await updateEditorContent(nextContent);
+      new Notice(mode === 'input' ? '已切换为输入模式' : '已切换为显示模式');
+    } catch (error) {
+      logger.error('[CardEditorContainer] 切换挖空模式失败:', error);
+      new Notice(error instanceof Error ? error.message : '切换挖空模式失败');
+    } finally {
+      isClozeModeUpdating = false;
+    }
   }
 
   //  监听 Visual Viewport 变化（核心修复）
@@ -159,7 +214,7 @@
         return;
       }
 
-      // 🆕 编辑器复用逻辑
+      // 编辑器复用逻辑
       if (editorInitialized) {
         // 后续进入编辑：复用编辑器，只更新内容
         logger.debug('[CardEditorContainer]',' 复用编辑器实例，更新卡片内容:', card.uuid);
@@ -176,10 +231,11 @@
 
         if (!updateResult.success) {
           logger.error('[CardEditorContainer] 更新编辑器内容失败:', updateResult.error);
-          new Notice('更新编辑器内容失败');
+          new Notice(t('study.editor.updateFailed'));
           return;
         }
 
+        currentContent = getEditableSourceContent(card);
         logger.debug('[CardEditorContainer]',' ✅ 编辑器内容已更新');
 
       } else {
@@ -187,7 +243,7 @@
         logger.debug('[CardEditorContainer]',' 首次创建编辑器实例');
         
         // 清空挂载点
-        editorContainer.innerHTML = '';
+        editorContainer.replaceChildren();
 
         // 创建编辑会话（使用固定的会话 cardId）
         const sessionResult = await editorPoolManager.createEditorSession(card, {
@@ -198,7 +254,7 @@
         if (!sessionResult.success) {
           logger.error('Failed to create editor session:', sessionResult.error);
           onEditCancel();
-          new Notice('编辑器会话创建失败');
+          new Notice(t('study.editor.sessionCreateFailed'));
           return;
         }
 
@@ -207,13 +263,14 @@
           editorContainer,
           sessionCardId,
           handleEditorSave,
-          handleEditorCancel
+          handleEditorCancel,
+          handleEditorContentChange
         );
 
         if (!editorResult.success) {
           logger.error('Failed to create embedded editor:', editorResult.error);
           onEditCancel();
-          new Notice('编辑器创建失败');
+          new Notice(t('study.editor.editorCreateFailed'));
           return;
         }
 
@@ -225,13 +282,14 @@
         
         // 标记编辑器已初始化
         editorInitialized = true;
+        currentContent = getEditableSourceContent(card);
 
         logger.debug('[CardEditorContainer]',' ✅ 编辑器创建成功');
       }
 
       logger.debug('[CardEditorContainer]',' 编辑模式启动成功，当前卡片:', card.uuid);
       
-      //  关键修复：移动端不调用 applyAdaptiveHeight，由 visualViewport 监听处理高度
+      // 移动端不调用 applyAdaptiveHeight，由 visualViewport 监听处理高度
       // 桌面端仍然需要调用以适应窗口大小
       if (!Platform.isMobile) {
         setTimeout(() => {
@@ -242,7 +300,7 @@
     } catch (error) {
       logger.error('[CardEditorContainer] 进入编辑模式失败:', error);
       onEditCancel();
-      new Notice('进入编辑模式失败');
+      new Notice(t('study.editor.enterEditFailed'));
     }
   }
 
@@ -300,7 +358,7 @@
     try {
       const sessionCardId = editorSessionId || localEditorSessionId;
 
-      // 🆕 使用学习会话模式保存
+      // 使用学习会话模式保存
       const result = await editorPoolManager.finishEditing(sessionCardId, true, {
         isStudySession: true,
         targetCardId: realCardId || card.uuid //  优先使用真实卡片UUID
@@ -308,7 +366,7 @@
 
       if (result.success && result.updatedCard) {
         logger.debug('[CardEditorContainer]',' ✅ 卡片保存成功:', result.updatedCard.uuid);
-        new Notice('卡片已保存');
+        new Notice(t('study.editor.cardSaved'));
 
         //  学习会话模式：不清理编辑器（复用）
         // editCleanupFn 保留，编辑器实例保持活跃
@@ -318,14 +376,14 @@
       } else {
         //  保存失败：停留在编辑模式，不清理资源
         logger.error('[CardEditorContainer] 卡片保存失败:', result.error);
-        new Notice('保存失败: ' + (result.error || '未知错误'));
+        new Notice(t('study.editor.saveFailed', { error: result.error || t('study.editor.unknownError') }));
         // 不执行任何清理和状态切换，用户可以继续编辑或重试
       }
 
     } catch (error) {
       //  异常情况：停留在编辑模式
       logger.error('[CardEditorContainer] 保存过程异常:', error);
-      new Notice('保存失败: ' + (error instanceof Error ? error.message : '未知错误'));
+      new Notice(t('study.editor.saveFailed', { error: error instanceof Error ? error.message : t('study.editor.unknownError') }));
       // 不执行任何清理和状态切换
     }
   }
@@ -348,7 +406,7 @@
       return;
     }
 
-    // 🆕 学习会话模式：只清空编辑器内容，不销毁实例
+    // 学习会话模式：只清空编辑器内容，不销毁实例
     if (editorInitialized) {
       const sessionCardId = editorSessionId || localEditorSessionId;
       const editorContainer = inlineEditorContainer as HTMLElement | null;
@@ -384,7 +442,7 @@
       await dataStorage.saveCard(updatedCard);
 
       logger.debug('[CardEditorContainer]','Plain editor: Card saved successfully:', updatedCard.uuid);
-      new Notice('卡片已保存');
+      new Notice(t('study.editor.cardSaved'));
 
       //  通知父组件更新卡片（支持async回调）
       await Promise.resolve(onEditComplete(updatedCard));
@@ -392,7 +450,7 @@
     } catch (error) {
       logger.error('Failed to save card from plain editor:', error);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      new Notice('保存失败: ' + errorMessage);
+      new Notice(t('study.editor.saveFailed', { error: errorMessage }));
     }
   }
 
@@ -422,7 +480,7 @@
 
   //  移动端：仅在编辑模式期间监听键盘变化（退出编辑立即清理，避免监听泄漏与状态污染）
   $effect(() => {
-    if (!Platform.isMobile || typeof keyboardVisible === 'boolean') {
+    if (!Platform.isMobile) {
       return;
     }
 
@@ -462,6 +520,7 @@
       if (editorContainer) {
         editorPoolManager.setCurrentEditingCard(card.uuid);
         editorPoolManager.updateSessionContent(sessionCardId, card.content, editorContainer);
+        currentContent = getEditableSourceContent(card);
       }
     }
   });
@@ -487,17 +546,28 @@
     bind:this={inlineEditorContainer} 
     class:cloze-deletion-mode={isClozeMode}
   >
-    {#if Platform.isMobile}
-      <button
-        class="mobile-editor-save-btn-in-editor"
-        onclick={exitEditMode}
-        aria-label="保存并返回"
-        title="保存并返回"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="20 6 9 17 4 12"></polyline>
-        </svg>
-      </button>
+    {#if false && supportsClozeModeToggle}
+      <div class="study-editor-toolbar">
+        <div class="cloze-mode-switch" role="group" aria-label="挖空模式切换">
+          <span class="cloze-mode-label">挖空模式</span>
+          <button
+            type="button"
+            class:active={currentClozeMode === 'reveal'}
+            onclick={() => handleClozeModeToggle('reveal')}
+            disabled={isClozeModeToggleDisabled}
+          >
+            显示
+          </button>
+          <button
+            type="button"
+            class:active={currentClozeMode === 'input'}
+            onclick={() => handleClozeModeToggle('input')}
+            disabled={isClozeModeToggleDisabled}
+          >
+            输入
+          </button>
+        </div>
+      </div>
     {/if}
 
     <div class="embedded-editor-host" bind:this={editorHostEl}></div>
@@ -508,20 +578,19 @@
       <div class="plain-editor-container">
         <textarea
           class="plain-text-editor"
-          value={card ? cardToMarkdown(card) : ''}
+          value={currentContent}
           bind:this={plainTextEditorEl}
-          oninput={(_e) => {
-            // 实时保存编辑内容到临时变量
-            // 这里可以添加实时预览或自动保存逻辑
+          oninput={(event) => {
+            currentContent = (event.currentTarget as HTMLTextAreaElement).value;
           }}
-          placeholder="在此编辑卡片内容..."
+          placeholder={t('study.editor.placeholder')}
         ></textarea>
         <div class="plain-editor-actions">
           <button
             class="btn-secondary"
             onclick={handleEditorCancel}
           >
-            取消
+            {t('study.editor.cancel')}
           </button>
           <button
             class="btn-primary"
@@ -531,7 +600,7 @@
               }
             }}
           >
-            保存
+            {t('study.editor.save')}
           </button>
         </div>
       </div>
@@ -561,6 +630,59 @@
     min-height: 0;
     position: relative;
     z-index: 1;
+  }
+
+  .study-editor-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    padding: 0.75rem 0.75rem 0;
+    flex-shrink: 0;
+    position: relative;
+    z-index: 2;
+    background: var(--background-primary);
+  }
+
+  .cloze-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
+    background: var(--background-secondary);
+  }
+
+  .cloze-mode-label {
+    padding: 0 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .cloze-mode-switch button {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .cloze-mode-switch button:hover:not(:disabled) {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+  }
+
+  .cloze-mode-switch button.active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+  }
+
+  .cloze-mode-switch button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   
   /*  CodeMirror编辑器填满容器 */
@@ -684,42 +806,10 @@
     border-color: var(--color-accent-hover);
   }
 
-  .mobile-editor-save-btn-in-editor {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    z-index: 5;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 36px;
-    height: 36px;
-    padding: 0;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 10px;
-    background: var(--background-primary);
-    color: var(--text-normal);
-    cursor: pointer;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-    pointer-events: auto;
-  }
-
-  .mobile-editor-save-btn-in-editor:hover,
-  .mobile-editor-save-btn-in-editor:active {
-    background: var(--background-secondary);
-  }
-
-  .mobile-editor-save-btn-in-editor svg {
-    width: 18px;
-    height: 18px;
-  }
-
   /* 桌面端不进行布局重排，移动端布局由 :global(body.is-phone) 控制 */
 
   /*  移动端编辑器样式 - 使用 position: fixed + visualViewport 动态定位 */
-  /*  核心修复：键盘弹出时，编辑器固定在可视区域内 */
+  /* 键盘弹出时，编辑器固定在可视区域内 */
   :global(body.is-mobile) .inline-editor-container,
   :global(body.is-phone) .inline-editor-container {
     /* 默认使用 flex 布局填满父容器 */
@@ -727,14 +817,21 @@
     display: flex;
     flex-direction: column;
     position: relative;
-    min-height: 200px;
-    margin: 4px !important;
-    border-radius: 8px !important;
+    min-height: 0;
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
     overflow: hidden;
+    background: var(--background-primary);
+  }
+
+  :global(body.is-mobile) .study-editor-toolbar,
+  :global(body.is-phone) .study-editor-toolbar {
+    padding: 0.5rem 0.5rem 0;
   }
 
   /*  键盘激活时：使用 flex 布局填满父容器（父容器高度已由 StudyInterface 设置为 visualViewport.height） */
-  /* 🆕 新方案：不再使用 position: fixed，让编辑器自然填满父容器 */
+  /* 不再使用 position: fixed，让编辑器自然填满父容器 */
   :global(body.is-mobile) .inline-editor-container.mobile-keyboard-active,
   :global(body.is-phone) .inline-editor-container.mobile-keyboard-active {
     /* 使用 flex 布局填满父容器 */
@@ -753,7 +850,7 @@
     /* 编辑器填满容器 - 使用 flex 而非固定高度 */
     flex: 1;
     min-height: 0 !important;
-    /*  关键修复：移除 height: 100% !important，让容器高度由 JavaScript 控制 */
+    /* 移除 height: 100% !important，让容器高度由 JavaScript 控制 */
   }
 
   :global(body.is-mobile) .inline-editor-container :global(.cm-scroller),
@@ -761,7 +858,7 @@
     /* 确保滚动区域正确 */
     overflow-y: auto !important;
     -webkit-overflow-scrolling: touch;
-    /*  关键修复：使用 flex 布局而非固定高度 */
+    /* 使用 flex 布局而非固定高度 */
     flex: 1;
     min-height: 0;
   }

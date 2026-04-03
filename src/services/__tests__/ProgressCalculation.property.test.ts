@@ -8,8 +8,6 @@
  * 
  * @module services/__tests__/ProgressCalculation.property.test
  */
-
-import { describe, it, expect } from 'vitest';
 import * as fc from 'fast-check';
 import type { ReadingProgress, AnchorRecord } from '../../types/incremental-reading-types';
 import { ANCHOR_PREFIX } from '../../types/incremental-reading-types';

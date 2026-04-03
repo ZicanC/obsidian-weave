@@ -10,6 +10,7 @@
    */
   import BottomSheetModal from '../ui/BottomSheetModal.svelte';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
+  import { tr } from '../../utils/i18n';
 
   interface MenuItem {
     id: string;
@@ -37,32 +38,34 @@
     onMenuItemClick
   }: Props = $props();
 
+  let t = $derived($tr);
+
   // 菜单分类配置
-  const menuSections: MenuSection[] = [
+  const menuSections: MenuSection[] = $derived([
     {
-      title: '功能切换',
+      title: t('study.mobileMenu.functionSwitch'),
       items: [
-        { id: 'deck-study', icon: 'graduation-cap', label: '牌组学习' },
-        { id: 'card-management', icon: 'list', label: '卡片管理' },
-        { id: 'ai-assistant', icon: 'bot', label: 'AI助手' }
+        { id: 'deck-study', icon: 'graduation-cap', label: t('study.mobileMenu.deckStudy') },
+        { id: 'card-management', icon: 'list', label: t('study.mobileMenu.cardManagement') },
+        { id: 'ai-assistant', icon: 'bot', label: t('study.mobileMenu.aiAssistant') }
       ]
     },
     {
-      title: '视图切换',
+      title: t('study.mobileMenu.viewSwitch'),
       items: [
-        { id: 'toggle-view', icon: 'refresh-cw', label: '切换视图' },
-        { id: 'new-deck', icon: 'plus', label: '新建牌组' },
-        { id: 'more-actions', icon: 'more-horizontal', label: '更多操作' }
+        { id: 'toggle-view', icon: 'refresh-cw', label: t('study.mobileMenu.toggleView') },
+        { id: 'new-deck', icon: 'plus', label: t('study.mobileMenu.newDeck') },
+        { id: 'more-actions', icon: 'more-horizontal', label: t('study.mobileMenu.moreActions') }
       ]
     },
     {
-      title: '设置',
+      title: t('study.mobileMenu.settingsSection'),
       items: [
-        { id: 'note-type-config', icon: 'file-cog', label: '笔记类型配置' },
-        { id: 'settings', icon: 'settings', label: '设置' }
+        { id: 'note-type-config', icon: 'file-cog', label: t('study.mobileMenu.noteTypeConfig') },
+        { id: 'settings', icon: 'settings', label: t('study.mobileMenu.settings') }
       ]
     }
-  ];
+  ]);
 
   function handleItemClick(itemId: string) {
     onMenuItemClick(itemId);

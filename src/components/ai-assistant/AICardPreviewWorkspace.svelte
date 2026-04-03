@@ -1,0 +1,1160 @@
+<script lang="ts">
+  import { untrack } from 'svelte';
+  import { logger } from '../../utils/logger';
+
+  import type { WeavePlugin } from '../../main';
+  import type { GeneratedCard, GenerationConfig } from '../../types/ai-types';
+  import type { Card } from '../../data/types';
+  import ObsidianIcon from '../ui/ObsidianIcon.svelte';
+  import ObsidianDropdown from '../ui/ObsidianDropdown.svelte';
+  import RegenerateDialog from './RegenerateDialog.svelte';
+  import PreviewContainer from '../preview/PreviewContainer.svelte';
+  import { CardConverter } from '../../services/ai/CardConverter';
+  import { Notice } from 'obsidian';
+  import { tr } from '../../utils/i18n';
+
+  interface Props {
+    plugin: WeavePlugin;
+    cards: GeneratedCard[];
+    config: GenerationConfig;
+    isGenerating?: boolean;
+    totalCards?: number;
+    mode?: 'test' | 'split';
+    onImport: (selectedCards: GeneratedCard[], targetDeck: string) => Promise<void>;
+  }
+
+  let {
+    plugin,
+    cards,
+    config,
+    isGenerating = false,
+    totalCards = 0,
+    mode = 'split',
+    onImport
+  }: Props = $props();
+
+  let t = $derived($tr);
+
+  let currentIndex = $state(0);
+  let selectedCardIds = $state<Set<string>>(new Set());
+  let showRegenerateDialog = $state(false);
+  let isImporting = $state(false);
+  let availableDecks = $state<Array<{ id: string; name: string }>>([]);
+  let selectedDeckId = $state('');
+  let previewCard = $state<Card | null>(null);
+  let showPreviewAnswer = $state(true);
+
+  let previousCardIds = new Set<string>();
+  let previousCardSignature = '';
+  let thumbnailLongPressTimer: number | null = null;
+  let suppressThumbnailClick = false;
+  let pressedThumbnailId = $state<string | null>(null);
+
+  let currentCard = $derived(cards[currentIndex]);
+  let selectedCount = $derived(selectedCardIds.size);
+  let isAllSelected = $derived(selectedCount === cards.length && cards.length > 0);
+  let hasCards = $derived(cards.length > 0);
+  let generatedCount = $derived(cards.length);
+  let progressPercent = $derived(
+    totalCards > 0 ? Math.min(100, Math.round((generatedCount / totalCards) * 100)) : 0
+  );
+
+  function dispatchSelectionState() {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('Weave:ai-selection-state-change', {
+      detail: {
+        selectedCount,
+        totalCount: cards.length,
+        isAllSelected,
+        hasCards: cards.length > 0
+      }
+    }));
+  }
+
+  $effect(() => {
+    if (currentCard) {
+      try {
+        previewCard = CardConverter.convertForPreview(currentCard);
+      } catch (error) {
+        logger.error('[AICardPreviewWorkspace] 卡片转换失败:', error);
+        previewCard = null;
+      }
+    } else {
+      previewCard = null;
+    }
+  });
+
+  $effect(() => {
+    const cardSignature = cards.map((card) => card.uuid).join('|');
+    if (cardSignature === previousCardSignature) {
+      return;
+    }
+
+    previousCardSignature = cardSignature;
+    const currentIds = new Set(cards.map((card) => card.uuid));
+    const currentSelected = untrack(() => selectedCardIds);
+    const currentIndexSnapshot = untrack(() => currentIndex);
+
+    if (cards.length === 0) {
+      currentIndex = 0;
+      selectedCardIds = new Set();
+      previousCardIds = new Set();
+      showRegenerateDialog = false;
+      return;
+    }
+
+    const nextSelected = new Set(
+      Array.from(currentSelected).filter((id) => currentIds.has(id))
+    );
+
+    for (const card of cards) {
+      if (!previousCardIds.has(card.uuid)) {
+        nextSelected.add(card.uuid);
+      }
+    }
+
+    selectedCardIds = nextSelected;
+    previousCardIds = currentIds;
+    currentIndex = Math.min(currentIndexSnapshot, Math.max(cards.length - 1, 0));
+  });
+
+  $effect(() => {
+    mode;
+    config.targetDeck;
+    void loadDecks();
+  });
+
+  $effect(() => {
+    selectedCount;
+    isAllSelected;
+    cards.length;
+    dispatchSelectionState();
+  });
+
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleSelectionAction = (event: Event) => {
+      const action = (event as CustomEvent<{ action?: 'select-all' | 'deselect-all' }>).detail?.action;
+      if (!action) return;
+
+      if (action === 'select-all') {
+        selectAll();
+        return;
+      }
+
+      deselectAll();
+    };
+
+    window.addEventListener('Weave:ai-selection-action', handleSelectionAction as EventListener);
+    return () => {
+      window.removeEventListener('Weave:ai-selection-action', handleSelectionAction as EventListener);
+    };
+  });
+
+  function truncateDeckName(name: string, maxLength: number = 30): string {
+    if (name.length <= maxLength) return name;
+    return `${name.substring(0, maxLength - 3)}...`;
+  }
+
+  function goToCard(index: number) {
+    if (index < 0 || index >= cards.length) return;
+    currentIndex = index;
+    showRegenerateDialog = false;
+  }
+
+  function toggleCardSelection(cardId: string) {
+    const next = new Set(selectedCardIds);
+    if (next.has(cardId)) {
+      next.delete(cardId);
+    } else {
+      next.add(cardId);
+    }
+    selectedCardIds = next;
+  }
+
+  function clearThumbnailLongPressTimer() {
+    if (thumbnailLongPressTimer !== null) {
+      window.clearTimeout(thumbnailLongPressTimer);
+      thumbnailLongPressTimer = null;
+    }
+    pressedThumbnailId = null;
+  }
+
+  function handleThumbnailPointerDown(cardId: string) {
+    clearThumbnailLongPressTimer();
+    suppressThumbnailClick = false;
+    pressedThumbnailId = cardId;
+    thumbnailLongPressTimer = window.setTimeout(() => {
+      toggleCardSelection(cardId);
+      suppressThumbnailClick = true;
+      pressedThumbnailId = null;
+      thumbnailLongPressTimer = null;
+    }, 420);
+  }
+
+  function handleThumbnailPointerUp() {
+    clearThumbnailLongPressTimer();
+  }
+
+  function handleThumbnailClick(event: MouseEvent, index: number) {
+    if (suppressThumbnailClick) {
+      suppressThumbnailClick = false;
+      event.preventDefault();
+      return;
+    }
+    goToCard(index);
+  }
+
+  function handleThumbnailContextMenu(event: MouseEvent, cardId: string) {
+    event.preventDefault();
+    clearThumbnailLongPressTimer();
+    suppressThumbnailClick = true;
+    toggleCardSelection(cardId);
+  }
+
+  function selectAll() {
+    selectedCardIds = new Set(cards.map((card) => card.uuid));
+  }
+
+  function deselectAll() {
+    selectedCardIds = new Set();
+  }
+
+  function toggleRegenerateDialog() {
+    showRegenerateDialog = !showRegenerateDialog;
+  }
+
+  async function handleRegenerate(instruction: string) {
+    if (!currentCard) return;
+
+    try {
+      new Notice('正在重新生成卡片...');
+
+      const { AIServiceFactory } = await import('../../services/ai/AIServiceFactory');
+      const aiService = AIServiceFactory.createService(config.provider, plugin, config.model);
+
+      const originalContent = currentCard.content || '';
+      const cardType = currentCard.type;
+      let regeneratePrompt = '';
+      let typeDistribution = { qa: 0, cloze: 0, choice: 0 };
+
+      if (cardType === 'cloze') {
+        typeDistribution.cloze = 100;
+        regeneratePrompt = `
+原始卡片内容：
+${originalContent}
+
+卡片类型：挖空题（cloze）
+
+用户修改要求：${instruction}
+
+请根据用户的修改要求重新生成这张挖空题卡片。
+
+返回JSON数组，格式如下：
+[
+  {
+    "type": "cloze",
+    "content": "完整原文（用==文本==标记需要挖空的部分）"
+  }
+]
+
+注意：
+1. 使用==文本==语法标记挖空部分
+2. content字段包含完整的卡片内容
+3. 返回的必须是包含1个对象的JSON数组`;
+      } else if (cardType === 'choice') {
+        typeDistribution.choice = 100;
+        regeneratePrompt = `
+原始卡片内容：
+${originalContent}
+
+卡片类型：选择题（choice）
+
+用户修改要求：${instruction}
+
+请根据用户的修改要求重新生成这张选择题卡片。
+
+返回JSON数组，格式如下：
+[
+  {
+    "type": "choice",
+    "content": "Q: 问题内容\\n\\nA) 选项A\\nB) 选项B\\nC) 选项C\\nD) 选项D\\n\\n---div---\\n\\n正确答案) 答案解释"
+  }
+]
+
+注意：
+1. content字段使用特定格式：Q:开头的问题，A)/B)/C)/D)开头的选项，---div---分隔，正确答案)开头的答案
+2. 返回的必须是包含1个对象的JSON数组`;
+      } else {
+        typeDistribution.qa = 100;
+        regeneratePrompt = `
+原始卡片内容：
+${originalContent}
+
+卡片类型：问答题（qa）
+
+用户修改要求：${instruction}
+
+请根据用户的修改要求重新生成这张问答题卡片。
+
+返回JSON数组，格式如下：
+[
+  {
+    "type": "qa",
+    "content": "问题内容\\n\\n---div---\\n\\n答案内容"
+  }
+]
+
+注意：
+1. content字段使用 ---div--- 分隔问题和答案
+2. 返回的必须是包含1个对象的JSON数组`;
+      }
+
+      const aiConfig = plugin.settings.aiConfig!;
+      const providerConfig = aiConfig.apiKeys?.[
+        config.provider as keyof typeof aiConfig.apiKeys
+      ];
+
+      if (!providerConfig || !providerConfig.apiKey) {
+        throw new Error(`${config.provider} API密钥未配置`);
+      }
+
+      const response = await aiService.generateCards(
+        regeneratePrompt,
+        {
+          templateId: 'regenerate',
+          promptTemplate: regeneratePrompt,
+          cardCount: 1,
+          difficulty: currentCard.metadata.difficulty || 'medium',
+          typeDistribution,
+          provider: config.provider,
+          model: config.model,
+          temperature: config.temperature,
+          maxTokens: config.maxTokens,
+          imageGeneration: {
+            enabled: false,
+            strategy: 'none',
+            imagesPerCard: 0,
+            placement: 'question'
+          },
+          autoTags: [],
+          enableHints: false
+        },
+        () => {}
+      );
+
+      if (!response.success || !response.cards || response.cards.length === 0) {
+        throw new Error(response.error || '生成失败');
+      }
+
+      const nextCards = [...cards];
+      nextCards[currentIndex] = {
+        ...currentCard,
+        content: response.cards[0].content || ''
+      };
+      cards = nextCards;
+      new Notice('卡片已重新生成');
+    } catch (error) {
+      logger.error('[AICardPreviewWorkspace] 重新生成失败:', error);
+      new Notice(error instanceof Error ? error.message : '重新生成失败');
+    }
+  }
+
+  async function loadDecks() {
+    try {
+      const allDecks = await plugin.dataStorage.getDecks();
+
+      availableDecks = (mode === 'split'
+        ? allDecks.filter((deck) => deck.purpose !== 'test')
+        : allDecks.filter((deck) => deck.purpose === 'test')
+      ).map((deck) => ({ id: deck.id, name: deck.name }));
+
+      if (availableDecks.length === 0) {
+        availableDecks = allDecks.map((deck) => ({ id: deck.id, name: deck.name }));
+      }
+
+      if (availableDecks.length === 0) {
+        selectedDeckId = '';
+        return;
+      }
+
+      const defaultTargetDeck = config.targetDeck;
+      if (defaultTargetDeck) {
+        const matchedDeck = availableDecks.find(
+          (deck) => deck.id === defaultTargetDeck || deck.name === defaultTargetDeck
+        );
+        selectedDeckId = matchedDeck?.id || availableDecks[0].id;
+      } else if (!availableDecks.some((deck) => deck.id === selectedDeckId)) {
+        selectedDeckId = availableDecks[0].id;
+      }
+    } catch (error) {
+      logger.error('[AICardPreviewWorkspace] 加载牌组失败:', error);
+      availableDecks = [];
+      selectedDeckId = '';
+    }
+  }
+
+  async function handleImportCards() {
+    if (selectedCount === 0) {
+      new Notice('请至少选择一张卡片');
+      return;
+    }
+
+    if (!selectedDeckId) {
+      new Notice('请选择目标牌组');
+      return;
+    }
+
+    try {
+      isImporting = true;
+      await onImport(
+        cards.filter((card) => selectedCardIds.has(card.uuid)),
+        selectedDeckId
+      );
+    } catch (error) {
+      logger.error('[AICardPreviewWorkspace] 导入失败:', error);
+      new Notice(error instanceof Error ? error.message : '导入失败');
+    } finally {
+      isImporting = false;
+    }
+  }
+</script>
+
+<div class="card-preview-workspace">
+  <div class="preview-body">
+    <div class="preview-main-content">
+      {#if currentCard}
+        <div class="card-display">
+          <div class="card-meta">
+            <div class="card-meta-left">
+              {#if currentCard.metadata.difficulty}
+                <span class="difficulty-badge">{currentCard.metadata.difficulty}</span>
+              {/if}
+            </div>
+          </div>
+
+          {#if previewCard}
+            <div class="card-preview-wrapper">
+              <PreviewContainer
+                card={previewCard}
+                bind:showAnswer={showPreviewAnswer}
+                {plugin}
+                enableAnimations={true}
+                enableAnswerControls={true}
+              />
+            </div>
+          {:else}
+            <div class="no-preview-warning">卡片预览加载失败</div>
+          {/if}
+
+          <div class="card-action-buttons">
+            <button
+              class="regenerate-toggle-btn"
+              onclick={toggleRegenerateDialog}
+              class:active={showRegenerateDialog}
+            >
+              <ObsidianIcon name="message-square" size={16} />
+              <span>{t(showRegenerateDialog ? 'modals.cardPreview.collapseDialog' : 'modals.cardPreview.modifyRequirement')}</span>
+            </button>
+          </div>
+        </div>
+
+        {#if showRegenerateDialog}
+          <RegenerateDialog
+            {currentCard}
+            onRegenerate={handleRegenerate}
+          />
+        {/if}
+      {:else}
+        <div class="preview-empty-state" class:generating={isGenerating}> 
+          <div class="empty-icon">
+            <ObsidianIcon name={isGenerating ? 'loader' : 'sparkles'} size={26} />
+          </div>
+          {#if isGenerating}
+            <div class="generation-progress-panel">
+              <div class="generation-progress-heading">
+                <strong>正在生成卡片</strong>
+                <span>{generatedCount} / {totalCards || 0} 张</span>
+              </div>
+              <div class="generation-progress-meta">
+                <span class="generation-progress-label">生成进度</span>
+                <span class="generation-progress-count">{generatedCount} / {totalCards || 0} 张</span>
+              </div>
+              <div class="generation-progress-track" aria-hidden="true">
+                <div class="generation-progress-fill" style={`width: ${progressPercent}%`}></div>
+              </div>
+              <p class="generation-progress-hint">AI 正在逐张生成卡片，新的结果会实时追加到这里。</p>
+            </div>
+          {/if}
+          <h3>{isGenerating ? '正在生成卡片' : 'AI 制卡预览区'}</h3>
+          <p>
+            {#if isGenerating}
+              卡片会随着生成进度逐张出现在这里。
+            {:else}
+              先在顶部功能栏选择文件、提示词并发起生成，这里会直接显示可导入的卡片预览。
+            {/if}
+          </p>
+        </div>
+      {/if}
+    </div>
+  </div>
+
+  {#if hasCards}
+    <div class="preview-footer">
+      <div class="card-navigation">
+        <div class="thumbnail-strip">
+          {#each cards as card, index}
+            <div
+              class="thumbnail"
+              class:active={index === currentIndex}
+              class:selected={selectedCardIds.has(card.uuid)}
+              class:pressing={pressedThumbnailId === card.uuid}
+              class:new={card.isNew}
+              onclick={(event) => handleThumbnailClick(event, index)}
+              onkeydown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  goToCard(index);
+                }
+              }}
+              onpointerdown={() => handleThumbnailPointerDown(card.uuid)}
+              onpointerup={handleThumbnailPointerUp}
+              onpointercancel={handleThumbnailPointerUp}
+              onpointerleave={handleThumbnailPointerUp}
+              oncontextmenu={(event) => handleThumbnailContextMenu(event, card.uuid)}
+              role="button"
+              tabindex="0"
+              title={`${t('modals.cardPreview.title')} ${index + 1} · 长按可选中`}
+            >
+              <div class="thumbnail-number">{index + 1}</div>
+              {#if selectedCardIds.has(card.uuid)}
+                <div class="thumbnail-check">
+                  <ObsidianIcon name="check" size={12} />
+                </div>
+              {/if}
+            </div>
+          {/each}
+
+          {#if isGenerating && totalCards > cards.length}
+            {#each Array(totalCards - cards.length) as _, index}
+              <div class="thumbnail skeleton" title={`${t('modals.cardPreview.generating')} ${cards.length + index + 1}`}>
+                <div class="skeleton-loader"></div>
+              </div>
+            {/each}
+          {/if}
+        </div>
+        <div class="thumbnail-hint">点按切换卡片，长按序号可选中或取消选中</div>
+      </div>
+
+      <div class="preview-actions">
+        <div class="preview-actions-row">
+          <div class="deck-selector compact">
+            <ObsidianDropdown
+              className="target-deck-select"
+              value={selectedDeckId}
+              disabled={isImporting}
+              iconPosition="left"
+              options={availableDecks.map((deck) => ({
+                id: deck.id,
+                label: truncateDeckName(deck.name),
+                description: deck.id === selectedDeckId ? deck.name : undefined
+              }))}
+              onchange={(value) => {
+                selectedDeckId = value;
+              }}
+            />
+          </div>
+
+          <button
+            class="import-btn compact"
+            onclick={handleImportCards}
+            disabled={selectedCount === 0 || isImporting || !selectedDeckId}
+          >
+            <ObsidianIcon name="download" size={16} />
+            <span>{isImporting ? '导入中' : `导入 ${selectedCount}`}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .card-preview-workspace {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--weave-ai-surface-bg, var(--background-primary));
+    overflow: hidden;
+  }
+
+  .preview-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 20px 20px;
+    min-height: 0;
+  }
+
+  .preview-main-content {
+    width: 100%;
+  }
+
+  .card-display {
+    background: transparent;
+    border-radius: 0;
+    padding: 0;
+    margin-bottom: 16px;
+  }
+
+  .card-meta {
+    display: flex;
+    align-items: center;
+    margin-bottom: 12px;
+    gap: 12px;
+  }
+
+  .card-meta-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .difficulty-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+    background: rgba(255, 166, 77, 0.1);
+    color: #ff922b;
+  }
+
+  .card-preview-wrapper {
+    width: 100%;
+    min-height: 200px;
+  }
+
+  .no-preview-warning,
+  .preview-empty-state {
+    padding: 32px 24px;
+    text-align: center;
+    color: var(--text-muted);
+    background: var(--weave-ai-card-bg, var(--background-secondary));
+    border-radius: 16px;
+    border: 1px dashed color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+  }
+
+  .preview-empty-state {
+    min-height: 280px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background:
+      radial-gradient(circle at top, color-mix(in srgb, var(--interactive-accent) 14%, transparent) 0%, transparent 55%),
+      var(--weave-ai-card-bg, var(--background-secondary));
+  }
+
+  .preview-empty-state h3 {
+    margin: 0;
+    font-size: 18px;
+    color: var(--text-normal);
+  }
+
+  .preview-empty-state p { 
+    margin: 0; 
+    max-width: 420px; 
+    line-height: 1.6; 
+  } 
+
+  .preview-empty-state.generating > h3,
+  .preview-empty-state.generating > p {
+    display: none;
+  }
+
+  .generation-progress-panel {
+    width: min(420px, 100%);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: color-mix(
+      in srgb,
+      var(--weave-ai-card-bg, var(--background-secondary)) 88%,
+      var(--weave-ai-page-bg, var(--background-primary))
+    );
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, transparent);
+  }
+
+  .generation-progress-meta {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .generation-progress-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text-normal);
+  }
+
+  .generation-progress-heading strong {
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .generation-progress-heading span {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .generation-progress-label {
+    font-weight: 600;
+    color: var(--text-normal);
+  }
+
+  .generation-progress-count {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .generation-progress-track {
+    position: relative;
+    width: 100%;
+    height: 10px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+  }
+
+  .generation-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--interactive-accent), color-mix(in srgb, var(--interactive-accent) 58%, white));
+    transition: width 0.25s ease;
+  }
+
+  .generation-progress-hint {
+    max-width: none;
+    font-size: 13px;
+    color: var(--text-normal);
+  }
+
+  .empty-icon { 
+    width: 52px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 16px;
+    background: color-mix(in srgb, var(--interactive-accent) 16%, transparent);
+    color: var(--text-accent);
+  }
+
+  .card-action-buttons {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .regenerate-toggle-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 12px;
+    border-radius: 8px;
+    background: var(--interactive-accent);
+    color: white;
+    font-weight: 500;
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+
+  .regenerate-toggle-btn:hover {
+    background: var(--interactive-accent-hover);
+  }
+
+  .regenerate-toggle-btn.active {
+    background: var(--background-modifier-border);
+    color: var(--text-normal);
+  }
+
+  .preview-footer {
+    background: var(--weave-ai-surface-bg, var(--background-primary));
+    padding: 0 20px 20px;
+    flex-shrink: 0;
+  }
+
+  .card-navigation {
+    display: flex;
+    align-items: stretch;
+    margin-bottom: 16px;
+  }
+
+  .thumbnail-strip {
+    flex: 1 1 auto;
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 10px 2px 8px;
+    scroll-padding-left: 2px;
+  }
+
+  .thumbnail-strip::-webkit-scrollbar {
+    height: 4px;
+  }
+
+  .thumbnail-strip::-webkit-scrollbar-thumb {
+    background: var(--background-modifier-border);
+    border-radius: 2px;
+  }
+
+  .thumbnail {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    background: var(--weave-ai-card-bg, var(--background-secondary));
+    border: 2px solid var(--background-modifier-border);
+    transition: all 0.2s;
+    cursor: pointer;
+  }
+
+  .thumbnail.pressing {
+    transform: scale(0.94);
+    border-color: color-mix(in srgb, var(--interactive-accent) 72%, var(--background-modifier-border));
+    background: color-mix(
+      in srgb,
+      var(--interactive-accent) 12%,
+      var(--weave-ai-card-bg, var(--background-secondary))
+    );
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+  }
+
+  .thumbnail:hover {
+    border-color: var(--text-accent);
+  }
+
+  .thumbnail.active {
+    border-color: var(--text-accent);
+    background: var(--color-accent-bg);
+  }
+
+  .thumbnail.selected {
+    background: rgba(134, 239, 172, 0.1);
+    border-color: #10b981;
+  }
+
+  .thumbnail-number {
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text-muted);
+  }
+
+  .thumbnail.active .thumbnail-number {
+    color: var(--text-accent);
+  }
+
+  .thumbnail-check {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #10b981;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .thumbnail-hint {
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-faint);
+    text-align: center;
+  }
+
+  .preview-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .preview-actions-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex-wrap: nowrap;
+  }
+
+  .deck-selector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .deck-selector.compact {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  :global(.deck-selector .obsidian-dropdown-trigger.target-deck-select) {
+    padding: 6px 12px;
+    border-radius: 6px;
+    background: var(--weave-ai-card-bg, var(--background-secondary));
+    border: 1px solid var(--background-modifier-border);
+    color: var(--text-normal);
+    font-size: 13px;
+    cursor: pointer;
+    min-height: 0;
+  }
+
+  :global(.deck-selector.compact .obsidian-dropdown-trigger.target-deck-select) {
+    width: 100%;
+    min-height: 34px;
+    border-radius: 10px;
+  }
+
+  :global(.deck-selector.compact .obsidian-dropdown-trigger.target-deck-select .dropdown-icon.is-leading) {
+    color: var(--text-muted);
+  }
+
+  :global(.deck-selector .obsidian-dropdown-trigger.target-deck-select:hover:not(.disabled)) {
+    border-color: var(--text-accent);
+  }
+
+  :global(.deck-selector .obsidian-dropdown-trigger.target-deck-select:focus-visible) {
+    outline: none;
+    border-color: var(--text-accent);
+    box-shadow: none;
+  }
+
+  :global(.deck-selector .obsidian-dropdown-trigger.target-deck-select.disabled) {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .import-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 42px;
+    padding: 0 18px;
+    border-radius: 12px;
+    background: var(--interactive-accent);
+    color: white;
+    font-weight: 600;
+    transition: all 0.2s;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .import-btn.compact {
+    width: auto;
+    min-width: 116px;
+    flex: 0 0 auto;
+  }
+
+  .import-btn:hover:not(:disabled) {
+    background: var(--interactive-accent-hover);
+  }
+
+  .import-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .thumbnail.skeleton {
+    position: relative;
+    background: var(--background-modifier-border);
+    cursor: not-allowed;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  .skeleton-loader {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.05),
+      transparent
+    );
+    animation: shimmer 1.5s infinite;
+  }
+
+  .thumbnail.new {
+    animation: flashNew 0.6s ease-out;
+    border-color: #10b981 !important;
+  }
+
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  @keyframes flashNew {
+    0% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+      transform: scale(1);
+    }
+    50% {
+      box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+      transform: scale(1.1);
+    }
+    100% {
+      box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+      transform: scale(1);
+    }
+  }
+
+  @keyframes spin {
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (max-width: 768px) {
+    .preview-body,
+    .preview-footer {
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    .preview-footer {
+      position: sticky;
+      bottom: 0;
+      z-index: 12;
+      padding-top: 10px;
+      padding-bottom: calc(92px + env(safe-area-inset-bottom, 0px));
+      background:
+        linear-gradient(
+          180deg,
+          color-mix(in srgb, var(--weave-ai-surface-bg, var(--background-primary)) 0%, transparent) 0%,
+          color-mix(in srgb, var(--weave-ai-surface-bg, var(--background-primary)) 84%, transparent) 14%,
+          var(--weave-ai-surface-bg, var(--background-primary)) 100%
+        );
+    }
+
+    .card-preview-workspace {
+      min-height: 0;
+    }
+
+    .card-navigation {
+      margin-bottom: 10px;
+    }
+
+    .thumbnail-strip {
+      gap: 10px;
+      padding: 14px 4px 10px;
+      scroll-padding-left: 4px;
+    }
+
+    .thumbnail {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+    }
+
+    .thumbnail-hint {
+      margin-top: 4px;
+      font-size: 11px;
+    }
+
+    .preview-actions {
+      padding: 10px;
+      border-radius: 18px;
+      border: none;
+      background: color-mix(in srgb, var(--background-primary) 88%, transparent);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.1);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+    }
+
+    .preview-actions-row {
+      align-items: stretch;
+      gap: 10px;
+    }
+
+    .card-display {
+      margin-bottom: 8px;
+    }
+
+    .card-meta {
+      margin-bottom: 8px;
+    }
+
+    .difficulty-badge {
+      padding: 5px 11px;
+      font-size: 11px;
+    }
+
+    .deck-selector.compact {
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    :global(.deck-selector.compact .obsidian-dropdown-trigger.target-deck-select) {
+      min-height: 44px;
+      padding: 0 14px;
+      border-radius: 14px;
+      box-shadow: none;
+      font-size: 13px;
+    }
+
+    .import-btn.compact {
+      min-width: 104px;
+      width: auto;
+      flex: 0 0 auto;
+      min-height: 44px;
+      padding: 0 16px;
+      border-radius: 14px;
+      box-shadow:
+        0 10px 24px color-mix(in srgb, var(--interactive-accent) 24%, transparent),
+        inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
+    }
+  }
+</style>

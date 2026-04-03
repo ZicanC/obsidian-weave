@@ -20,7 +20,6 @@
 /* ==================== 移动端设计令牌 (.is-mobile) ==================== */
 
 body.is-mobile .weave-main-editor-mode,
-body.is-mobile .weave-ir-focus-view-content,
 body.is-mobile .weave-create-card-modal-container,
 body.is-mobile .resizable-modal.weave-create-card-modal,
 body.is-mobile .weave-edit-card-modal-container,
@@ -35,7 +34,6 @@ body.is-mobile .weave-modal-content {
 }
 
 body.is-phone .weave-main-editor-mode,
-body.is-phone .weave-ir-focus-view-content,
 body.is-phone .weave-create-card-modal-container,
 body.is-phone .resizable-modal.weave-create-card-modal,
 body.is-phone .weave-edit-card-modal-container,
@@ -50,7 +48,6 @@ body.is-phone .weave-modal-content {
 }
 
 body.is-mobile.weave-line-numbers-on .weave-main-editor-mode,
-body.is-mobile.weave-line-numbers-on .weave-ir-focus-view-content,
 body.is-mobile.weave-line-numbers-on .weave-create-card-modal-container,
 body.is-mobile.weave-line-numbers-on .resizable-modal.weave-create-card-modal,
 body.is-mobile.weave-line-numbers-on .weave-edit-card-modal-container,
@@ -65,7 +62,6 @@ body.is-mobile.weave-line-numbers-on .weave-modal-content {
 }
 
 body.is-phone.weave-line-numbers-on .weave-main-editor-mode,
-body.is-phone.weave-line-numbers-on .weave-ir-focus-view-content,
 body.is-phone.weave-line-numbers-on .weave-create-card-modal-container,
 body.is-phone.weave-line-numbers-on .resizable-modal.weave-create-card-modal,
 body.is-phone.weave-line-numbers-on .weave-edit-card-modal-container,
@@ -724,40 +720,6 @@ body.is-tablet .weave-app .study-btn {
 /* 使用 visual viewport 而非 layout viewport */
 /* ✅ 保留 !important：关键的移动端键盘适配，需要强制覆盖 */
 /* 这些样式处理虚拟键盘弹出时的复杂布局问题 */
-:global(body.is-phone.weave-edit-active) .study-interface-overlay,
-:global(body.is-mobile.weave-edit-active) .study-interface-overlay {
-  /* 固定高度，不随键盘变化 */
-  height: 100vh !important;
-  height: 100dvh !important; /* 动态视口高度，更好地处理键盘 */
-  overflow: hidden;
-}
-
-:global(body.is-phone.weave-edit-active) .study-interface-content,
-:global(body.is-mobile.weave-edit-active) .study-interface-content {
-  height: 100% !important;
-  overflow: hidden;
-}
-
-:global(body.is-phone.weave-edit-active) .card-study-container,
-:global(body.is-mobile.weave-edit-active) .card-study-container {
-  /* 编辑模式下内容区域可滚动 */
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  /* 使用 flex 布局确保编辑器占满空间 */
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-}
-
-/* 📱 手机端编辑模式：编辑器容器样式 */
-:global(body.is-phone.weave-edit-active) .card-container,
-:global(body.is-mobile.weave-edit-active) .card-container {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
 /* 📱 手机端：防止键盘闪烁 - 只有点击输入框时才显示键盘 */
 /* 通过禁用自动聚焦来实现 */
 :global(body.is-phone) .weave-app input:not(:focus),
@@ -1278,6 +1240,7 @@ body.is-mobile .weave-app .mobile-grid-card-title {
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: var(--weave-mobile-grid-title-lines, 3);
+  line-clamp: var(--weave-mobile-grid-title-lines, 3);
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1496,8 +1459,7 @@ body.is-mobile .weave-app .weave-table .col-question_type,
 body.is-mobile .weave-app .weave-table .col-accuracy,
 body.is-mobile .weave-app .weave-table .col-test_attempts,
 body.is-mobile .weave-app .weave-table .col-last_test,
-body.is-mobile .weave-app .weave-table .col-error_level,
-body.is-mobile .weave-app .weave-table .col-source_card {
+body.is-mobile .weave-app .weave-table .col-error_level {
   /* ✅ 保留 !important：响应式隐藏表格列，需要强制覆盖 */
   /* 参考：.augment/rules/core/04-anti-force-methods.md */
   display: none !important;
@@ -1613,6 +1575,7 @@ body.is-mobile .weave-app .lazy-grid-card .card-front {
   line-height: 1.4;
   display: -webkit-box;
   -webkit-line-clamp: var(--weave-mobile-grid-title-lines, 3);
+  line-clamp: var(--weave-mobile-grid-title-lines, 3);
   -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1875,7 +1838,6 @@ body.is-mobile .weave-app .mobile-kanban-scrollbar {
 body.is-mobile .weave-app .keyboard-visible {
   /* 禁用父容器滚动，防止页面整体滚动 */
   overflow: hidden !important;
-  touch-action: none;
 }
 
 /* 🆕 iOS Safari CSS 动画 Hack - 帮助正确处理 viewport */
@@ -1930,7 +1892,7 @@ body.is-mobile.weave-edit-active .study-interface-overlay {
   position: fixed !important;
   /* 🔧 修复：从 Obsidian 顶部栏下方开始，保留顶部栏可见 */
   /* Obsidian 移动端顶部栏高度约为 44px */
-  top: var(--weave-top-offset, 44px) !important;
+  top: 0 !important;
   left: 0 !important;
   right: 0 !important;
   /* 不使用 bottom，使用明确的 height */
@@ -1947,6 +1909,19 @@ body.is-mobile.weave-edit-active .study-interface-content {
   width: 100%;
   max-width: 100%;
   border-radius: 0;
+}
+
+body.is-phone.weave-edit-active .workspace-tab-header-container,
+body.is-phone.weave-edit-active .workspace-tab-header,
+body.is-phone.weave-edit-active .view-header,
+body.is-mobile.weave-edit-active .workspace-tab-header-container,
+body.is-mobile.weave-edit-active .workspace-tab-header,
+body.is-mobile.weave-edit-active .view-header {
+  background: transparent !important;
+  border-bottom-color: transparent !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 /* 编辑模式下的内容区域 */
@@ -2031,6 +2006,54 @@ body.is-phone .weave-app,
 body.is-mobile .weave-app {
   --weave-editor-padding-x: 12px;
   --weave-editor-padding-y: 12px;
+}
+
+/* ==================== 设置界面移动端布局修复 ==================== */
+
+/* Fix 1: 下拉框容器在手机端自适应宽度并靠右对齐 */
+body.is-phone .weave-settings .progressive-cloze-history-dropdown,
+body.is-phone .weave-settings .settings-dropdown-compact {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: none;
+  min-width: 120px;
+  margin-left: auto;
+}
+
+/* Fix 2: 数字输入框与标题保持同行显示 */
+body.is-phone .weave-settings .row:has(.number-input-compact) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+
+body.is-phone .weave-settings .row:has(.number-input-compact) > label:first-child {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+}
+
+body.is-phone .weave-settings .row:has(.number-input-compact) .number-input-compact {
+  width: 80px;
+  max-width: 80px;
+  flex: 0 0 80px;
+  margin-left: auto;
+}
+
+/* Fix 3: 模态窗底部按钮保持同行 */
+body.is-phone .weave-settings .editor-footer,
+body.is-phone .weave-settings .modal-actions,
+body.is-phone .preset-editor-overlay .editor-footer {
+  flex-direction: row;
+  flex-wrap: nowrap;
+}
+
+body.is-phone .weave-settings .editor-footer .btn-cancel,
+body.is-phone .weave-settings .editor-footer .btn-save,
+body.is-phone .preset-editor-overlay .editor-footer .btn-cancel,
+body.is-phone .preset-editor-overlay .editor-footer .btn-save {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ==================== 滚动禁用样式类 ==================== */

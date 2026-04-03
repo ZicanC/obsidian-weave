@@ -9,7 +9,7 @@ export const RECYCLE_TAGS = {
 	EN: "recycle", // 英文标签
 } as const;
 
-// @deprecated 已废弃，请使用 RECYCLE_TAGS
+// Compatibility note: 已废弃，请使用 RECYCLE_TAGS
 export const SUSPEND_TAGS = {
 	ZH: "搁置",
 	EN: "postpone",

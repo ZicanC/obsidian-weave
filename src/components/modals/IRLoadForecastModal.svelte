@@ -12,28 +12,26 @@
   import type { IRDeck, IRChunkFileData, IRBlock } from '../../types/ir-types';
   import { IRStorageService } from '../../services/incremental-reading/IRStorageService';
   import { IRPdfBookmarkTaskService } from '../../services/incremental-reading/IRPdfBookmarkTaskService';
+  import { IREpubBookmarkTaskService } from '../../services/incremental-reading/IREpubBookmarkTaskService';
   import IRStudySessionChart from '../analytics/IRStudySessionChart.svelte';
   import IRActivityHeatmap from '../analytics/IRActivityHeatmap.svelte';
   import * as echarts from 'echarts/core';
   import {
-    TitleComponent,
     TooltipComponent,
     GridComponent,
     LegendComponent,
     MarkLineComponent
   } from 'echarts/components';
-  import { LineChart, BarChart, PieChart } from 'echarts/charts';
+  import { LineChart, BarChart } from 'echarts/charts';
   import { CanvasRenderer } from 'echarts/renderers';
 
   echarts.use([
-    TitleComponent,
     TooltipComponent,
     GridComponent,
     LegendComponent,
     MarkLineComponent,
     LineChart,
     BarChart,
-    PieChart,
     CanvasRenderer
   ]);
 
@@ -124,6 +122,17 @@
       default:
         return { label: '正常', color: '#4dabf7' };
     }
+  }
+
+  function buildSessionTotalsByBlockId(sessions: Array<{ blockId?: string; duration?: number }> | undefined | null): Map<string, number> {
+    const totals = new Map<string, number>();
+    for (const session of sessions || []) {
+      const blockId = String(session?.blockId || '').trim();
+      const duration = Number(session?.duration || 0);
+      if (!blockId || duration <= 0) continue;
+      totals.set(blockId, (totals.get(blockId) || 0) + duration);
+    }
+    return totals;
   }
 
   // IR存储服务实例
@@ -247,6 +256,8 @@
     } catch (error) {
       logger.error('[IRLoadForecast] 获取数据失败:', error);
     }
+    const history = await storage.getHistory();
+    const readingSecondsById = buildSessionTotalsByBlockId(history.sessions);
 
     // 过滤选中牌组的数据
     const selectedDeckSet = showGlobalLoad ? null : selectedDeckIds;
@@ -269,6 +280,7 @@
 
     // 加载 PDF 书签任务
     let allPdfTasks: any[] = [];
+    let allEpubTasks: any[] = [];
     try {
       const pdfService = new IRPdfBookmarkTaskService(plugin.app);
       await pdfService.initialize();
@@ -276,15 +288,37 @@
     } catch (e) {
       logger.debug('[IRLoadForecast] 加载 PDF 书签任务失败', e);
     }
+    try {
+      const epubService = new IREpubBookmarkTaskService(plugin.app);
+      await epubService.initialize();
+      allEpubTasks = await epubService.getAllTasks();
+    } catch (e) {
+      logger.debug('[IRLoadForecast] 加载 EPUB 书签任务失败', e);
+    }
 
     const filteredPdfTasks = selectedDeckSet
       ? allPdfTasks.filter(t => selectedDeckSet.has(String(t.deckId || '')))
       : allPdfTasks;
+    const filteredEpubTasks = selectedDeckSet
+      ? allEpubTasks.filter(t => selectedDeckSet.has(String(t.deckId || '')))
+      : allEpubTasks;
 
     // 预估每个块的阅读时间（分钟）
     const estimateReadingTime = (chunk?: IRChunkFileData, block?: IRBlock): number => {
+      if (chunk) {
+        const historicalSeconds = readingSecondsById.get(String(chunk.chunkId || '')) || 0;
+        if (historicalSeconds > 0 && chunk.stats.impressions > 0) {
+          return (historicalSeconds / chunk.stats.impressions) / 60;
+        }
+      }
       if (chunk?.stats?.effectiveReadingTimeSec && chunk.stats.impressions > 0) {
         return (chunk.stats.effectiveReadingTimeSec / chunk.stats.impressions) / 60;
+      }
+      if (block) {
+        const historicalSeconds = readingSecondsById.get(String(block.id || '')) || 0;
+        if (historicalSeconds > 0 && block.reviewCount > 0) {
+          return (historicalSeconds / block.reviewCount) / 60;
+        }
       }
       if (block?.totalReadingTime && block.reviewCount > 0) {
         return (block.totalReadingTime / block.reviewCount) / 60;
@@ -293,6 +327,24 @@
     };
 
     const estimatePdfTaskMinutes = (task: any): number => {
+      const historicalSeconds = readingSecondsById.get(String(task?.id || '')) || 0;
+      const impressions = Number(task?.stats?.impressions || 0);
+      if (historicalSeconds > 0 && impressions > 0) {
+        return (historicalSeconds / impressions) / 60;
+      }
+      const s = task?.stats;
+      if (s?.effectiveReadingTimeSec && s?.impressions > 0) {
+        return (s.effectiveReadingTimeSec / s.impressions) / 60;
+      }
+      return 5;
+    };
+
+    const estimateEpubTaskMinutes = (task: any): number => {
+      const historicalSeconds = readingSecondsById.get(String(task?.id || '')) || 0;
+      const impressions = Number(task?.stats?.impressions || 0);
+      if (historicalSeconds > 0 && impressions > 0) {
+        return (historicalSeconds / impressions) / 60;
+      }
       const s = task?.stats;
       if (s?.effectiveReadingTimeSec && s?.impressions > 0) {
         return (s.effectiveReadingTimeSec / s.impressions) / 60;
@@ -354,6 +406,19 @@
           blockCount++;
         } else if (nrd < targetMs && i === 0) {
           totalMinutes += estimatePdfTaskMinutes(task);
+          blockCount++;
+        }
+      }
+
+      for (const task of filteredEpubTasks) {
+        const status = String(task.status || 'new');
+        if (status === 'done' || status === 'suspended' || status === 'removed') continue;
+        const nrd = (task.nextRepDate as number) || 0;
+        if (nrd >= targetMs && nrd < nextDayMs) {
+          totalMinutes += estimateEpubTaskMinutes(task);
+          blockCount++;
+        } else if (nrd < targetMs && i === 0) {
+          totalMinutes += estimateEpubTaskMinutes(task);
           blockCount++;
         }
       }
@@ -764,6 +829,15 @@
     
     window.addEventListener('resize', handleResize);
 
+    const handleIRRefresh = () => {
+      if (!open) return;
+      void loadIRDecks().then(() => {
+        setTimeout(() => refreshCurrentTab(), 100);
+      });
+    };
+    window.addEventListener('Weave:ir-data-updated', handleIRRefresh);
+    window.addEventListener('Weave:ir-timer-updated', handleIRRefresh);
+
     themeObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
@@ -776,6 +850,11 @@
       attributes: true,
       attributeFilter: ['class']
     });
+
+    return () => {
+      window.removeEventListener('Weave:ir-data-updated', handleIRRefresh);
+      window.removeEventListener('Weave:ir-timer-updated', handleIRRefresh);
+    };
   });
 
   $effect(() => {
@@ -805,7 +884,7 @@
 <ResizableModal
   bind:open
   {plugin}
-  title="增量阅读牌组分析"
+  title="增量阅读专题分析"
   onClose={handleClose}
   enableTransparentMask={false}
   enableWindowDrag={false}
@@ -1139,12 +1218,6 @@
     .tabs-right {
       width: 100%;
       justify-content: flex-end;
-    }
-
-    .legend-section {
-      justify-content: center;
-      padding: 10px 12px;
-      gap: 12px;
     }
 
     .chart-container {

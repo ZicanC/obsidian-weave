@@ -62,7 +62,7 @@
 
   // 处理菜单按钮点击
   function handleMenuClick(event: MouseEvent) {
-    event.stopPropagation();
+    event.preventDefault();
     onMenu(event);
   }
 
@@ -79,7 +79,10 @@
   class="question-bank-elegant-card variant-{stableColorVariant()}"
   class:compact
   class:empty={stats.total === 0}
-  onclick={handleClick}
+  onclick={(event) => {
+    if (event.defaultPrevented) return;
+    handleClick();
+  }}
   onkeydown={handleKeyDown}
   oncontextmenu={handleContextMenu}
   role="button"
@@ -268,6 +271,7 @@
     word-break: break-word;
     text-align: left;
     display: -webkit-box;
+    line-clamp: 2;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;

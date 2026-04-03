@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import type { Card } from '../../data/types';
+  import { CardType as DataCardType } from '../../data/types';
   import type { EventRef, TFile } from 'obsidian';
   import { extractBodyContent, parseBlockId, parseObsidianLink } from '../../utils/yaml-utils';
+  import { detectClozeModeFromContent, type ClozeMode } from '../../utils/cloze-mode';
   
   type FieldTemplate = any;
   import { ContentPreviewEngine, type PreviewData, type PreviewOptions, CardType } from './ContentPreviewEngine';
@@ -26,6 +28,7 @@
   //  导入CardAccessor用于获取子卡片内容
   import { CardAccessor } from '../../services/progressive-cloze/CardAccessor';
   import { CardStoreAdapter } from '../../services/progressive-cloze/CardStoreAdapter';
+  import { getCardMetadataService } from '../../services/CardMetadataService';
 
   // Props
   interface Props {
@@ -37,13 +40,15 @@
     renderingMode?: 'performance' | 'quality';
     enableAnswerControls?: boolean;
     plugin: WeavePlugin;
-    activeClozeOrdinal?: number; // 🆕 渐进式挖空：当前激活的挖空序号 (1-based)
-    refreshTrigger?: number; // 🆕 强制刷新触发器，值改变时重新渲染
+    activeClozeOrdinal?: number; // 渐进式挖空：当前激活的挖空序号（1-based）
+    refreshTrigger?: number; // 强制刷新触发器，值改变时重新渲染
     onCardTypeDetected?: (cardType: UnifiedCardType) => void;
     onPreviewReady?: (previewData: PreviewData) => void;
     onAddToErrorBook?: () => void;
     onRemoveFromErrorBook?: () => void;
     currentResponseTime?: number;
+    onClozeModeChange?: (mode: ClozeMode) => void | Promise<void>;
+    isClozeModeSaving?: boolean;
   }
 
   let {
@@ -55,13 +60,15 @@
     themeMode = 'auto',
     renderingMode = 'performance',
     plugin,
-    activeClozeOrdinal, // 🆕 渐进式挖空序号
-    refreshTrigger = 0, // 🆕 刷新触发器
+    activeClozeOrdinal, // 渐进式挖空序号
+    refreshTrigger = 0, // 刷新触发器
     onCardTypeDetected,
     onPreviewReady,
     onAddToErrorBook,
     onRemoveFromErrorBook,
-    currentResponseTime
+    currentResponseTime,
+    onClozeModeChange,
+    isClozeModeSaving = false
   }: Props = $props();
 
 
@@ -78,15 +85,37 @@
 
   // 响应式状态
   let lastCardId = $state<string | null>(null);
+  const metadataService = getCardMetadataService();
+  let displayPriority = $derived(card ? (metadataService.getCardPriority(card) ?? card.priority) : undefined);
   let lastShowAnswer = $state(false);
   let lastAnswerControls = $state(enableAnswerControls);
-  let lastRefreshTrigger = $state(0); // 🆕 跟踪上次的刷新触发器值
+  let lastCardContent = $state<string | null>(null);
+  let lastRefreshTrigger = $state(0); // 跟踪上次的刷新触发器值
 
   let renderRequestId = $state(0);
 
   // 选择题状态
   let choiceQuestionData = $state<ChoiceQuestion | null>(null);
   let selectedOptions = $state<string[]>([]);
+  const previewCard = $derived(effectiveCard || card);
+  const currentClozeMode = $derived.by(() => {
+    return detectClozeModeFromContent(previewCard?.content || '');
+  });
+  const isProgressiveClozePreview = $derived.by(() => {
+    const targetCard = previewCard;
+    return activeClozeOrdinal !== undefined ||
+      targetCard?.type === DataCardType.ProgressiveParent ||
+      targetCard?.type === DataCardType.ProgressiveChild;
+  });
+  const showClozeModeToggle = $derived.by(() => {
+    return !!previewCard &&
+      !!currentPreviewData &&
+      !!onClozeModeChange &&
+      !showAnswer &&
+      !isProgressiveClozePreview &&
+      (currentPreviewData.cardType === UnifiedCardType.CLOZE_DELETION ||
+        (currentPreviewData.cardType as string) === 'cloze-deletion');
+  });
   
   //  图片遮罩集成
   let maskIntegration: ImageMaskIntegration;
@@ -119,6 +148,7 @@
       lastCardId = card.uuid;
       lastShowAnswer = showAnswer;
       lastAnswerControls = enableAnswerControls;
+      lastCardContent = card.content || '';
       lastRefreshTrigger = refreshTrigger;
       renderPreview();
     }
@@ -253,17 +283,24 @@
 
   // 监听卡片变化并重新渲染
   $effect(() => {
+    const currentCardContent = card?.content || '';
     //  修复BUG: 只在卡片ID或答案控制变化时重新渲染
     // showAnswer变化不应清空selectedOptions，因此移除该条件
-    // 🆕 添加refreshTrigger监听，支持强制刷新
-    if (card && (card.uuid !== lastCardId || enableAnswerControls !== lastAnswerControls || refreshTrigger !== lastRefreshTrigger)) {
+    // 添加 refreshTrigger 与同卡内容变化监听，支持模式切换后即时预览刷新
+    if (card && (
+      card.uuid !== lastCardId ||
+      currentCardContent !== (lastCardContent || '') ||
+      enableAnswerControls !== lastAnswerControls ||
+      refreshTrigger !== lastRefreshTrigger
+    )) {
       if (!previewEngine) {
         return;
       }
       lastCardId = card.uuid;
       lastShowAnswer = showAnswer;
       lastAnswerControls = enableAnswerControls;
-      lastRefreshTrigger = refreshTrigger; // 🆕 更新刷新触发器
+      lastCardContent = currentCardContent;
+      lastRefreshTrigger = refreshTrigger; // 更新刷新触发器
       renderPreview();
     } else if (card && showAnswer !== lastShowAnswer) {
       //  仅更新状态跟踪，不重新渲染
@@ -274,7 +311,7 @@
   //  监听卡片渲染完成，应用图片遮罩
   $effect(() => {
     if (card && currentPreviewData && containerElement && maskIntegration) {
-      //  关键修复：立即缓存containerElement，避免异步操作中失效
+      // 立即缓存 containerElement，避免异步操作中失效
       const cachedContainer = containerElement;
       
       // 等待 DOM 更新
@@ -306,7 +343,7 @@
               
               await Promise.all(imageLoadPromises);
               
-              // 应用遮罩 - 🆕 启用交互模式（点击单个遮罩切换）
+              // 应用遮罩，启用交互模式（点击单个遮罩切换）
               const content = effectiveCard?.content || card.content || '';
               const enableInteractive = !showAnswer; // 仅在未显示答案时启用交互
               maskIntegration.applyMasksInContainer(cachedContainer, content, enableInteractive);
@@ -358,7 +395,11 @@
 
     const requestId = ++renderRequestId;
 
-    isLoading = true;
+    // 切换卡片时不设置 isLoading，避免销毁/重建卡片组件导致视觉抖动
+    // 仅在首次加载（无预览数据）时显示加载状态
+    if (!currentPreviewData) {
+      isLoading = true;
+    }
     error = null;
 
     try {
@@ -514,6 +555,14 @@
     showAnswer = true;
   }
 
+  function handleClozeModeButtonClick(mode: ClozeMode): void {
+    if (!onClozeModeChange || isClozeModeSaving || mode === currentClozeMode) {
+      return;
+    }
+
+    void onClozeModeChange(mode);
+  }
+
   /**
    * 应用容器样式 - 支持统一题型
    */
@@ -615,12 +664,12 @@
   class:has-error={!!error}
   bind:this={containerElement}
 >
-  <!-- 🆕 优先级便签纸 - 显示在右上角 -->
-  {#if card && card.priority}
-    <div class="priority-sticky-note priority-{card.priority}">
-      <div class="sticky-number">{card.priority}</div>
+  <!-- 优先级便签纸，显示在右上角 -->
+  {#if displayPriority}
+    <div class="priority-sticky-note priority-{displayPriority}">
+      <div class="sticky-number">{displayPriority}</div>
       <div class="sticky-label">
-        {card.priority === 1 ? '低' : card.priority === 2 ? '中' : card.priority === 3 ? '高' : '紧急'}
+        {displayPriority === 1 ? '低' : displayPriority === 2 ? '中' : displayPriority === 3 ? '高' : '紧急'}
       </div>
     </div>
   {/if}
@@ -645,6 +694,29 @@
   {:else if currentPreviewData}
     <!-- 根据题型渲染对应组件 -->
     {@const cardType = currentPreviewData.cardType}
+    {#if false && showClozeModeToggle}
+      <div class="preview-toolbar">
+        <div class="cloze-mode-switch" role="group" aria-label="挖空模式切换">
+          <span class="cloze-mode-label">挖空模式</span>
+          <button
+            type="button"
+            class:active={currentClozeMode === 'reveal'}
+            onclick={() => handleClozeModeButtonClick('reveal')}
+            disabled={isClozeModeSaving || currentClozeMode === 'reveal'}
+          >
+            显示
+          </button>
+          <button
+            type="button"
+            class:active={currentClozeMode === 'input'}
+            onclick={() => handleClozeModeButtonClick('input')}
+            disabled={isClozeModeSaving || currentClozeMode === 'input'}
+          >
+            输入
+          </button>
+        </div>
+      </div>
+    {/if}
     {#if cardType === UnifiedCardType.SINGLE_CHOICE || cardType === UnifiedCardType.MULTIPLE_CHOICE}
       <!-- 新的选择题渲染系统 -->
       <CardContentView
@@ -667,7 +739,7 @@
         sections={currentPreviewData.sections}
         {showAnswer}
         {plugin}
-        {card}
+        card={effectiveCard || card}
         sourcePath={(currentPreviewData.metadata as any).sourcePath || ''}
         {animationController}
         {enableAnimations}
@@ -681,7 +753,7 @@
         sourcePath={(currentPreviewData.metadata as any).sourcePath || ''}
         {animationController}
         {enableAnimations}
-        {card}
+        card={effectiveCard || card}
         {activeClozeOrdinal}
       />
     {:else}
@@ -722,13 +794,64 @@
     transition: all var(--weave-duration-normal, 300ms) ease;
   }
 
-  /* 🆕 优先级便签纸样式 */
+  .preview-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    padding: 1rem 1.5rem 0;
+  }
+
+  .cloze-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--background-secondary) 92%, transparent);
+  }
+
+  .cloze-mode-label {
+    padding: 0 6px;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .cloze-mode-switch button {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, opacity 0.2s ease;
+  }
+
+  .cloze-mode-switch button:hover:not(:disabled) {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+  }
+
+  .cloze-mode-switch button.active {
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+  }
+
+  .cloze-mode-switch button:disabled {
+    opacity: 0.75;
+    cursor: not-allowed;
+  }
+
+  /* 优先级便签纸样式 */
   .priority-sticky-note {
+    --weave-sticky-paper: var(--weave-surface-background, var(--background-primary));
+    --weave-sticky-surface: var(--weave-elevated-background, var(--background-secondary));
     position: absolute;
-    top: 16px;
-    right: 16px;
-    width: 75px;
-    height: 75px;
+    top: 20px;
+    right: 24px;
+    width: 68px;
+    height: 68px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -736,16 +859,17 @@
     gap: 0.25rem;
     border-radius: 4px;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15);
-    transform: rotate(-3deg);
+    transform: rotate(-2deg);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    z-index: var(--weave-z-overlay); /* 🆕 确保在所有内容之上 */
-    cursor: pointer;
+    z-index: var(--weave-z-overlay); /* 确保在所有内容之上 */
+    pointer-events: none;
     user-select: none;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
   }
 
   /*  已移除hover浮动效果 */
 
-  /* 🆕 胶带效果 */
+  /* 胶带效果 */
   .priority-sticky-note::before {
     content: '';
     position: absolute;
@@ -754,10 +878,11 @@
     transform: translateX(-50%);
     width: 48px;
     height: 16px;
-    background: rgba(255, 255, 255, 0.2);
+    background: color-mix(in srgb, var(--weave-sticky-paper) 68%, transparent);
     border-radius: 2px;
     backdrop-filter: blur(4px);
     box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 46%, transparent);
   }
 
   .sticky-number {
@@ -775,31 +900,47 @@
     opacity: 0.9;
   }
 
-  /* 🆕 优先级1 - 黄色便签（低优先级）*/
+  /* 优先级 1 - 黄色便签（低优先级）*/
   .priority-1 { 
-    background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
-    color: #92400e; 
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-yellow, #f59e0b) 18%, var(--weave-sticky-paper)) 0%,
+      color-mix(in srgb, var(--color-yellow, #f59e0b) 30%, var(--weave-sticky-surface)) 100%
+    );
+    color: color-mix(in srgb, var(--color-yellow, #f59e0b) 82%, var(--text-normal)); 
   }
   
-  /* 🆕 优先级2 - 蓝色便签（中优先级）*/
+  /* 优先级 2 - 蓝色便签（中优先级）*/
   .priority-2 { 
-    background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
-    color: #1e3a8a; 
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-blue, #3b82f6) 16%, var(--weave-sticky-paper)) 0%,
+      color-mix(in srgb, var(--color-blue, #3b82f6) 28%, var(--weave-sticky-surface)) 100%
+    );
+    color: color-mix(in srgb, var(--color-blue, #3b82f6) 80%, var(--text-normal)); 
   }
   
-  /* 🆕 优先级3 - 橙色便签（高优先级）*/
+  /* 优先级 3 - 橙色便签（高优先级）*/
   .priority-3 { 
-    background: linear-gradient(135deg, #fed7aa 0%, #fdba74 100%);
-    color: #7c2d12; 
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-orange, #f97316) 18%, var(--weave-sticky-paper)) 0%,
+      color-mix(in srgb, var(--color-orange, #f97316) 30%, var(--weave-sticky-surface)) 100%
+    );
+    color: color-mix(in srgb, var(--color-orange, #f97316) 78%, var(--text-normal)); 
   }
   
-  /* 🆕 优先级4 - 红色便签（紧急）+ 摇摆动画 */
+  /* 优先级 4 - 红色便签（紧急）+ 摇摆动画 */
   .priority-4 { 
-    background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
-    color: #991b1b;
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-red, #ef4444) 18%, var(--weave-sticky-paper)) 0%,
+      color-mix(in srgb, var(--color-red, #ef4444) 30%, var(--weave-sticky-surface)) 100%
+    );
+    color: color-mix(in srgb, var(--color-red, #ef4444) 80%, var(--text-normal));
   }
 
-  /* 🆕 优先级4的摇摆动画 */
+  /* 优先级 4 的摇摆动画 */
   .priority-4 {
     animation: wiggle-sticky 0.8s ease-in-out infinite;
   }
@@ -821,6 +962,7 @@
   /* 预览内容区域 - 现代UI设计间距 */
   .weave-preview-container :global(.preview-content) {
     padding: var(--weave-space-xl, 2rem); /* ✅ 增加内边距确保内容不贴边 */
+    padding-right: calc(var(--weave-space-xl, 2rem) + 5.5rem);
     margin: 0;
     flex: 1; /* 填满容器 */
     overflow-y: auto; /* ✅ 内容区域自己滚动 */
@@ -837,6 +979,7 @@
   /* 确保卡片基础组件有合适的内边距 */
   .weave-preview-container :global(.weave-card-base) {
     padding: var(--weave-space-lg, 1.5rem);
+    padding-right: calc(var(--weave-space-lg, 1.5rem) + 5.5rem);
     margin: 0;
   }
 
@@ -989,6 +1132,19 @@
       border-radius: var(--weave-radius-md, 0.5rem);
     }
 
+    .preview-toolbar {
+      padding: 0.75rem 0.75rem 0;
+    }
+
+    .cloze-mode-label {
+      font-size: 11px;
+    }
+
+    .cloze-mode-switch button {
+      padding: 5px 9px;
+      font-size: 11px;
+    }
+
     .weave-preview-empty,
     .weave-preview-loading {
       padding: 2rem 1rem;
@@ -1006,12 +1162,12 @@
       font-size: 0.8rem;
     }
 
-    /* 🆕 移动端便签纸缩小 */
+    /* 移动端便签纸缩小 */
     .priority-sticky-note {
       width: 60px;
       height: 60px;
       top: 12px;
-      right: 12px;
+      right: 16px;
     }
 
     .sticky-number {
@@ -1029,7 +1185,7 @@
     }
   }
 
-  /* 🆕 超小屏幕进一步缩小 */
+  /* 超小屏幕进一步缩小 */
   @media (max-width: 480px) {
     .priority-sticky-note {
       width: 50px;
@@ -1058,10 +1214,12 @@
   /* 手机端：减小内边距，增加内容显示宽度 */
   :global(body.is-phone) .weave-preview-container :global(.preview-content) {
     padding: var(--weave-mobile-spacing-sm, 0.5rem);
+    padding-right: calc(var(--weave-mobile-spacing-sm, 0.5rem) + 4.5rem);
   }
 
   :global(body.is-phone) .weave-preview-container :global(.weave-card-base) {
     padding: var(--weave-mobile-spacing-sm, 0.5rem);
+    padding-right: calc(var(--weave-mobile-spacing-sm, 0.5rem) + 4.5rem);
   }
 
   :global(body.is-phone) .weave-preview-container :global(.weave-cloze-section),

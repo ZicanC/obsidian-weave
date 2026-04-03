@@ -52,8 +52,14 @@
 
 <div 
   class="ir-no-blocks-backdrop"
-  onclick={() => { if (typeof onClose === 'function') onClose(); }}
-  onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { if (typeof onClose === 'function') onClose(); } }}
+  onclick={(event) => {
+    if (event.target === event.currentTarget && typeof onClose === 'function') onClose();
+  }}
+  onkeydown={(event) => {
+    if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {
+      if (typeof onClose === 'function') onClose();
+    }
+  }}
   role="button"
   tabindex="0"
   aria-label="关闭提示窗口"
@@ -61,8 +67,6 @@
   <div 
     class="ir-no-blocks-card"
     class:show={showContent}
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
     role="dialog"
     tabindex="-1"
     aria-labelledby="ir-no-blocks-title"

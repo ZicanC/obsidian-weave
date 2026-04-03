@@ -73,6 +73,24 @@ public/*
 # Temporary folders
 tmp/
 temp/
+*.bak
+*.bak-*
+*.check.output.txt
+*.test.output.txt
+check-output.txt
+biome-*.txt
+*_check*.txt
+_check_*.js
+_commit_msg.txt
+vitest-*.json
+
+# Local development artifacts
+.dev-watch.lock.json
+.lint-obsidian.json
+.tmp-*.json
+.tmp-*.txt
+stdout
+tmp-snippet.ts
 
 # Stores VSCode versions used for testing VSCode extensions
 .vscode-test
@@ -224,6 +242,8 @@ scripts/
 # 测试文件
 test/
 tests/
+!src/tests/
+!src/tests/**
 COMMIT_MSG.txt
 
 # 非代码内部文档
@@ -241,11 +261,3 @@ INSTALLATION.md
 biome.json
 uno.config.ts
 eslint.config.mjs
-.env.example
-
-# 激活码/许可证系统源码（闭源）
-src/utils/licenseManager.ts
-src/utils/cloudLicenseValidator.ts
-src/utils/security.ts
-src/config/security-config.ts
-src/components/settings/constants/activation-constants.ts

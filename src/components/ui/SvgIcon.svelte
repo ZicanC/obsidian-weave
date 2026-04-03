@@ -80,7 +80,7 @@
   $effect(() => {
     if (iconElement) {
       // 清空现有内容
-      iconElement.innerHTML = '';
+      iconElement.replaceChildren();
       
       // 创建新图标
       const icon = createIcon();

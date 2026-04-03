@@ -20,7 +20,7 @@
     if (component) {
       component.unload();
     }
-    container.innerHTML = '';
+    container.replaceChildren();
 
     component = new Component();
     await MarkdownRenderer.render(

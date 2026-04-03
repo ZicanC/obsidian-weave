@@ -3,6 +3,7 @@
   import { vaultStorage } from '../../utils/vault-local-storage';
 
   import { onMount, tick } from 'svelte';
+  import { get } from 'svelte/store';
   import { Menu, Notice } from 'obsidian';
   import type { Deck, Card } from '../../data/types';
   import type { DeckTreeNode } from '../../services/deck/DeckHierarchyService';
@@ -11,15 +12,18 @@
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import ObsidianDropdown from '../ui/ObsidianDropdown.svelte';
   import DeckGridCard from './DeckGridCard.svelte';
+  import ChineseElegantDeckCard from './ChineseElegantDeckCard.svelte';
+  import type { DeckCardStyle } from '../../types/plugin-settings.d';
   import { getColorSchemeForDeck } from '../../config/card-color-schemes';
   
   // 导入牌组聚合服务和类型
   import { DeckAggregationService } from '../../services/deck/DeckAggregationService';
   import type { DeckGroupByType, DeckTagGroup } from '../../types/deck-kanban-types';
   import { DECK_GROUP_CONFIGS, DECK_GROUP_BY_LABELS } from '../../types/deck-kanban-types';
-  import { getAdvanceStudyCards } from '../../utils/study/studyCompletionHelper';
   import { tr } from '../../utils/i18n';
-import { showObsidianConfirm } from '../../utils/obsidian-confirm';
+  import { showObsidianConfirm } from '../../utils/obsidian-confirm';
+  import { buildMemoryDeckMenu, type MemoryDeckMenuAction } from '../../services/deck/MemoryDeckMenu';
+  import { PremiumFeatureGuard, PREMIUM_FEATURES } from '../../services/premium/PremiumFeatureGuard';
   
   // 导入快速标签组创建器
   import QuickTagGroupCreator from './QuickTagGroupCreator.svelte';
@@ -44,7 +48,8 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     onOpenLoadForecast?: (deckId: string) => void;
     onEditDeck?: (deckId: string) => void;
     onDeleteDeck?: (deckId: string) => void;
-    // 🆕 v2.0 引用式牌组系统
+    onOpenKnowledgeGraph?: (deckId: string) => void;
+    // 引用式牌组系统
     onDissolveDeck?: (deckId: string) => void;
   }
 
@@ -64,7 +69,8 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     onOpenLoadForecast,
     onEditDeck,
     onDeleteDeck,
-    // 🆕 v2.0 引用式牌组系统
+    onOpenKnowledgeGraph,
+    // 引用式牌组系统
     onDissolveDeck
   }: Props = $props();
   
@@ -73,11 +79,12 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   let groupedDecks = $state<Record<string, Deck[]>>({});
   let isLoading = $state(false);
   let aggregationService: DeckAggregationService;
+  const premiumGuard = PremiumFeatureGuard.getInstance();
   
-  // 🆕 标签组分组相关状态
+  // 标签组分组相关状态
   let selectedTagGroupId = $state<string | null>(null);
   let showQuickCreator = $state(false);
-  let editingTagGroup = $state<DeckTagGroup | undefined>(undefined); // 🆕 编辑中的标签组
+  let editingTagGroup = $state<DeckTagGroup | undefined>(undefined); // 编辑中的标签组
   
   // 看板配置状态
   let showKanbanMenu = $state(false);
@@ -109,6 +116,11 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   let draggedDeck = $state<Deck | null>(null);
   let dragOverColumn = $state<string | null>(null);
   
+  // 获取当前牌组卡片设计样式
+  const deckCardStyle = $derived<DeckCardStyle>(
+    (plugin?.settings?.deckCardStyle as DeckCardStyle) || 'default'
+  );
+
   //  初始化聚合服务，传入实时统计数据
   aggregationService = new DeckAggregationService(dataStorage, deckStats);
   
@@ -131,7 +143,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   
   const allDecks = $derived(flattenDeckTree(deckTree));
   
-  // 🆕 获取选定的标签组
+  // 获取选定的标签组
   const selectedTagGroup = $derived((() => {
     if (groupBy === 'tagGroup' && selectedTagGroupId && plugin?.settings.deckTagGroups) {
       return plugin.settings.deckTagGroups.find(tg => tg.id === selectedTagGroupId);
@@ -161,18 +173,18 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       // 添加"无标签"分组
       tagGroups.push({
         key: 'noTag',
-        label: '无标签',
+        label: t('decks.kanban.noTag'),
         color: '#6b7280',
         icon: 'circle'
       });
       
       return {
-        title: '标签分组',
+        title: t('decks.kanban.tagGrouping'),
         icon: 'tag',
         groups: tagGroups
       };
     } else if (groupBy === 'tagGroup' && selectedTagGroup) {
-      // 🆕 标签组分组
+      // 标签组分组
       const tagGroups = selectedTagGroup.tags.map((tag: string, index: number) => ({
         key: tag,
         label: tag,
@@ -183,13 +195,13 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       // 添加"其他"分组
       tagGroups.push({
         key: '__other__',
-        label: '其他',
+        label: t('decks.kanban.other'),
         color: '#6b7280',
         icon: 'circle'
       });
       
       return {
-        title: `标签组：${selectedTagGroup.name}`,
+        title: t('decks.kanban.tagGroupPrefix', { name: selectedTagGroup.name }),
         icon: selectedTagGroup.icon || 'tags',
         groups: tagGroups
       };
@@ -232,7 +244,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     async function updateGrouping() {
       isLoading = true;
       try {
-        // 🆕 如果是tagGroup分组，传入selectedTagGroup
+        // 如果是 tagGroup 分组，传入 selectedTagGroup
         if (groupBy === 'tagGroup') {
           groupedDecks = await aggregationService.groupDecks(allDecks, groupBy, selectedTagGroup || undefined);
         } else {
@@ -262,7 +274,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       groupBy = 'tag';
     }
     
-    // 🆕 加载选定的标签组
+    // 加载选定的标签组
     const savedTagGroupId = vaultStorage.getItem('weave-selected-tag-group');
     if (savedTagGroupId) {
       selectedTagGroupId = savedTagGroupId;
@@ -284,7 +296,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       }
     }
     
-    // 🆕 监听移动端头部按钮的菜单打开事件
+    // 监听移动端头部按钮的菜单打开事件
     const handleOpenKanbanMenu = (e: Event) => {
       const detail = (e as CustomEvent<{ x: number; y: number }>).detail;
       if (detail) {
@@ -347,7 +359,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     showKanbanMenu = true;
   }
   
-  // 🆕 通过事件打开菜单（由移动端头部按钮触发）
+  // 通过事件打开菜单（由移动端头部按钮触发）
   function openKanbanMenuAtPosition(x: number, y: number) {
     if (showKanbanMenu) {
       closeKanbanMenu();
@@ -397,7 +409,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     menuView = 'main';
   }
   
-  // 🆕 使用 Obsidian Menu API 打开分组方式选择菜单
+  // 使用 Obsidian Menu API 打开分组方式选择菜单
   function openGroupByMenu(event: MouseEvent) {
     const menu = new Menu();
     
@@ -445,7 +457,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     }, 200);
   }
   
-  // 🆕 保存标签组（创建或更新）
+  // 保存标签组（创建或更新）
   async function handleSaveTagGroup(tagGroup: DeckTagGroup) {
     if (!plugin) return;
     
@@ -455,11 +467,11 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     if (existingIndex !== -1) {
       // 更新现有标签组
       tagGroups[existingIndex] = tagGroup;
-      new Notice(`标签组"${tagGroup.name}"已更新`);
+      new Notice(t('decks.kanban.tagGroupUpdated', { name: tagGroup.name }));
     } else {
       // 添加新标签组
       tagGroups.push(tagGroup);
-      new Notice(`标签组"${tagGroup.name}"已创建`);
+      new Notice(t('decks.kanban.tagGroupCreated', { name: tagGroup.name }));
     }
     
     plugin.settings.deckTagGroups = tagGroups;
@@ -474,7 +486,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     editingTagGroup = undefined;
   }
   
-  // 🆕 编辑标签组
+  // 编辑标签组
   function handleEditTagGroup() {
     if (!plugin || !selectedTagGroupId) return;
     
@@ -486,15 +498,15 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     showQuickCreator = true;
   }
   
-  // 🆕 删除标签组
+  // 删除标签组
   async function handleDeleteTagGroup() {
     if (!plugin || !selectedTagGroupId) return;
     
     const tagGroup = plugin.settings.deckTagGroups?.find(tg => tg.id === selectedTagGroupId);
     if (!tagGroup) return;
     
-    //  使用 Obsidian Modal 代替 confirm()，避免焦点劫持问题
-    const confirmed = await showObsidianConfirm(plugin!.app, `确定要删除标签组"${tagGroup.name}"吗？`, { title: '确认删除' });
+    //  使用 Obsidian Modal 代替原生确认框，避免焦点劫持问题
+    const confirmed = await showObsidianConfirm(plugin!.app, t('decks.kanban.tagGroupDeleteConfirm', { name: tagGroup.name }), { title: t('decks.kanban.confirmDelete') });
     if (!confirmed) {
       return;
     }
@@ -507,7 +519,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     selectedTagGroupId = null;
     vaultStorage.removeItem('weave-selected-tag-group');
     
-    new Notice(`标签组"${tagGroup.name}"已删除`);
+    new Notice(t('decks.kanban.tagGroupDeleted', { name: tagGroup.name }));
   }
   
   // 列可见性切换
@@ -646,6 +658,16 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   }
   
   // 显示牌组菜单（根据 deckMode 显示不同菜单项）
+  async function dispatchMemoryDeckMenuAction(action: MemoryDeckMenuAction, deckId: string): Promise<void> {
+    try {
+      window.dispatchEvent(new CustomEvent('Weave:request-memory-deck-action', {
+        detail: { action, deckId }
+      }));
+    } catch (error) {
+      logger.error('[KanbanView] 转发记忆牌组菜单动作失败:', error);
+    }
+  }
+
   function showDeckMenu(event: MouseEvent, deckId: string) {
     event.preventDefault();
     const menu = new Menu();
@@ -656,28 +678,27 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     if (deckMode === 'incremental-reading') {
       // === 增量阅读牌组菜单（与 IRDeckView 网格视图一致）===
       menu.addItem((item) =>
-        item.setTitle('开始阅读').setIcon('play')
+        item.setTitle(t('decks.kanban.startReading')).setIcon('play')
           .onClick(() => onStartStudy(deckId))
       );
       
       menu.addItem((item) =>
-        item.setTitle('提前阅读').setIcon('fast-forward')
+        item.setTitle(t('decks.kanban.advanceReading')).setIcon('fast-forward')
           .onClick(async () => {
             try {
-              const { IRStorageAdapterV4 } = await import('../../services/incremental-reading/IRStorageAdapterV4');
-              const storageAdapter = new IRStorageAdapterV4(plugin!.app);
-              await storageAdapter.initialize();
-              const allBlocksV4 = await storageAdapter.getBlocksByDeckV4Fast(deckId);
-              if (allBlocksV4.length === 0) { new Notice('该牌组暂无内容块'); return; }
               const { IRStorageService } = await import('../../services/incremental-reading/IRStorageService');
               const irStorage = new IRStorageService(plugin!.app);
               await irStorage.initialize();
               const irDeck = await irStorage.getDeckById(deckId);
-              const deckName = irDeck?.name || '增量阅读';
-              await plugin!.openIRFocusView(deckId, allBlocksV4, deckName);
+              const deckName = irDeck?.name || t('deckStudyPage.fallback.incrementalReading');
+              await plugin!.redirectIncrementalReadingToSidebar({
+                deckPath: deckId,
+                deckName,
+                closeLegacyFocusLeaves: true
+              });
             } catch (e) {
               logger.error('[KanbanView] 提前阅读失败:', e);
-              new Notice('提前阅读失败');
+              new Notice(t('decks.kanban.advanceReadingFailed'));
             }
           })
       );
@@ -685,23 +706,23 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       menu.addSeparator();
       
       menu.addItem((item) =>
-        item.setTitle('牌组编辑').setIcon('edit-3')
+        item.setTitle(t('decks.kanban.editDeck')).setIcon('edit-3')
           .onClick(() => onEditDeck?.(deckId))
       );
       
       menu.addItem((item) =>
-        item.setTitle('牌组分析').setIcon('bar-chart-2')
+        item.setTitle(t('decks.kanban.deckAnalytics')).setIcon('bar-chart-2')
           .onClick(() => onOpenLoadForecast?.(deckId))
       );
       
       menu.addSeparator();
       
       menu.addItem((item) =>
-        item.setTitle('解散牌组').setIcon('unlink')
+        item.setTitle(t('decks.kanban.dissolveDeck')).setIcon('unlink')
           .onClick(async () => {
             try {
               const { showObsidianConfirm } = await import('../../utils/obsidian-confirm');
-              const confirmed = await showObsidianConfirm(plugin!.app, '解散后牌组将被删除，但内容块数据会保留。确定继续？', { title: '解散牌组' });
+              const confirmed = await showObsidianConfirm(plugin!.app, t('decks.kanban.dissolveConfirmIR'), { title: t('decks.kanban.dissolveDeck') });
               if (!confirmed) return;
               const { IRStorageService } = await import('../../services/incremental-reading/IRStorageService');
               const { IRDeckManager } = await import('../../services/incremental-reading/IRDeckManager');
@@ -711,37 +732,37 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
               await deckManager.disbandDeck(deckId);
               onDeckUpdate?.();
               window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
-              new Notice('牌组已解散（内容块数据已保留）');
+              new Notice(t('decks.kanban.deckDissolved'));
             } catch (e) {
               logger.error('[KanbanView] 解散牌组失败:', e);
-              new Notice('解散牌组失败');
+              new Notice(t('decks.kanban.dissolveFailed'));
             }
           })
       );
       
       menu.addItem((item) =>
-        item.setTitle('删除牌组').setIcon('trash-2').setWarning(true)
+        item.setTitle(t('decks.kanban.deleteDeck')).setIcon('trash-2').setWarning(true)
           .onClick(() => onDeleteDeck?.(deckId))
       );
     } else if (deckMode === 'question-bank') {
       // === 考试牌组菜单（与 QuestionBankGridView 网格视图一致）===
       menu.addItem((item) =>
-        item.setTitle('牌组编辑').setIcon('edit-3')
+        item.setTitle(t('decks.kanban.editDeck')).setIcon('edit-3')
           .onClick(() => onEditDeck?.(deckId))
       );
       
       menu.addItem((item) =>
-        item.setTitle('分析').setIcon('bar-chart-2')
+        item.setTitle(t('decks.kanban.analytics')).setIcon('bar-chart-2')
           .onClick(async () => {
             try {
-              if (!plugin?.questionBankService) { new Notice('题库服务未初始化'); return; }
+              if (!plugin?.questionBankService) { new Notice(t('decks.kanban.qbServiceNotInit')); return; }
               const bank = await plugin.questionBankService.getBankById(deckId);
-              if (!bank) { new Notice('题库不存在'); return; }
+              if (!bank) { new Notice(t('decks.kanban.qbNotFound')); return; }
               // 触发分析事件，由父组件处理
               window.dispatchEvent(new CustomEvent('Weave:open-qb-analytics', { detail: { bankId: deckId } }));
             } catch (e) {
               logger.error('[KanbanView] 题库分析失败:', e);
-              new Notice('打开分析界面失败');
+              new Notice(t('decks.kanban.openAnalyticsFailed'));
             }
           })
       );
@@ -749,65 +770,40 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       menu.addSeparator();
       
       menu.addItem((item) =>
-        item.setTitle('删除').setIcon('trash-2')
+        item.setTitle(t('decks.menu.delete')).setIcon('trash-2')
           .onClick(() => onDeleteDeck?.(deckId))
       );
     } else {
       // === 记忆牌组菜单 ===
-      menu.addItem((item) =>
-        item
-          .setTitle(t('decks.menu.advanceStudy'))
-          .setIcon("fast-forward")
-          .onClick(async () => {
-            try {
-              const allCards = await dataStorage.getCardsByDeck(deck.id);
-              const maxAdvanceDays = plugin?.settings.maxAdvanceDays || 7;
-              const advanceCards = getAdvanceStudyCards(allCards, 20, maxAdvanceDays);
-              
-              if (advanceCards.length === 0) {
-                new Notice(t('common.noAdvanceCards') || 'No cards to advance study');
-                return;
-              }
-              
-              new Notice(`${advanceCards.length} cards available for advance study`);
-            } catch (error) {
-              logger.error('Failed to get advance study cards:', error);
-              new Notice('Failed to get card info');
-            }
-          })
+      const isPremium = get(premiumGuard.isPremiumActive);
+      const showPremiumFeaturesPreview = get(premiumGuard.premiumFeaturesPreviewEnabled);
+
+      buildMemoryDeckMenu(
+        menu,
+        {
+          advanceStudy: t('decks.menu.advanceStudy'),
+          deckAnalytics: t('decks.menu.deckAnalytics'),
+          knowledgeGraph: t('decks.menu.knowledgeGraph'),
+          editDeck: t('decks.menu.editDeck'),
+          deleteDeck: t('decks.menu.delete'),
+          dissolveDeck: t('decks.menu.dissolveDeck')
+        },
+        {
+          onAdvanceStudy: async () => await dispatchMemoryDeckMenuAction('advance-study', deckId),
+          onOpenDeckAnalytics: async () => await dispatchMemoryDeckMenuAction('deck-analytics', deckId),
+          onOpenKnowledgeGraph: async () => await dispatchMemoryDeckMenuAction('knowledge-graph', deckId),
+          onEditDeck: async () => await dispatchMemoryDeckMenuAction('edit-deck', deckId),
+          onDeleteDeck: async () => await dispatchMemoryDeckMenuAction('delete-deck', deckId),
+          onDissolveDeck: async () => await dispatchMemoryDeckMenuAction('dissolve-deck', deckId)
+        },
+        {
+          showDeckAnalytics: premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.DECK_ANALYTICS, {
+            isPremium,
+            showPremiumPreview: showPremiumFeaturesPreview
+          }),
+          lockDeckAnalytics: !premiumGuard.canUseFeature(PREMIUM_FEATURES.DECK_ANALYTICS)
+        }
       );
-      
-      menu.addItem((item) =>
-        item
-          .setTitle(t('decks.menu.deckAnalytics'))
-          .setIcon("bar-chart-2")
-          .onClick(() => onOpenDeckAnalytics?.(deckId))
-      );
-      
-      menu.addSeparator();
-      
-      menu.addItem((item) =>
-        item
-          .setTitle(t('decks.menu.editDeck'))
-          .setIcon("edit")
-          .onClick(() => onEditDeck?.(deckId))
-      );
-      
-      menu.addItem((item) =>
-        item
-          .setTitle(t('decks.menu.delete'))
-          .setIcon("trash-2")
-          .onClick(() => onDeleteDeck?.(deckId))
-      );
-      
-      if (onDissolveDeck) {
-        menu.addItem((item) =>
-          item
-            .setTitle('解散牌组')
-            .setIcon("unlink")
-            .onClick(() => onDissolveDeck?.(deckId))
-        );
-      }
     }
     
     menu.showAtMouseEvent(event);
@@ -903,12 +899,12 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
 </script>
 
 <div class="kanban-view">
-  <!-- 🆕 桌面端工具栏（移动端已移至头部） -->
+  <!-- 桌面端工具栏（移动端已移至头部） -->
   <!-- 加载状态 -->
   {#if isLoading}
     <div class="loading-indicator">
       <div class="spinner"></div>
-      <span>正在分组...</span>
+      <span>{t('decks.kanban.grouping')}</span>
     </div>
   {:else}
     <!-- 看板列 -->
@@ -921,7 +917,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
             class:drag-over={dragOverColumn === group.key}
             style="--column-color: {group.color}"
             role="region"
-            aria-label={`${group.label}分组`}
+            aria-label={t('decks.kanban.groupLabel', { label: group.label })}
             ondragover={(e) => handleDragOver(e, group.key)}
             ondragleave={handleDragLeave}
             ondrop={() => handleDrop(group.key)}
@@ -940,12 +936,13 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
               {#if decks.length === 0}
                 <div class="empty-message">
                   <EnhancedIcon name="inbox" size={24} />
-                  <span>暂无牌组</span>
+                  <span>{t('decks.kanban.emptyColumn')}</span>
                 </div>
               {:else}
                 {#each decks as deck (deck.id)}
                   {@const stats = getDeckStats(deck)}
                   {@const colorScheme = getColorSchemeForDeck(deck.id)}
+                  {@const colorVariant = ((decks.indexOf(deck) % 4) + 1) as 1 | 2 | 3 | 4}
                   <div 
                     class="kanban-card-wrapper"
                     class:dragging={draggedDeck?.id === deck.id}
@@ -956,14 +953,25 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
                     ondragstart={(e) => handleDragStart(e, deck)}
                     ondragend={handleDragEnd}
                   >
-                    <DeckGridCard
-                      {deck}
-                      stats={stats}
-                      colorScheme={colorScheme}
-                      {deckMode}
-                      onStudy={() => onStartStudy(deck.id)}
-                      onMenu={(e) => showDeckMenu(e, deck.id)}
-                    />
+                    {#if deckCardStyle === 'chinese-elegant'}
+                      <ChineseElegantDeckCard
+                        {deck}
+                        stats={stats}
+                        {colorVariant}
+                        {deckMode}
+                        onStudy={() => onStartStudy(deck.id)}
+                        onMenu={(e) => showDeckMenu(e, deck.id)}
+                      />
+                    {:else}
+                      <DeckGridCard
+                        {deck}
+                        stats={stats}
+                        colorScheme={colorScheme}
+                        {deckMode}
+                        onStudy={() => onStartStudy(deck.id)}
+                        onMenu={(e) => showDeckMenu(e, deck.id)}
+                      />
+                    {/if}
                   </div>
                 {/each}
               {/if}
@@ -989,7 +997,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       class="weave-column-menu kanban-dropdown-menu" 
       style="position: fixed; top: {menuPosition.top}px; right: {menuPosition.right}px;"
       role="dialog"
-      aria-label="看板设置"
+      aria-label={t('decks.kanban.kanbanSettings')}
       tabindex="-1"
     >
       {#if menuView === 'main'}
@@ -997,7 +1005,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
         <div class="notion-menu-header">
           <div class="notion-menu-title">
             <EnhancedIcon name="sliders" size={14} />
-            <span>视图选项</span>
+            <span>{t('decks.kanban.viewOptions')}</span>
           </div>
           <button class="notion-close-btn" onclick={closeKanbanMenu}>
             <EnhancedIcon name="x" size={14} />
@@ -1017,24 +1025,24 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
             }
           }}
         >
-          <span class="notion-menu-label">分组方式</span>
+          <span class="notion-menu-label">{t('decks.kanban.groupByLabel')}</span>
           <div class="notion-menu-value">
             <span>{DECK_GROUP_BY_LABELS[groupBy]}</span>
             <EnhancedIcon name="chevron-right" size={12} />
           </div>
         </div>
         
-        <!-- 🆕 标签组选择器（仅在标签组分组模式下显示） -->
+        <!-- 标签组选择器（仅在标签组分组模式下显示） -->
         {#if groupBy === 'tagGroup' && plugin}
           <div class="tag-group-selector-inline">
             {#if plugin.settings.deckTagGroups && plugin.settings.deckTagGroups.length > 0}
               <div class="notion-menu-row">
-                <span class="notion-menu-label">标签组</span>
-                <div onclick={(e) => e.stopPropagation()}>
+                <span class="notion-menu-label">{t('decks.kanban.tagGroup')}</span>
+                <div>
                   <ObsidianDropdown
                     className="tag-group-select-mini"
                     options={[
-                      { id: '', label: '-- 请选择 --' },
+                      { id: '', label: t('decks.kanban.selectPlaceholder') },
                       ...plugin.settings.deckTagGroups.map((tg) => ({
                         id: tg.id,
                         label: `${tg.icon || '📦'} ${tg.name}`
@@ -1051,24 +1059,24 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
                 </div>
               </div>
               <div class="tag-group-actions-mini">
-                <button class="notion-icon-btn" onclick={() => { editingTagGroup = undefined; showQuickCreator = true; }} title="新建标签组">
+                <button class="notion-icon-btn" onclick={() => { editingTagGroup = undefined; showQuickCreator = true; }} title={t('decks.kanban.newTagGroup')}>
                   <EnhancedIcon name="plus" size={12} />
                 </button>
                 {#if selectedTagGroupId}
-                  <button class="notion-icon-btn" onclick={handleEditTagGroup} title="编辑标签组">
+                  <button class="notion-icon-btn" onclick={handleEditTagGroup} title={t('decks.kanban.editTagGroup')}>
                     <EnhancedIcon name="edit" size={12} />
                   </button>
-                  <button class="notion-icon-btn danger" onclick={handleDeleteTagGroup} title="删除标签组">
+                  <button class="notion-icon-btn danger" onclick={handleDeleteTagGroup} title={t('decks.kanban.deleteTagGroup')}>
                     <EnhancedIcon name="trash-2" size={12} />
                   </button>
                 {/if}
               </div>
             {:else}
               <div class="notion-menu-row">
-                <span class="notion-menu-label">标签组</span>
+                <span class="notion-menu-label">{t('decks.kanban.tagGroup')}</span>
                 <button class="notion-text-btn" onclick={() => showQuickCreator = true}>
                   <EnhancedIcon name="plus" size={12} />
-                  <span>新建</span>
+                  <span>{t('decks.kanban.createNew')}</span>
                 </button>
               </div>
             {/if}
@@ -1079,7 +1087,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
         
         <!-- 配置选项 -->
         <div class="notion-menu-row">
-          <span class="notion-menu-label">隐藏空白分组</span>
+          <span class="notion-menu-label">{t('decks.kanban.hideEmptyGroups')}</span>
           <div 
             class="notion-toggle-mini {columnConfig.hideEmptyGroups ? 'active' : ''}"
             role="switch"
@@ -1100,7 +1108,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
         
         <!-- 群组标题 -->
         <div class="notion-section-header">
-          <span class="notion-section-title">群组</span>
+          <span class="notion-section-title">{t('decks.kanban.groups')}</span>
           <div class="notion-action-group">
             <span 
               class="notion-section-action" 
@@ -1113,7 +1121,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
                   handleReset();
                 }
               }}
-            >重置</span>
+            >{t('decks.kanban.reset')}</span>
             <span class="notion-separator">·</span>
             <span 
               class="notion-section-action" 
@@ -1126,8 +1134,8 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
                   handleToggleAllVisibility();
                 }
               }}
-              title={isAllHidden ? '显示所有列' : '隐藏所有列'}
-            >{isAllHidden ? '全部显示' : '全部隐藏'}</span>
+              title={isAllHidden ? t('decks.kanban.showAll') : t('decks.kanban.hideAll')}
+            >{isAllHidden ? t('decks.kanban.showAllBtn') : t('decks.kanban.hideAllBtn')}</span>
           </div>
         </div>
         
@@ -1172,7 +1180,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   </div>
 {/if}
 
-<!-- 🆕 快速创建/编辑标签组对话框 -->
+<!-- 快速创建/编辑标签组对话框 -->
 {#if showQuickCreator && plugin}
   <QuickTagGroupCreator
     {plugin}
@@ -1184,79 +1192,18 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
 
 <style>
   .kanban-view {
+    --weave-kanban-page-bg: var(--weave-card-page-bg, var(--weave-surface-background, var(--background-primary)));
+    --weave-kanban-panel-bg: var(
+      --weave-card-panel-bg,
+      var(--weave-elevated-background, var(--background-secondary))
+    );
     flex: 1;
     display: flex;
     flex-direction: column;
     padding: 20px;
     overflow: hidden;
     gap: 16px;
-  }
-  
-  /* 工具栏样式 */
-  .deck-kanban-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    background: var(--background-secondary);
-    border-radius: 8px;
-    border: 1px solid var(--background-modifier-border);
-  }
-  
-  .toolbar-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-  
-  .kanban-title {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--text-normal);
-    margin: 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  
-  .total-count-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 24px;
-    height: 24px;
-    padding: 0 8px;
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    border-radius: 12px;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  
-  .toolbar-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    position: relative;
-  }
-  
-  .kanban-menu-button {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
-    background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
-    color: var(--text-normal);
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-  
-  .kanban-menu-button:hover {
-    background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
+    background: var(--weave-kanban-page-bg);
   }
   
   /* 加载状态 */
@@ -1290,12 +1237,14 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     gap: 16px;
     flex: 1;
     min-height: 0;
+    align-content: start;
+    background: var(--weave-kanban-page-bg);
   }
   
   .kanban-column {
     display: flex;
     flex-direction: column;
-    background: var(--background-secondary);
+    background: var(--weave-kanban-panel-bg);
     border-radius: 12px;
     padding: 16px;
     min-height: 0;
@@ -1360,7 +1309,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   }
   
   .column-content::-webkit-scrollbar-thumb {
-    background: var(--background-modifier-border);
+    background: color-mix(in srgb, var(--background-modifier-border) 72%, var(--background-secondary) 28%);
     border-radius: 3px;
   }
   
@@ -1386,7 +1335,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   
   /* 拖拽目标列高亮 */
   .kanban-column.drag-over {
-    background: color-mix(in srgb, var(--column-color) 5%, var(--background-secondary));
+    background: color-mix(in srgb, var(--column-color) 5%, var(--weave-kanban-panel-bg));
     border: 2px dashed var(--interactive-accent);
   }
   
@@ -1417,9 +1366,6 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
       grid-template-columns: 1fr;
     }
     
-    .kanban-menu-button span {
-      display: none;
-    }
   }
   
   /*  移动端专属样式 */
@@ -1474,29 +1420,12 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     font-size: 11px;
   }
   
-  :global(body.is-mobile) .deck-kanban-toolbar.desktop-only {
-    display: none;
-  }
-  
-  :global(body.is-mobile) .kanban-title {
-    font-size: 14px;
-  }
-  
-  :global(body.is-mobile) .kanban-menu-button {
-    padding: 6px 10px;
-    font-size: 12px;
-  }
-  
-  :global(body.is-mobile) .kanban-menu-button span {
-    display: none;
-  }
-  
   /* 下拉菜单样式 */
   
   .kanban-dropdown-menu {
     width: 280px;
     max-height: 400px;
-    background: var(--background-primary);
+    background: var(--weave-kanban-panel-bg);
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
@@ -1536,8 +1465,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     letter-spacing: 0.5px;
   }
   
-  .notion-close-btn, 
-  .notion-back-btn {
+  .notion-close-btn {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -1551,8 +1479,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     transition: background-color 0.15s;
   }
   
-  .notion-close-btn:hover, 
-  .notion-back-btn:hover {
+  .notion-close-btn:hover {
     background: var(--background-modifier-hover);
     color: var(--text-normal);
   }
@@ -1576,20 +1503,6 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     background: var(--background-modifier-hover);
   }
   
-  .notion-menu-row--option {
-    padding: 8px 12px;
-    cursor: pointer;
-  }
-  
-  .notion-menu-row--option:hover {
-    background: var(--background-modifier-hover);
-  }
-  
-  .notion-menu-row--selected {
-    background: var(--interactive-accent-hover);
-    color: var(--interactive-accent);
-  }
-  
   .notion-menu-label {
     color: var(--text-normal);
   }
@@ -1602,12 +1515,6 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     font-size: 12px;
   }
   
-  .notion-option-content {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  
   /* 切换开关 */
   .notion-toggle-mini {
     width: 32px;
@@ -1618,6 +1525,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     cursor: pointer;
     transition: background-color 0.2s;
     flex-shrink: 0;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, transparent);
   }
   
   .notion-toggle-mini.active {
@@ -1628,12 +1536,13 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     width: 14px;
     height: 14px;
     border-radius: 50%;
-    background: white;
+    background: color-mix(in srgb, var(--background-primary) 78%, white 22%);
     position: absolute;
     top: 2px;
     left: 2px;
     transition: transform 0.2s;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 62%, transparent);
   }
   
   .notion-toggle-mini.active .notion-toggle-thumb {
@@ -1700,7 +1609,7 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   }
   
   .notion-group-item.drag-over {
-    background: var(--background-secondary);
+    background: var(--weave-kanban-panel-bg);
     border: 1px dashed var(--interactive-accent);
   }
   
@@ -1787,38 +1696,23 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     }
   }
 
-  /* 🆕 标签组选择器样式（内联版本） */
+  /* 标签组选择器样式（内联版本） */
   .tag-group-selector-inline {
     padding: 4px 0;
   }
   
-  .tag-group-select-mini {
-    padding: 4px 8px;
-    font-size: 12px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    background: var(--background-primary);
-    color: var(--text-normal);
-    cursor: pointer;
-    max-width: 140px;
-  }
-
   :global(.obsidian-dropdown-trigger.tag-group-select-mini) {
     padding: 4px 8px;
     font-size: 12px;
     border: 1px solid var(--background-modifier-border);
     border-radius: 4px;
-    background: var(--background-primary);
+    background: var(--weave-kanban-panel-bg);
     color: var(--text-normal);
     cursor: pointer;
     max-width: 140px;
     min-height: 0;
   }
   
-  .tag-group-select-mini:hover {
-    border-color: var(--interactive-accent);
-  }
-
   :global(.obsidian-dropdown-trigger.tag-group-select-mini:hover:not(.disabled)) {
     border-color: var(--interactive-accent);
   }
@@ -1855,122 +1749,5 @@ import { showObsidianConfirm } from '../../utils/obsidian-confirm';
     background: rgba(255, 0, 0, 0.1);
   }
 
-  /* 旧版标签组选择器样式（保留兼容） */
-  .tag-group-selector {
-    padding: 12px;
-    margin: 4px 8px;
-    background: var(--background-secondary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 6px;
-  }
-
-  .selector-label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--text-muted);
-    margin-bottom: 8px;
-  }
-
-  .tag-group-select {
-    width: 100%;
-    padding: 6px 10px;
-    font-size: 13px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    background: var(--background-primary);
-    color: var(--text-normal);
-    cursor: pointer;
-    transition: border-color 0.2s;
-  }
-
-  .tag-group-select:hover {
-    border-color: var(--interactive-accent);
-  }
-
-  .tag-group-select:focus {
-    outline: none;
-    border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 2px var(--interactive-accent-hover);
-  }
-
-  /* 标签组操作按钮组 */
-  .tag-group-actions {
-    display: flex;
-    gap: 8px;
-    margin-top: 8px;
-  }
-
-  .action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    flex: 1;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 500;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .action-btn.secondary {
-    background: var(--background-primary);
-    color: var(--text-normal);
-  }
-
-  .action-btn.secondary:hover {
-    background: var(--background-modifier-hover);
-    border-color: var(--interactive-accent);
-    color: var(--interactive-accent);
-  }
-
-  .action-btn.danger {
-    background: var(--background-primary);
-    color: var(--text-error);
-    border-color: var(--background-modifier-border);
-  }
-
-  .action-btn.danger:hover {
-    background: var(--background-modifier-error);
-    border-color: var(--text-error);
-  }
-
-  /* 简化空状态提示 */
-  .empty-hint-simple {
-    padding: 12px;
-    text-align: center;
-    font-size: 13px;
-    color: var(--text-muted);
-    background: var(--background-modifier-hover);
-    border-radius: 4px;
-  }
-
-  /* 新建标签组按钮（空状态） */
-  .create-new-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    padding: 8px 16px;
-    margin-top: 8px;
-    font-size: 13px;
-    font-weight: 500;
-    border: 1px solid var(--interactive-accent);
-    border-radius: 6px;
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .create-new-btn:hover {
-    background: var(--interactive-accent-hover);
-  }
 </style>
 

@@ -13,6 +13,7 @@
    */
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
   import CategoryFilter, { type DeckFilter } from '../deck-views/CategoryFilter.svelte';
+  import { tr } from '../../utils/i18n';
 
   interface Props {
     selectedFilter?: DeckFilter;
@@ -29,6 +30,8 @@
     showKanbanSettings = false,
     onKanbanSettingsClick
   }: Props = $props();
+
+  let t = $derived($tr);
 
   function handleMenuClick(evt: MouseEvent) {
     onMenuClick(evt);
@@ -50,7 +53,7 @@
   <button
     class="mobile-menu-trigger"
     onclick={handleMenuClick}
-    aria-label="打开菜单"
+    aria-label={t('study.view.openMenu')}
   >
     <ObsidianIcon name="menu" size={18} />
   </button>
@@ -68,7 +71,7 @@
     <button
       class="mobile-kanban-settings"
       onclick={handleKanbanSettingsClick}
-      aria-label="看板列设置"
+      aria-label={t('study.mobileHeader.kanbanColumnSettings')}
     >
       <ObsidianIcon name="sliders" size={18} />
     </button>

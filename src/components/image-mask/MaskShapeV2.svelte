@@ -38,7 +38,7 @@ let resizeHandle = $state<string | null>(null);
 let dragStart = $state<{x: number; y: number; maskX: number; maskY: number; maskRadius?: number; maskWidth?: number; maskHeight?: number} | null>(null);
 
 // 元素引用
-let shapeElement: SVGElement | null = null;
+let shapeElement = $state<SVGElement | null>(null);
 let activePointerId: number | null = null;
 
 // 样式计算
@@ -156,8 +156,8 @@ function handleHandlePointerDown(e: PointerEvent, handleType: string) {
     maskX: mask.x,
     maskY: mask.y,
     maskRadius: mask.radius, // 保存原始半径（圆形缩放用）
-    maskWidth: mask.width,   // 🔧 修复：保存原始宽度（矩形缩放用）
-    maskHeight: mask.height  // 🔧 修复：保存原始高度（矩形缩放用）
+    maskWidth: mask.width,   // 保存原始宽度（矩形缩放用）
+    maskHeight: mask.height  // 保存原始高度（矩形缩放用）
   };
 }
 
@@ -227,7 +227,6 @@ function handleDoubleClick(e: MouseEvent) {
   if (!editable) return;
   
   e.preventDefault();
-  e.stopPropagation();
   
   // 双击删除遮罩
   onDelete?.();
@@ -280,7 +279,7 @@ function handleRectResize(newPoint: {x: number; y: number}) {
   if (!dragStart) return;
   
   const { maskX: origX, maskY: origY } = dragStart;
-  // 🔧 修复：使用 dragStart 保存的原始尺寸，而不是当前 mask 的尺寸
+  // 使用 dragStart 保存的原始尺寸，而不是当前 mask 的尺寸
   // 这样可以避免累积计算导致的灵敏度过高问题
   const origWidth = dragStart.maskWidth || 0;
   const origHeight = dragStart.maskHeight || 0;
@@ -363,7 +362,7 @@ function handleCircleResize(newPoint: {x: number; y: number}) {
   const dx = newPoint.x - dragStart.x;
   const dy = newPoint.y - dragStart.y;
   
-  // 🔧 修复：使用与矩形相同的灵敏度计算方式（单轴最大偏移量）
+  // 使用与矩形相同的灵敏度计算方式（单轴最大偏移量）
   // 而不是欧几里得距离，确保矩形和圆形灵敏度一致
   const maxDelta = Math.max(Math.abs(dx), Math.abs(dy));
   const sign = (dx + dy) > 0 ? 1 : -1; // 判断是放大还是缩小

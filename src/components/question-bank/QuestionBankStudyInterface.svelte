@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from "svelte";
-  import { Platform, Notice } from "obsidian";
+  import { Platform, Notice, Menu } from "obsidian";
   import type { WeavePlugin } from "../../main";
-  import type { TestSession, TestQuestionRecord, TestMode } from "../../types/question-bank-types";
+  import type { TestSession, TestQuestionRecord, TestMode, QuestionBankResumeBehavior } from "../../types/question-bank-types";
   import type { Card } from "../../data/types";
   import { TestSessionManager, TestScoringEngine } from "../../services/question-bank";
   import type { EmbeddableEditorManager } from "../../services/editor/EmbeddableEditorManager";
   import ObsidianIcon from "../ui/ObsidianIcon.svelte";
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
-  import { showObsidianConfirm } from "../../utils/obsidian-confirm";
+  import { showObsidianChoice, showObsidianConfirm } from "../../utils/obsidian-confirm";
+  import FloatingMenu from "../ui/FloatingMenu.svelte";
   import QuestionBankHeader from "./QuestionBankHeader.svelte";
   import QuestionBankStatsCards from "./QuestionBankStatsCards.svelte";
   import QuestionBankActionSection from "./QuestionBankActionSection.svelte";
@@ -16,18 +17,17 @@
   import QuestionNavigator from "./QuestionNavigator.svelte";
   import CardEditorContainer from "../study/CardEditorContainer.svelte";
   import CardDebugModal from "../modals/CardDebugModal.svelte";
-  import QuestionBankCardDetailModal from "../modals/QuestionBankCardDetailModal.svelte";
   import { logger } from "../../utils/logger";
   import { extractBodyContent } from "../../utils/yaml-utils";
   
-  // 🆕 选择题渲染支持
+  // 选择题渲染支持
   import ChoiceOptionRenderer from "../atoms/ChoiceOptionRenderer.svelte";
   import ObsidianRenderer from "../atoms/ObsidianRenderer.svelte";
   import type { ChoiceQuestion } from "../../parsing/choice-question-parser";
   import { parseCardContent } from "../../parsing/card-content-parser";
   import CardContentView from "../content/CardContentView.svelte";
   
-  // 🆕 重要程度贴纸
+  // 重要程度贴纸
   import ImportanceIndicator from "./ImportanceIndicator.svelte";
   
   //  移动端组件
@@ -44,6 +44,7 @@
     questions: Card[];
     mode?: TestMode;
     config?: import("../../types/question-bank-types").QuestionBankModeConfig;
+    resumeBehavior?: QuestionBankResumeBehavior;
     viewInstance?: QuestionBankView; //  视图实例用于移动端回调
     onComplete?: (session: TestSession) => void;
     onExit?: () => void;
@@ -51,10 +52,10 @@
 
   const editorSessionId = `weave-question-bank-session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-  let { bankId, bankName = "题库测试", plugin, questions, mode = 'exam', config, viewInstance, onComplete, onExit }: Props = $props();
+  let { bankId, bankName = "题库测试", plugin, questions, mode = 'exam', config, resumeBehavior = 'prompt', viewInstance, onComplete, onExit }: Props = $props();
 
   // 会话管理
-  let sessionManager: TestSessionManager | null = $state(null);  //  修复：使用$state声明
+  let sessionManager: TestSessionManager | null = $state(null);  // 使用 $state 声明
   let currentSession = $state<TestSession | null>(null);
   let currentQuestion = $state<TestQuestionRecord | null>(null);
 
@@ -64,7 +65,7 @@
   let hasSubmitted = $state(false);
   let statsCollapsed = $state(false);
   let showSidebar = $state(true);
-  let showNavigator = $state(true);  // 🆕 题目导航栏显示状态
+  let showNavigator = $state(true);  // 题目导航栏显示状态
 
   // 撤销功能
   let undoCount = $state(0); // 已使用的撤销次数
@@ -81,10 +82,9 @@
   let showDeleteConfirmModal = $state(false);
   let deleteConfirmCardId = $state('');
   let enableDirectDelete = $state(plugin.settings.enableDirectDelete ?? false);
-
-  // 重要程度功能状态
   let showPriorityModal = $state(false);
   let selectedPriority = $state(2);
+  let priorityAnchorElement: HTMLElement | null = $state(null);
 
   // 题目学习顺序设置
   let questionOrder = $state<'sequential' | 'random'>('sequential');
@@ -92,7 +92,7 @@
   // 题目导航列数模式（持久化）
   let navColumnMode = $state<1 | 3>(3);
 
-  // 🆕 侧边栏紧凑模式
+  // 侧边栏紧凑模式
   let compactMode = $state(false);
   let compactModeSetting = $state<'auto' | 'fixed'>('auto');
 
@@ -108,24 +108,34 @@
   let mobileViewportHeight = $state<number | null>(null);
   let mobileViewportCleanup: (() => void) | null = null;
 
-  const OBSIDIAN_MOBILE_HEADER_HEIGHT = 44;
-
   // --- 题目数据结构调试窗口状态 ---
   let showCardDebug = $state(false);
-
-  // --- 卡片详情模态窗状态 ---
-  let showDetailModal = $state(false);
 
   // 计时器
   let elapsedSeconds = $state(0);
   let timerInterval: number | null = null;
 
-  // 🆕 考试倒计时（FlipClock）
+  // 考试倒计时（FlipClock）
   let examDuration = $state(60 * 60 * 1000);  // 默认60分钟
   let examStartTime = $state(0);
   let remainingTime = $state(0);
   let isPaused = $state(false);
   let isTimeWarning = $derived(remainingTime > 0 && remainingTime < 5 * 60 * 1000);  // 最后5分钟警告
+  const isPureExamMode = $derived(!!config?.options?.pureExamMode);
+
+  function getExamTimeLimitMinutes() {
+    return config?.examTimeLimit?.exam;
+  }
+
+  function resolveExamDurationMs(): number {
+    const configuredDurationMs = currentSession?.config?.timeLimit
+      ?? config?.timeLimit
+      ?? (getExamTimeLimitMinutes() ? getExamTimeLimitMinutes()! * 60 * 1000 : undefined);
+
+    return configuredDurationMs && configuredDurationMs > 0
+      ? configuredDurationMs
+      : 60 * 60 * 1000;
+  }
 
   // ===== 工具函数 =====
   
@@ -141,7 +151,7 @@
     new Notice(userMessage || `${operation}失败: ${errorMessage}`);
   }
 
-  // 🆕 自动解析当前题目的选择题数据（支持Obsidian渲染）
+  // 自动解析当前题目的选择题数据（支持Obsidian渲染）
   // 使用 $derived 而非 $effect 避免无限循环
   let choiceQuestionDerived = $derived.by(() => {
     if (currentQuestion?.question.content) {
@@ -178,24 +188,58 @@
 
       const persisted = await plugin.questionBankStorage.loadInProgressSession(bankId);
       if (persisted && persisted.status === 'in_progress') {
-        const confirmed = await showObsidianConfirm(
-          plugin.app,
-          '检测到未完成的考试进度，是否恢复？',
-          { title: '恢复进度', confirmText: '恢复', cancelText: '重新开始' }
-        );
+        let action: 'resume' | 'restart' | 'cancel' = 'cancel';
 
-        if (confirmed) {
-          currentSession = await sessionManager.restoreSession(bankId);
-          currentQuestion = sessionManager.getCurrentQuestion();
-          if (currentQuestion) {
-            userAnswer = currentQuestion.userAnswer || null;
-            hasSubmitted = currentQuestion.isCorrect !== null && currentQuestion.isCorrect !== undefined;
-          }
-          startTimer();
-          initExamTimer();
-          return;
+        if (resumeBehavior === 'resume') {
+          action = 'resume';
+        } else if (resumeBehavior === 'restart') {
+          action = 'restart';
         } else {
+          const choice = await showObsidianChoice<'resume' | 'restart'>(
+            plugin.app,
+            '检测到未完成的考试进度，请选择后续操作。',
+            {
+              title: '恢复进度',
+              cancelText: '取消',
+              layout: 'horizontal',
+              choices: [
+                {
+                  value: 'resume',
+                  text: '恢复',
+                  className: 'mod-cta'
+                },
+                {
+                  value: 'restart',
+                  text: '重新开始'
+                }
+              ]
+            }
+          );
+
+          action = choice ?? 'cancel';
+        }
+
+        if (action === 'resume') {
+          currentSession = await sessionManager.restoreSession(bankId);
+          if (currentSession) {
+            currentQuestion = sessionManager.getCurrentQuestion();
+            if (currentQuestion) {
+              userAnswer = currentQuestion.userAnswer || null;
+              hasSubmitted = currentQuestion.isCorrect !== null && currentQuestion.isCorrect !== undefined;
+            }
+            startTimer();
+            initExamTimer();
+            return;
+          }
+
+          action = 'restart';
+        }
+
+        if (action === 'restart') {
           await plugin.questionBankStorage.clearInProgressSession(bankId);
+        } else {
+          onExit?.();
+          return;
         }
       }
       
@@ -206,14 +250,14 @@
           shuffleQuestions: config?.shuffleQuestions ?? false,
           shuffleOptions: config?.shuffleOptions ?? false,
           questionCount: config?.questionCount,
-          timeLimit: config?.timeLimit
+          timeLimit: config?.timeLimit ?? (getExamTimeLimitMinutes() ? getExamTimeLimitMinutes()! * 60 * 1000 : undefined)
         },
         questions
       );
 
       currentQuestion = sessionManager.getCurrentQuestion();
       startTimer();
-      initExamTimer();  // 🆕 初始化考试倒计时
+      initExamTimer();  // 初始化考试倒计时
     } catch (error) {
       handleOperationError(error, '初始化测试', '启动测试失败');
     } finally {
@@ -236,7 +280,7 @@
 
       hasSubmitted = true;
 
-      //  修复：同步更新currentQuestion的isCorrect状态
+      // 同步更新 currentQuestion 的 isCorrect 状态
       // 确保UI能正确显示答题结果和解析内容
       if (currentQuestion) {
         currentQuestion.isCorrect = result.isCorrect;
@@ -248,6 +292,16 @@
 
       // 更新当前会话
       currentSession = sessionManager.getCurrentSession();
+
+      if (isPureExamMode) {
+        const isLastQuestion = (currentSession?.currentQuestionIndex ?? 0) >= ((currentSession?.totalQuestions ?? questions.length) - 1);
+        if (isLastQuestion) {
+          await handleCompleteTest();
+        } else {
+          await handleNextQuestion();
+        }
+        return;
+      }
       
       //  调试日志：记录提交答案后的解析状态
       logger.debug('[QuestionBankStudyInterface] 提交答案后:', {
@@ -269,7 +323,7 @@
     const hasNext = await sessionManager.moveToNextQuestion();
     
     if (hasNext) {
-      //  修复：使用刷新方法从数据库加载最新数据
+      // 使用刷新方法从数据库加载最新数据
       currentQuestion = await sessionManager.getCurrentQuestionWithRefresh();
       userAnswer = null;
       hasSubmitted = false;
@@ -288,10 +342,10 @@
     const hasPrev = await sessionManager.moveToPreviousQuestion();
     
     if (hasPrev) {
-      //  修复：使用刷新方法从数据库加载最新数据
+      // 使用刷新方法从数据库加载最新数据
       currentQuestion = await sessionManager.getCurrentQuestionWithRefresh();
       userAnswer = currentQuestion?.userAnswer || null;
-      //  修复：统一判断逻辑，确保已作答的题目正确显示状态
+      // 统一判断逻辑，确保已作答的题目正确显示状态
       hasSubmitted = currentQuestion?.isCorrect !== null && currentQuestion?.isCorrect !== undefined;
       currentSession = sessionManager.getCurrentSession();
       
@@ -470,15 +524,15 @@
   async function handleEditorComplete(updatedCard: Card) {
     // Notice提示由调用者显示，避免重复
     
-    //  修复：四层数据同步（修正时序问题）
+    // 四层数据同步，修正时序问题
     
     try {
-      // 0. 【关键修复】先保存到数据库
+      // 0. 先保存到数据库
       const saveResult = await plugin.dataStorage.saveCard(updatedCard);
       if (!saveResult.success) {
         throw new Error(saveResult.error || '保存失败');
       }
-      logger.debug('[QuestionBankStudyInterface] ✅ 卡片已保存到数据库:', updatedCard.uuid);
+      logger.debug('[QuestionBankStudyInterface] 卡片已保存到数据库:', updatedCard.uuid);
       
       // 1. 同步到会话层（最重要！确保切换题目后数据不丢失）
       if (sessionManager && currentSession) {
@@ -498,7 +552,7 @@
         questions = [...questions]; // 触发响应式更新
       }
       
-      // 2.5 【关键修复】更新 QuestionBankService 的内存缓存
+      // 2.5 更新 QuestionBankService 的内存缓存
       // 否则 getCurrentQuestionWithRefresh 会从旧缓存加载数据
       if (plugin.questionBankService) {
         try {
@@ -511,7 +565,7 @@
             priority: updatedCard.priority,
             stats: updatedCard.stats
           });
-          logger.debug('[QuestionBankStudyInterface] ✅ QuestionBankService 缓存已更新');
+          logger.debug('[QuestionBankStudyInterface] QuestionBankService 缓存已更新');
         } catch (error) {
           logger.warn('[QuestionBankStudyInterface] 更新 QuestionBankService 缓存失败:', error);
           // 不阻断流程，继续执行
@@ -519,7 +573,7 @@
       }
       
       // 3. 更新界面层（currentQuestion）
-      //  修复：直接创建新对象，不要重新获取（避免时序问题）
+      // 直接创建新对象，不要重新获取，避免时序问题
       if (currentQuestion) {
         // 创建新的 currentQuestion 对象，确保触发响应式
         currentQuestion = {
@@ -529,7 +583,7 @@
       }
       
     } catch (error) {
-      logger.error('[QuestionBankStudyInterface] ❌ 保存卡片到数据库失败:', error);
+      logger.error('[QuestionBankStudyInterface] 保存卡片到数据库失败:', error);
       new Notice('保存失败: ' + (error instanceof Error ? error.message : '未知错误'));
       // 发生错误时不退出编辑模式，让用户可以重试
       return;
@@ -621,18 +675,58 @@
   // 重要程度功能
   function handleChangePriority() {
     if (!currentQuestion) return;
-    selectedPriority = currentQuestion.question.priority || 2;
+    const currentPriority = (currentQuestion.question.priority || 2) as 1 | 2 | 3 | 4;
+    selectedPriority = currentPriority;
+
+    if (isMobile) {
+      const menu = new Menu();
+
+      const priorityOptions: Array<{
+        value: 1 | 2 | 3 | 4;
+        label: string;
+        icon: string;
+      }> = [
+        { value: 1, label: '低', icon: 'chevrons-down' },
+        { value: 2, label: '中', icon: 'minus' },
+        { value: 3, label: '高', icon: 'chevrons-up' },
+        { value: 4, label: '极高', icon: 'flame' }
+      ];
+
+      priorityOptions.forEach((option) => {
+        menu.addItem((item) => {
+          const title = option.value === currentPriority
+            ? `当前：${option.label}`
+            : `设置为：${option.label}`;
+
+          item
+            .setTitle(title)
+            .setIcon(option.value === currentPriority ? 'check' : option.icon)
+            .onClick(() => {
+              if (option.value !== currentPriority) {
+                void confirmChangePriority(option.value);
+              }
+            });
+        });
+      });
+
+      menu.showAtPosition({
+        x: Math.round(window.innerWidth / 2),
+        y: Math.round(window.innerHeight / 2)
+      });
+      return;
+    }
+
     showPriorityModal = true;
   }
 
-  async function confirmChangePriority() {
+  async function confirmChangePriority(priority: 1 | 2 | 3 | 4) {
     if (!currentQuestion) return;
 
     try {
       // 更新卡片的重要程度
       const updatedCard = {
         ...currentQuestion.question,
-        priority: selectedPriority,
+        priority,
         modified: new Date().toISOString()
       };
 
@@ -640,10 +734,10 @@
       const result = await plugin.dataStorage.saveCard(updatedCard);
       if (result.success) {
         // 更新当前题目
-        currentQuestion.question.priority = selectedPriority;
+        currentQuestion.question.priority = priority;
         currentQuestion = { ...currentQuestion };
 
-        const priorityText = ['', '低', '中', '高', '极高'][selectedPriority] || '中';
+        const priorityText = ['', '低', '中', '高', '极高'][priority] || '中';
         new Notice(`重要程度已设置为：${priorityText}`);
         showPriorityModal = false;
       }
@@ -652,14 +746,10 @@
     }
   }
 
-  function cancelChangePriority() {
-    showPriorityModal = false;
-  }
-
   // 查看详情信息
   function handleOpenDetailedView() {
     if (!currentQuestion) return;
-    showDetailModal = true;
+    void plugin.openViewCardModal(currentQuestion.question);
   }
 
   // 处理题目学习顺序切换
@@ -679,7 +769,7 @@
     new Notice(`导航栏已切换为${mode === 1 ? '单列' : '三列'}显示`);
   }
 
-  // 🆕 处理紧凑模式切换
+  // 处理紧凑模式切换
   function handleCompactModeSettingChange(setting: 'auto' | 'fixed') {
     compactModeSetting = setting;
     
@@ -699,6 +789,12 @@
     const diff = toolbarEl.scrollHeight - toolbarEl.clientHeight;
     compactMode = diff > 8;
   }
+
+  $effect(() => {
+    if (isPureExamMode) {
+      showSidebar = false;
+    }
+  });
 
   $effect(() => {
     if (!showSidebar) return;
@@ -730,9 +826,9 @@
 
   // 退出测试
   async function handleExit() {
-    //  修复：如果正在编辑，先保存再退出
+    // 如果正在编辑，先保存再退出
     if (showEditModal && editorPoolManager) {
-      //  使用 Obsidian Modal 代替 confirm()，避免焦点劫持问题
+      //  使用 Obsidian Modal 代替原生确认框，避免焦点劫持问题
       const confirmExit = await showObsidianConfirm(
         plugin.app,
         "检测到正在编辑，是否保存并退出？",
@@ -751,7 +847,7 @@
       }
     }
     
-    //  使用 Obsidian Modal 代替 confirm()，避免焦点劫持问题
+    //  使用 Obsidian Modal 代替原生确认框，避免焦点劫持问题
     const confirmed = await showObsidianConfirm(
       plugin.app,
       "确定要退出测试吗？当前进度将被保存。",
@@ -770,16 +866,16 @@
     }
   }
 
-  // 🆕 跳转到指定题目
+  // 跳转到指定题目
   async function handleJumpToQuestion(index: number) {
     if (!sessionManager) return;
     
     try {
       await sessionManager.jumpToQuestion(index);
-      //  修复：使用刷新方法从数据库加载最新数据
+      // 使用刷新方法从数据库加载最新数据
       currentQuestion = await sessionManager.getCurrentQuestionWithRefresh();
       
-      //  修复：统一答案状态判断逻辑
+      // 统一答案状态判断逻辑
       if (currentQuestion) {
         userAnswer = currentQuestion.userAnswer || null;
         hasSubmitted = currentQuestion.isCorrect !== null && currentQuestion.isCorrect !== undefined;
@@ -802,22 +898,23 @@
     }
   }
 
-  // 🆕 暂停/继续倒计时
+  // 暂停/继续倒计时
   function handleTogglePause() {
     isPaused = !isPaused;
   }
 
-  // 🆕 初始化考试倒计时
+  // 初始化考试倒计时
   function initExamTimer() {
-    if (currentSession?.mode === 'exam' || currentSession?.mode === 'quiz') {
+    if (currentSession?.mode === 'exam') {
+      examDuration = resolveExamDurationMs();
       examStartTime = Date.now();
       remainingTime = examDuration;
     }
   }
 
-  // 🆕 更新倒计时
+  // 更新倒计时
   $effect(() => {
-    if ((currentSession?.mode === 'exam' || currentSession?.mode === 'quiz') && examStartTime > 0 && !isPaused) {
+    if (currentSession?.mode === 'exam' && examStartTime > 0 && !isPaused) {
       const interval = setInterval(() => {
         const elapsed = Date.now() - examStartTime;
         remainingTime = Math.max(0, examDuration - elapsed);
@@ -874,7 +971,7 @@
 
   // 提取题干（移除 YAML frontmatter）
   function extractStem(content: string): string {
-    //  修复：先移除 YAML frontmatter，参考记忆学习界面
+    // 先移除 YAML frontmatter，参考记忆学习界面
     const bodyContent = extractBodyContent(content);
     const lines = bodyContent.split('\n');
     const stemLines: string[] = [];
@@ -890,7 +987,7 @@
   }
 
   // 判断是否为多选题
-  //  修复：使用实时解析的选择题数据，而不是依赖可能过时的元数据
+  // 使用实时解析的选择题数据，而不是依赖可能过时的元数据
   function isMultipleChoice(_question: Card): boolean {
     // 优先使用实时解析的结果
     if (choiceQuestionDerived?.isMultipleChoice !== undefined) {
@@ -1000,8 +1097,7 @@
     }
 
     const updateViewportHeight = () => {
-      const availableHeight = viewport.height - OBSIDIAN_MOBILE_HEADER_HEIGHT;
-      mobileViewportHeight = Math.max(200, availableHeight);
+      mobileViewportHeight = Math.max(200, viewport.height);
 
       const keyboardHeight = Math.max(0, window.innerHeight - viewport.height);
       isKeyboardVisible = keyboardHeight > 150;
@@ -1024,7 +1120,6 @@
   });
 
   // 打开题目数据结构调试窗口
-  // 🆕 打开题目数据结构调试窗口
   function handleOpenCardDebug() {
     if (!currentQuestion) return;
     showCardDebug = true;
@@ -1089,15 +1184,17 @@
         currentIndex={progress.current}
         totalQuestions={progress.total}
         {statsCollapsed}
-        {showSidebar}
+        showSidebar={showSidebar && !isPureExamMode}
+        showSidebarToggle={!isPureExamMode}
         {showNavigator}
-        showStatsBar={showMobileStatsBar}
+        showNavigatorToggle={false}
         onToggleStats={() => statsCollapsed = !statsCollapsed}
-        onToggleSidebar={() => showSidebar = !showSidebar}
-        onToggleNavigator={() => showNavigator = !showNavigator}
-        onToggleStatsBar={() => showMobileStatsBar = !showMobileStatsBar}
-        onShowMobileMenu={handleShowMobileMenu}
-        onClose={handleExit}
+        onToggleSidebar={() => {
+          if (!isPureExamMode) {
+            showSidebar = !showSidebar;
+          }
+        }}
+        onToggleNavigator={isPureExamMode ? undefined : () => showNavigator = !showNavigator}
         mode={currentSession.mode}
         {remainingTime}
         {isPaused}
@@ -1106,7 +1203,7 @@
       />
 
       <!--  移动端答题情况信息栏 -->
-      {#if isMobile}
+      {#if isMobile && !isPureExamMode}
         <MobileQuestionStatsBar
           expanded={showMobileStatsBar}
           correctCount={currentSession.correctCount}
@@ -1120,8 +1217,14 @@
 
       <!--  移动端题目导航弹出层 - 简洁网格设计 -->
       {#if isMobile && showNavigator && currentSession}
-        <div class="mobile-navigator-overlay" onclick={() => showNavigator = false} role="presentation">
-          <div class="mobile-nav-grid-panel" onclick={(e) => e.stopPropagation()} role="dialog">
+        <div class="mobile-navigator-overlay" role="presentation">
+          <button
+            type="button"
+            class="mobile-navigator-backdrop"
+            aria-label="关闭题目导航"
+            onclick={() => showNavigator = false}
+          ></button>
+          <div class="mobile-nav-grid-panel" role="dialog" aria-modal="true" tabindex="-1">
             <div class="mobile-nav-grid-scroll">
               <div class="mobile-nav-grid">
                 {#each currentSession.questions as record, index}
@@ -1146,9 +1249,9 @@
       {/if}
 
       <!-- 主要内容区域 -->
-      <div class="study-content" class:with-navigator={showNavigator} class:with-sidebar={showSidebar}>
+      <div class="study-content" class:with-navigator={showNavigator} class:with-sidebar={showSidebar && !isPureExamMode}>
       
-      <!-- 🆕 左侧题目导航栏 -->
+      <!-- 左侧题目导航栏 -->
       {#if showNavigator && currentSession}
         <div class="navigator-sidebar">
           <QuestionNavigator
@@ -1163,7 +1266,7 @@
       <!-- 主学习区域 -->
       <div class="main-study-area">
         <!-- 统计卡片（可折叠）-  移动端隐藏，使用MobileQuestionStatsBar代替 -->
-        {#if !statsCollapsed && !isMobile}
+        {#if !statsCollapsed && !isMobile && !isPureExamMode}
           <QuestionBankStatsCards 
             session={currentSession} 
             currentQuestion={currentQuestion} 
@@ -1173,7 +1276,7 @@
         <!-- 题目学习区域 -->
         <div class="card-study-container">
           <div class="card-container">
-            <!-- 🆕 重要程度贴纸 - 显示在右上角 -->
+            <!-- 重要程度贴纸 - 显示在右上角 -->
             {#if currentQuestion?.question?.priority}
               <ImportanceIndicator 
                 importance={currentQuestion.question.priority}
@@ -1194,10 +1297,6 @@
                 dataStorage={plugin.dataStorage}
                 modalRef={null}
                 statsCollapsed={false}
-                keyboardVisible={isKeyboardVisible}
-                onKeyboardStateChange={(visible) => {
-                  isKeyboardVisible = visible;
-                }}
                 onEditComplete={handleEditorComplete}
                 onEditCancel={handleEditorCancel}
                 onToggleCloze={handleToggleCloze}
@@ -1301,8 +1400,8 @@
         {/if}
       </div>
 
-      <!-- 🆕 解析区域（提交答案后显示，从content动态解析---div---后的内容） -->
-      {#if hasSubmitted && choiceQuestionDerived?.explanation}
+      <!-- 解析区域（提交答案后显示，从content动态解析---div---后的内容） -->
+      {#if hasSubmitted && !isPureExamMode && choiceQuestionDerived?.explanation}
         <div class="explanation-area">
           <div class="explanation-header">
             <EnhancedIcon name="lightbulb" size="18" />
@@ -1322,11 +1421,40 @@
             </div>
             {/if}
           </div>
+
+          {#if !isPureExamMode}
+            <div class="content-bottom-controls">
+              <button
+                type="button"
+                class="content-nav-btn clickable-icon"
+                class:active={showNavigator}
+                onclick={() => showNavigator = !showNavigator}
+                aria-label={showNavigator ? "隐藏题目导航" : "显示题目导航"}
+                title={showNavigator ? "隐藏题目导航" : "显示题目导航"}
+              >
+                <ObsidianIcon name="panel-left" size={16} />
+              </button>
+
+            <button
+              type="button"
+              class="content-undo-btn clickable-icon"
+              onclick={canUndo ? handleUndoAnswer : undefined}
+              disabled={!canUndo}
+              aria-label={canUndo ? `撤销答案，剩余${maxUndoCount - undoCount}次` : "无法撤销"}
+              title={canUndo ? `撤销答案（剩余${maxUndoCount - undoCount}次）` : "无法撤销"}
+            >
+              <ObsidianIcon name="rotate-ccw" size={16} />
+              {#if maxUndoCount > 0 && (maxUndoCount - undoCount) > 0}
+                <span class="content-undo-badge">{maxUndoCount - undoCount}</span>
+              {/if}
+            </button>
+            </div>
+          {/if}
         </div>
       </div>
 
       <!-- 右侧垂直工具栏 -->
-      {#if showSidebar}
+      {#if showSidebar && !isPureExamMode}
         <div class="sidebar-content" bind:this={sidebarContentEl}>
           <QuestionBankVerticalToolbar
             card={currentQuestion.question}
@@ -1345,6 +1473,7 @@
             onDelete={handleDeleteCard}
             onToggleFavorite={handleToggleFavorite}
             onChangePriority={handleChangePriority}
+            onPriorityAnchorChange={(element) => priorityAnchorElement = element}
             {enableDirectDelete}
             onDirectDeleteToggle={(enabled) => enableDirectDelete = enabled}
             onOpenDetailedView={handleOpenDetailedView}
@@ -1396,85 +1525,10 @@
       </div>
       </div>
     {/if}
-  </div>
-</div>
-
-<!-- 优先级设置模态窗 -->
-{#if showPriorityModal}
-  <div class="modal-overlay" role="presentation" onclick={() => showPriorityModal = false}>
-    <div class="priority-modal" role="dialog" aria-modal="true" aria-labelledby="priority-modal-title" onclick={(e) => { e.stopPropagation(); }}>
-      <div class="modal-header">
-        <h3 id="priority-modal-title">设置重要程度</h3>
-        <button class="modal-close" onclick={() => showPriorityModal = false}>×</button>
-      </div>
-
-      <div class="modal-body">
-        <p class="modal-description">选择当前题目的重要程度：</p>
-
-        <div class="priority-buttons">
-          <button
-            class="priority-btn-item priority-low"
-            class:selected={selectedPriority === 1}
-            onclick={() => selectedPriority = 1}
-          >
-            <div class="priority-btn-left">
-              <div class="priority-icon">!</div>
-              <div class="priority-label">低</div>
-            </div>
-            <div class="priority-radio"></div>
-          </button>
-
-          <button
-            class="priority-btn-item priority-medium"
-            class:selected={selectedPriority === 2}
-            onclick={() => selectedPriority = 2}
-          >
-            <div class="priority-btn-left">
-              <div class="priority-icon">!!</div>
-              <div class="priority-label">中</div>
-            </div>
-            <div class="priority-radio"></div>
-          </button>
-
-          <button
-            class="priority-btn-item priority-high"
-            class:selected={selectedPriority === 3}
-            onclick={() => selectedPriority = 3}
-          >
-            <div class="priority-btn-left">
-              <div class="priority-icon">!!!</div>
-              <div class="priority-label">高</div>
-            </div>
-            <div class="priority-radio"></div>
-          </button>
-
-          <button
-            class="priority-btn-item priority-urgent"
-            class:selected={selectedPriority === 4}
-            onclick={() => selectedPriority = 4}
-          >
-            <div class="priority-btn-left">
-              <div class="priority-icon">[4]</div>
-              <div class="priority-label">极高</div>
-            </div>
-            <div class="priority-radio"></div>
-          </button>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn-secondary" onclick={() => showPriorityModal = false}>
-          取消
-        </button>
-        <button class="btn-primary" onclick={confirmChangePriority}>
-          确认设置
-        </button>
-      </div>
     </div>
   </div>
-{/if}
 
-<!-- 🆕 题目数据结构调试窗口 -->
+<!-- 题目数据结构调试窗口 -->
 {#if currentQuestion && showCardDebug}
   <CardDebugModal
     card={currentQuestion.question}
@@ -1482,15 +1536,50 @@
   />
 {/if}
 
-<!-- 🆕 卡片详情模态窗 -->
-{#if currentQuestion && showDetailModal}
-  <QuestionBankCardDetailModal
-    open={showDetailModal}
-    card={currentQuestion.question}
-    {plugin}
-    onClose={() => showDetailModal = false}
-  />
-{/if}
+<FloatingMenu
+  bind:show={showPriorityModal}
+  anchor={priorityAnchorElement}
+  placement="left-start"
+  onClose={() => showPriorityModal = false}
+  class="study-side-panel-menu"
+>
+  {#snippet children()}
+    <div class="study-side-panel priority-modal" role="dialog" aria-modal="true" tabindex="-1">
+      <div class="modal-header">
+        <h3>设置重要程度</h3>
+        <button class="modal-close" onclick={() => showPriorityModal = false}>×</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-description">选择当前题目的重要程度：</p>
+        <div class="priority-options">
+          {#each [1, 2, 3, 4] as priority}
+            <button
+              class="priority-option"
+              class:selected={selectedPriority === priority}
+              onclick={() => { selectedPriority = priority as 1 | 2 | 3 | 4; }}
+            >
+              <div class="priority-stars">
+                {#each Array(priority) as _}
+                  <EnhancedIcon name="starFilled" size="16" />
+                {/each}
+                {#each Array(4 - priority) as _}
+                  <EnhancedIcon name="star" size="16" />
+                {/each}
+              </div>
+              <span class="priority-label">
+                {['', '低', '中', '高', '极高'][priority]}
+              </span>
+            </button>
+          {/each}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick={() => showPriorityModal = false}>取消</button>
+        <button class="btn-primary" onclick={() => confirmChangePriority(selectedPriority as 1 | 2 | 3 | 4)}>确认设置</button>
+      </div>
+    </div>
+  {/snippet}
+</FloatingMenu>
 
 <style>
   .question-bank-study-interface-overlay {
@@ -1510,7 +1599,14 @@
   }
 
   .question-bank-study-interface-content {
-    background: var(--background-primary);
+    --weave-question-bank-page-bg: var(--weave-surface-background, var(--background-primary));
+    --weave-question-bank-panel-bg: var(--weave-elevated-background, var(--background-secondary));
+    --weave-question-bank-panel-alt-bg: color-mix(
+      in srgb,
+      var(--weave-question-bank-panel-bg) 88%,
+      var(--weave-question-bank-page-bg)
+    );
+    background: var(--weave-question-bank-page-bg);
     border-radius: var(--radius-l, 12px);
     width: 100%;
     max-width: 100%;
@@ -1558,7 +1654,7 @@
     min-height: 0;
   }
 
-  /* 🆕 左侧导航栏显示 */
+  /* 左侧导航栏显示 */
   .study-content.with-navigator {
     grid-template-columns: auto 1fr; /* 导航栏自适应 + 主内容 */
   }
@@ -1568,19 +1664,19 @@
     grid-template-columns: 1fr auto; /* 主内容 + 工具栏 */
   }
 
-  /* 🆕 三列布局：导航栏 + 主内容 + 工具栏 */
+  /* 三列布局：导航栏 + 主内容 + 工具栏 */
   .study-content.with-navigator.with-sidebar {
     grid-template-columns: auto 1fr auto;
   }
 
-  /* 🆕 左侧导航栏容器 */
+  /* 左侧导航栏容器 */
   .navigator-sidebar {
     grid-column: 1;
-    grid-row: 1; /* 🔧 只占据第一行，不跨越到底部 */
+    grid-row: 1;
     border-right: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
-    height: 100%; /* 🔧 填满第一行空间 */
-    overflow: hidden; /* 🔧 由子元素处理滚动 */
+    background: var(--weave-question-bank-panel-bg);
+    height: 100%;
+    overflow: hidden;
   }
 
   /* 主学习区域 */
@@ -1593,12 +1689,12 @@
     overflow: hidden;
   }
 
-  /* 🆕 有导航栏时，主区域在第二列 */
+  /* 有导航栏时，主区域在第二列 */
   .study-content.with-navigator .main-study-area {
     grid-column: 2;
   }
 
-  /* 🆕 有导航栏+工具栏时，主区域还是第二列 */
+  /* 有导航栏+工具栏时，主区域还是第二列 */
   .study-content.with-navigator.with-sidebar .main-study-area {
     grid-column: 2;
   }
@@ -1606,16 +1702,16 @@
   /* 侧边栏内容容器 */
   .sidebar-content {
     grid-column: 2;
-    grid-row: 1; /* 🔧 只占据第一行，与导航栏保持一致 */
+    grid-row: 1;
     display: flex;
     flex-direction: column;
     width: 70px;
     flex-shrink: 0;
-    height: 100%; /* 🔧 确保填满grid单元格 */
-    overflow: hidden; /* 🔧 由子元素处理滚动 */
+    height: 100%;
+    overflow: hidden;
   }
 
-  /* 🆕 有导航栏时，工具栏在第三列 */
+  /* 有导航栏时，工具栏在第三列 */
   .study-content.with-navigator .sidebar-content {
     grid-column: 3;
   }
@@ -1629,10 +1725,11 @@
     align-items: stretch;
     justify-content: center;
     min-height: 0;
+    position: relative;
   }
 
   .card-container {
-    position: relative;  /* 🆕 为贴纸提供定位上下文 */
+    position: relative;
     width: min(100%, 1300px);
     max-width: 100%;
     height: 100%;
@@ -1656,6 +1753,76 @@
     padding: 2rem 1.5rem;
     overflow-y: auto;
     position: relative;
+  }
+
+  .content-bottom-controls {
+    position: absolute;
+    left: clamp(10px, 1vw + 6px, 18px);
+    bottom: clamp(10px, 1vw + 6px, 18px);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    z-index: 3;
+  }
+
+  .content-nav-btn,
+  .content-undo-btn {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--weave-question-bank-page-bg) 84%, var(--weave-question-bank-panel-bg) 16%);
+    color: var(--icon-color);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .content-nav-btn:hover:not(:disabled),
+  .content-undo-btn:hover:not(:disabled) {
+    background: var(--background-modifier-hover);
+    color: var(--icon-color-hover, var(--text-normal));
+    border-color: color-mix(in srgb, var(--interactive-accent) 28%, var(--background-modifier-border));
+  }
+
+  .content-nav-btn:focus-visible,
+  .content-undo-btn:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
+  }
+
+  .content-nav-btn.active {
+    background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
+    color: var(--interactive-accent);
+    border-color: color-mix(in srgb, var(--interactive-accent) 40%, var(--background-modifier-border));
+  }
+
+  .content-nav-btn:disabled,
+  .content-undo-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .content-undo-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--interactive-accent) 88%, #ffffff 12%);
+    color: var(--text-on-accent, #fff);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--background-primary);
+    pointer-events: none;
   }
 
   .question-stem {
@@ -1692,7 +1859,7 @@
   }
 
   .question-type {
-    background: var(--background-secondary);
+    background: var(--weave-question-bank-panel-bg);
     color: var(--text-muted);
   }
 
@@ -1710,11 +1877,11 @@
     gap: 1rem;
   }
 
-  /* 🆕 解析区域 */
+  /* 解析区域 */
   .explanation-area {
     margin-top: 2rem;
     padding: 1.5rem;
-    background: var(--background-secondary);
+    background: var(--weave-question-bank-panel-bg);
     border-radius: 12px;
     border: 2px solid var(--background-modifier-border);
   }
@@ -1787,17 +1954,17 @@
 
   /*  桌面端：有背景和边框 */
   :global(body:not(.is-mobile)) .study-footer {
-    background: var(--background-primary);
+    background: var(--weave-question-bank-page-bg);
     border-top: 1px solid var(--background-modifier-border);
   }
 
   /*  移动端：透明无边框 */
   :global(body.is-mobile) .study-footer {
-    background: transparent;
+    background: var(--weave-question-bank-page-bg);
     border: none;
   }
 
-  /* 🆕 有导航栏时，底部栏依然横跨所有列，保持左侧零边距 */
+  /* 有导航栏时，底部栏依然横跨所有列，保持左侧零边距 */
   .study-content.with-navigator .study-footer {
     grid-column: 1 / -1;
   }
@@ -1805,15 +1972,16 @@
   .footer-actions {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     gap: 1rem;
-    max-width: 1300px;
-    margin: 0 auto;
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    position: static;
   }
 
   .footer-left-actions {
-    display: flex;
-    gap: 0.5rem;
+    display: none;
   }
 
   .footer-center-actions {
@@ -1926,7 +2094,7 @@
     align-items: center;
     gap: 0.5rem;
     padding: 0.75rem 1.5rem;
-    background: var(--background-secondary);
+    background: var(--weave-question-bank-panel-bg);
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
     font-size: 0.95rem;
@@ -1964,27 +2132,108 @@
     pointer-events: none;
   }
 
+  .modal-backdrop {
+    position: absolute;
+    background: white;
+    border-radius: 50%;
+  }
+
+  .priority-low {
+    color: #22c55e;
+  }
+
+  .priority-medium {
+    color: #eab308;
+  }
+
+  .priority-high {
+    color: #f97316;
+  }
+
+  .priority-urgent {
+    color: #ef4444;
+  }
+
+  @keyframes shake {
+    0%, 100% { transform: translateX(0) scale(1.02); }
+    25% { transform: translateX(-2px) scale(1.02); }
+    75% { transform: translateX(2px) scale(1.02); }
+  }
+
+  .priority-urgent:hover {
+    animation: shake 0.5s;
+  }
+
+  .modal-footer {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: flex-end;
+    padding: 1rem 1.5rem;
+    background: var(--weave-question-bank-panel-alt-bg);
+  }
+
+  .btn-secondary,
+  .btn-primary {
+    padding: 0.75rem 1.5rem;
+    border-radius: 6px;
+    border: none;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 80px;
+  }
+
+  .btn-secondary {
+    background: var(--weave-question-bank-page-bg);
+    color: var(--text-normal);
+    border: 1px solid var(--background-modifier-border);
+  }
+
+  .btn-secondary:hover {
+    background: var(--background-modifier-hover);
+  }
+
+  .btn-primary {
+    background: var(--text-accent);
+    color: var(--text-on-accent);
+  }
+
+  .btn-primary:hover {
+    background: color-mix(in srgb, var(--text-accent) 90%, black);
+    transform: translateY(-1px);
+  }
+
+  /* ==================== Obsidian 移动端适配 ==================== */
+  
+  /* 所有移动设备通用样式 */
+  :global(.study-side-panel-menu) {
+    min-width: 300px;
+    max-width: 340px;
+  }
+
+  .study-side-panel,
   .priority-modal {
-    background: var(--background-primary);
+    position: relative;
+    background: var(--weave-question-bank-panel-bg);
     border: 1px solid var(--background-modifier-border);
     border-radius: 12px;
     box-shadow: var(--shadow-s);
-    max-width: 450px;
-    min-width: 350px;
-    pointer-events: auto;
-    max-height: 80vh;
+    min-width: 300px;
+    max-width: 340px;
+    max-height: min(70vh, 720px);
     overflow: hidden;
-    animation: bounceIn 0.3s ease-out;
+    animation: slideInRight 0.2s ease-out;
   }
 
-  @keyframes bounceIn {
+  @keyframes slideInRight {
     from {
       opacity: 0;
-      transform: scale(0.9);
+      transform: translateX(12px);
     }
     to {
       opacity: 1;
-      transform: scale(1);
+      transform: translateX(0);
     }
   }
 
@@ -1994,7 +2243,7 @@
     justify-content: space-between;
     padding: 1rem 1.5rem;
     border-bottom: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
+    background: var(--weave-question-bank-panel-alt-bg);
   }
 
   .modal-header h3 {
@@ -2032,164 +2281,64 @@
     line-height: 1.5;
   }
 
-  .priority-buttons {
+  .priority-options {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 0.75rem;
   }
 
-  .priority-btn-item {
-    background: rgba(255, 255, 255, 0.05);
-    border: 2px solid rgba(255, 255, 255, 0.1);
+  .priority-option {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 1rem;
+    padding: 1rem;
+    border: 1.5px solid var(--background-modifier-border);
     border-radius: 8px;
-    padding: 14px 20px;
+    background: color-mix(
+      in srgb,
+      var(--weave-question-bank-panel-bg) 88%,
+      var(--weave-question-bank-page-bg)
+    );
     cursor: pointer;
-    transition: all 0.2s;
+    transition: all 0.2s ease;
+    text-align: left;
+  }
+
+  .priority-option:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--background-modifier-border-hover);
+  }
+
+  .priority-option.selected {
+    background: color-mix(in srgb, var(--text-accent) 10%, var(--weave-question-bank-panel-bg));
+    border-color: var(--text-accent);
+  }
+
+  .priority-stars {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-  }
-
-  .priority-btn-item:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: currentColor;
-    transform: scale(1.02);
-  }
-
-  .priority-btn-item.selected {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: currentColor;
-    border-width: 2px;
-  }
-
-  .priority-btn-left {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex: 1;
-  }
-
-  .priority-icon {
-    font-size: 24px;
-    font-weight: bold;
-    letter-spacing: -2px;
-    min-width: 40px;
+    gap: 0.25rem;
+    color: #fbbf24;
   }
 
   .priority-label {
-    font-size: 15px;
-    font-weight: 500;
     color: var(--text-normal);
-  }
-
-  .priority-radio {
-    width: 20px;
-    height: 20px;
-    border: 2px solid #666;
-    border-radius: 50%;
-    position: relative;
-    flex-shrink: 0;
-    transition: all 0.2s;
-  }
-
-  .priority-btn-item:hover .priority-radio {
-    border-color: currentColor;
-  }
-
-  .priority-btn-item.selected .priority-radio {
-    border-color: currentColor;
-    background: currentColor;
-  }
-
-  .priority-btn-item.selected .priority-radio::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%);
-    width: 8px;
-    height: 8px;
-    background: white;
-    border-radius: 50%;
-  }
-
-  .priority-low {
-    color: #22c55e;
-  }
-
-  .priority-medium {
-    color: #eab308;
-  }
-
-  .priority-high {
-    color: #f97316;
-  }
-
-  .priority-urgent {
-    color: #ef4444;
-  }
-
-  @keyframes shake {
-    0%, 100% { transform: translateX(0) scale(1.02); }
-    25% { transform: translateX(-2px) scale(1.02); }
-    75% { transform: translateX(2px) scale(1.02); }
-  }
-
-  .priority-urgent:hover {
-    animation: shake 0.5s;
-  }
-
-  .modal-footer {
-    display: flex;
-    gap: 0.75rem;
-    justify-content: flex-end;
-    padding: 1rem 1.5rem;
-    background: var(--background-secondary);
-  }
-
-  .btn-secondary,
-  .btn-primary {
-    padding: 0.75rem 1.5rem;
-    border-radius: 6px;
-    border: none;
-    font-size: 0.9rem;
     font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    min-width: 80px;
   }
 
-  .btn-secondary {
-    background: var(--background-primary);
-    color: var(--text-normal);
-    border: 1px solid var(--background-modifier-border);
+  .priority-option.selected .priority-label {
+    color: var(--text-accent);
+    font-weight: 600;
   }
 
-  .btn-secondary:hover {
-    background: var(--background-modifier-hover);
-  }
-
-  .btn-primary {
-    background: var(--text-accent);
-    color: var(--text-on-accent);
-  }
-
-  .btn-primary:hover {
-    background: color-mix(in srgb, var(--text-accent) 90%, black);
-    transform: translateY(-1px);
-  }
-
-  /* ==================== Obsidian 移动端适配 ==================== */
-  
-  /* 所有移动设备通用样式 */
   :global(body.is-mobile) .question-bank-study-interface-overlay {
-    /*  修复：移动端使用 relative 定位，让内容自然流动在 Obsidian 视图容器内 */
+    /* 移动端使用 relative 定位，让内容自然流动在 Obsidian 视图容器内 */
     position: relative;
     width: 100%;
     height: 100%;
     padding: 0;
-    /*  修复：移除背景遮罩，避免覆盖 Obsidian UI */
+    /* 移除背景遮罩，避免覆盖 Obsidian UI */
     background: transparent;
     backdrop-filter: none;
     z-index: 1;
@@ -2198,7 +2347,7 @@
   }
 
   :global(body.is-mobile) .question-bank-study-interface-content {
-    /*  修复：使用 100% 而非固定高度，让容器适应 Obsidian 的可用空间 */
+    /* 使用 100% 而非固定高度，让容器适应 Obsidian 的可用空间 */
     height: 100%;
     max-width: 100%;
     border-radius: 0;
@@ -2218,7 +2367,7 @@
   }
 
   :global(body.is-mobile) .study-footer {
-    background: transparent !important;
+    background: var(--weave-question-bank-page-bg) !important;
     padding: 0;
     margin: 0;
     border: none !important;
@@ -2251,6 +2400,10 @@
     display: none !important;
   }
 
+  :global(body.is-phone) .content-bottom-controls {
+    display: none !important;
+  }
+
   /*  移动端题目导航弹出层样式 - 简洁网格设计 */
   .mobile-navigator-overlay {
     position: absolute;
@@ -2267,6 +2420,15 @@
     padding: 0.5rem;
   }
 
+  .mobile-navigator-backdrop {
+    position: absolute;
+    inset: 0;
+    border: none;
+    background: transparent;
+    padding: 0;
+    cursor: default;
+  }
+
   @keyframes fadeIn {
     from { opacity: 0; }
     to { opacity: 1; }
@@ -2274,7 +2436,7 @@
 
   /*  简洁网格面板 */
   .mobile-nav-grid-panel {
-    background: var(--background-primary);
+    background: var(--weave-question-bank-page-bg);
     border-radius: 12px;
     max-height: 70%;
     max-width: calc(100% - 1rem);
@@ -2409,7 +2571,7 @@
   }
 
   :global(body.is-phone) .study-footer {
-    background: transparent;
+    background: var(--weave-question-bank-page-bg);
     padding: 0.5rem 0;
     /*  底部留出足够间距，避免被Obsidian底部导航栏覆盖 */
     padding-bottom: calc(var(--safe-area-inset-bottom, 0px) + 48px);
@@ -2442,12 +2604,25 @@
   :global(body.is-phone) .question-bank-study-interface-overlay.edit-active,
   :global(body.is-mobile) .question-bank-study-interface-overlay.edit-active {
     position: fixed;
-    top: 44px;
+    top: 0;
     left: 0;
     right: 0;
     height: var(--weave-viewport-height, 100%);
     overflow: hidden;
     padding: 0;
+  }
+
+  :global(body.is-phone:has(.question-bank-study-interface-overlay.edit-active)) .workspace-tab-header-container,
+  :global(body.is-phone:has(.question-bank-study-interface-overlay.edit-active)) .workspace-tab-header,
+  :global(body.is-phone:has(.question-bank-study-interface-overlay.edit-active)) .view-header,
+  :global(body.is-mobile:has(.question-bank-study-interface-overlay.edit-active)) .workspace-tab-header-container,
+  :global(body.is-mobile:has(.question-bank-study-interface-overlay.edit-active)) .workspace-tab-header,
+  :global(body.is-mobile:has(.question-bank-study-interface-overlay.edit-active)) .view-header {
+    background: transparent !important;
+    border-bottom-color: transparent !important;
+    box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
   }
 
   :global(body.is-phone) .question-bank-study-interface-overlay.edit-active .question-bank-study-interface-content,
@@ -2489,4 +2664,3 @@
     padding: var(--weave-mobile-spacing-lg, 1.25rem);
   }
 </style>
-

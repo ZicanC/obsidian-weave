@@ -6,52 +6,49 @@
   let isResizing = $state(false);
   let startX = $state(0);
 
-  function handleMouseDown(e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    
+  function handlePointerDown(event: PointerEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+
     isResizing = true;
-    startX = e.clientX;
-    
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
+    startX = event.clientX;
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
     document.body.classList.add('resizing-column');
   }
 
-  function handleMouseMove(e: MouseEvent) {
+  function handlePointerMove(event: PointerEvent) {
     if (!isResizing) return;
-    const deltaX = e.clientX - startX;
+
+    const deltaX = event.clientX - startX;
     onResize(columnKey, deltaX);
-    startX = e.clientX;
+    startX = event.clientX;
   }
 
-  function handleMouseUp() {
+  function handlePointerUp() {
     if (!isResizing) return;
-    
+
     isResizing = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', handleMouseUp);
+    window.removeEventListener('pointermove', handlePointerMove);
+    window.removeEventListener('pointerup', handlePointerUp);
+    window.removeEventListener('pointercancel', handlePointerUp);
     document.body.classList.remove('resizing-column');
   }
 
-  function handleKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      const mouseEvent = new MouseEvent('mousedown', {
-        clientX: rect.left,
-        clientY: rect.top,
-        button: 0
-      });
-      handleMouseDown(mouseEvent);
+  function handleKeyDown(event: KeyboardEvent) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onResize(columnKey, 24);
     }
   }
 </script>
 
 <div
   class="weave-column-resizer"
-  aria-label="调整列宽度"
-  onmousedown={handleMouseDown}
+  aria-label="调整列宽"
+  onpointerdown={handlePointerDown}
   onkeydown={handleKeyDown}
   tabindex="0"
   role="button"
@@ -69,6 +66,7 @@
     z-index: 20;
     transition: all 0.2s ease;
     border-radius: 2px;
+    touch-action: none;
   }
 
   .weave-column-resizer:hover {
@@ -102,6 +100,17 @@
   .weave-column-resizer:active::before {
     opacity: 1;
   }
+
+  @media (hover: none), (pointer: coarse) {
+    .weave-column-resizer {
+      right: -6px;
+      width: 12px;
+    }
+
+    .weave-column-resizer::before {
+      opacity: 0.35;
+      width: 3px;
+      height: 18px;
+    }
+  }
 </style>
-
-

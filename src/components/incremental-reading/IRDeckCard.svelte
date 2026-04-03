@@ -91,12 +91,11 @@
   }
 
   function handleMenuClick(event: MouseEvent) {
-    event.stopPropagation();
+    event.preventDefault();
     onMenu(event);
   }
 
   function handleMenuTouchEnd(event: TouchEvent) {
-    event.stopPropagation();
     event.preventDefault();
     const touch = event.changedTouches[0];
     const mouseEvent = new MouseEvent('click', {
@@ -118,7 +117,10 @@
 <div 
   class="ir-deck-card variant-{stableColorVariant()}"
   class:compact
-  onclick={handleClick}
+  onclick={(event) => {
+    if (event.defaultPrevented) return;
+    handleClick();
+  }}
   ontouchstart={handleTouchStart}
   ontouchend={handleTouchEnd}
   onkeydown={handleKeyDown}
@@ -316,6 +318,7 @@
     word-break: break-word;
     text-align: left;
     display: -webkit-box;
+    line-clamp: 2;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;

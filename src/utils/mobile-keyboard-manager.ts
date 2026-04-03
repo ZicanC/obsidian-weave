@@ -1,13 +1,13 @@
 /**
  * MobileKeyboardManager - 移动端键盘状态管理工具类
- * 
+ *
  * 使用 Visual Viewport API 监听键盘弹出/收起事件，
  * 动态计算编辑器可用高度，解决移动端键盘遮挡问题。
- * 
+ *
  * @module utils/mobile-keyboard-manager
  */
 
-import { logDebug, logWarn } from './logger';
+import { logDebug, logWarn } from "./logger";
 
 /**
  * 键盘状态接口
@@ -41,7 +41,7 @@ export interface MobileKeyboardManagerOptions {
 
 /**
  * 移动端键盘管理器
- * 
+ *
  * 使用 Visual Viewport API 监听键盘状态变化，
  * 提供编辑器高度计算功能。
  */
@@ -65,7 +65,7 @@ export class MobileKeyboardManager {
 
 		// 初始化视口高度
 		this.initialViewportHeight = this.getVisualViewportHeight();
-		
+
 		// 初始化键盘状态
 		this.lastKeyboardState = {
 			isVisible: false,
@@ -73,7 +73,7 @@ export class MobileKeyboardManager {
 			visualViewportHeight: this.initialViewportHeight,
 		};
 
-		logDebug('[MobileKeyboardManager] 初始化完成', {
+		logDebug("[MobileKeyboardManager] 初始化完成", {
 			initialViewportHeight: this.initialViewportHeight,
 			isSupported: MobileKeyboardManager.isSupported(),
 		});
@@ -83,9 +83,11 @@ export class MobileKeyboardManager {
 	 * 检查 Visual Viewport API 是否可用
 	 */
 	static isSupported(): boolean {
-		return typeof window !== 'undefined' && 
-			   window.visualViewport !== null && 
-			   window.visualViewport !== undefined;
+		return (
+			typeof window !== "undefined" &&
+			window.visualViewport !== null &&
+			window.visualViewport !== undefined
+		);
 	}
 
 	/**
@@ -93,7 +95,7 @@ export class MobileKeyboardManager {
 	 */
 	private getVisualViewportHeight(): number {
 		if (MobileKeyboardManager.isSupported()) {
-			return window.visualViewport!.height;
+			return window.visualViewport?.height ?? window.innerHeight;
 		}
 		// 降级方案：使用 window.innerHeight
 		return window.innerHeight;
@@ -104,7 +106,7 @@ export class MobileKeyboardManager {
 	 */
 	startListening(): void {
 		if (this.isListening) {
-			logWarn('[MobileKeyboardManager] 已经在监听中');
+			logWarn("[MobileKeyboardManager] 已经在监听中");
 			return;
 		}
 
@@ -114,17 +116,17 @@ export class MobileKeyboardManager {
 		if (MobileKeyboardManager.isSupported()) {
 			this.resizeHandler = this.handleViewportResize.bind(this);
 			this.scrollHandler = this.handleViewportScroll.bind(this);
-			
-			window.visualViewport!.addEventListener('resize', this.resizeHandler);
-			window.visualViewport!.addEventListener('scroll', this.scrollHandler);
-			
-			logDebug('[MobileKeyboardManager] 开始监听 Visual Viewport 事件');
+
+			window.visualViewport?.addEventListener("resize", this.resizeHandler);
+			window.visualViewport?.addEventListener("scroll", this.scrollHandler);
+
+			logDebug("[MobileKeyboardManager] 开始监听 Visual Viewport 事件");
 		} else {
 			// 降级方案：监听 window resize
 			this.resizeHandler = this.handleWindowResize.bind(this);
-			window.addEventListener('resize', this.resizeHandler);
-			
-			logWarn('[MobileKeyboardManager] Visual Viewport API 不可用，使用降级方案');
+			window.addEventListener("resize", this.resizeHandler);
+
+			logWarn("[MobileKeyboardManager] Visual Viewport API 不可用，使用降级方案");
 		}
 
 		this.isListening = true;
@@ -139,19 +141,19 @@ export class MobileKeyboardManager {
 		}
 
 		if (MobileKeyboardManager.isSupported() && this.resizeHandler) {
-			window.visualViewport!.removeEventListener('resize', this.resizeHandler);
+			window.visualViewport?.removeEventListener("resize", this.resizeHandler);
 			if (this.scrollHandler) {
-				window.visualViewport!.removeEventListener('scroll', this.scrollHandler);
+				window.visualViewport?.removeEventListener("scroll", this.scrollHandler);
 			}
 		} else if (this.resizeHandler) {
-			window.removeEventListener('resize', this.resizeHandler);
+			window.removeEventListener("resize", this.resizeHandler);
 		}
 
 		this.resizeHandler = null;
 		this.scrollHandler = null;
 		this.isListening = false;
 
-		logDebug('[MobileKeyboardManager] 停止监听');
+		logDebug("[MobileKeyboardManager] 停止监听");
 	}
 
 	/**
@@ -160,7 +162,7 @@ export class MobileKeyboardManager {
 	private handleViewportResize(): void {
 		const currentHeight = this.getVisualViewportHeight();
 		const heightDiff = this.initialViewportHeight - currentHeight;
-		
+
 		const newState: KeyboardState = {
 			isVisible: heightDiff > this.options.keyboardThreshold,
 			keyboardHeight: Math.max(0, heightDiff),
@@ -170,13 +172,13 @@ export class MobileKeyboardManager {
 		// 检测键盘状态变化
 		if (newState.isVisible !== this.lastKeyboardState.isVisible) {
 			if (newState.isVisible) {
-				logDebug('[MobileKeyboardManager] 键盘弹出', {
+				logDebug("[MobileKeyboardManager] 键盘弹出", {
 					keyboardHeight: newState.keyboardHeight,
 					visualViewportHeight: newState.visualViewportHeight,
 				});
 				this.options.onKeyboardShow(newState);
 			} else {
-				logDebug('[MobileKeyboardManager] 键盘收起');
+				logDebug("[MobileKeyboardManager] 键盘收起");
 				this.options.onKeyboardHide(newState);
 			}
 		}
@@ -199,7 +201,7 @@ export class MobileKeyboardManager {
 	private handleWindowResize(): void {
 		const currentHeight = window.innerHeight;
 		const heightDiff = this.initialViewportHeight - currentHeight;
-		
+
 		const newState: KeyboardState = {
 			isVisible: heightDiff > this.options.keyboardThreshold,
 			keyboardHeight: Math.max(0, heightDiff),
@@ -227,18 +229,18 @@ export class MobileKeyboardManager {
 
 	/**
 	 * 计算编辑器可用高度
-	 * 
+	 *
 	 * @param headerHeight - 顶部栏高度（像素）
 	 * @returns 编辑器可用高度（像素）
 	 */
 	calculateEditorHeight(headerHeight: number): number {
 		const viewportHeight = this.getVisualViewportHeight();
 		const calculatedHeight = viewportHeight - headerHeight - this.options.minGap;
-		
+
 		// 确保不小于最小高度阈值
 		const finalHeight = Math.max(calculatedHeight, this.options.minEditorHeight);
-		
-		logDebug('[MobileKeyboardManager] 计算编辑器高度', {
+
+		logDebug("[MobileKeyboardManager] 计算编辑器高度", {
 			viewportHeight,
 			headerHeight,
 			minGap: this.options.minGap,
@@ -260,8 +262,8 @@ export class MobileKeyboardManager {
 			keyboardHeight: 0,
 			visualViewportHeight: this.initialViewportHeight,
 		};
-		
-		logDebug('[MobileKeyboardManager] 重置初始高度', {
+
+		logDebug("[MobileKeyboardManager] 重置初始高度", {
 			initialViewportHeight: this.initialViewportHeight,
 		});
 	}
@@ -271,6 +273,6 @@ export class MobileKeyboardManager {
 	 */
 	destroy(): void {
 		this.stopListening();
-		logDebug('[MobileKeyboardManager] 已销毁');
+		logDebug("[MobileKeyboardManager] 已销毁");
 	}
 }

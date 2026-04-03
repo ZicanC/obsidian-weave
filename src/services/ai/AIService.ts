@@ -1,255 +1,380 @@
-import { logger } from '../../utils/logger';
+import { OFFICIAL_TEMPLATES } from "../../constants/official-templates";
+import type {
+	AIServiceResponse,
+	GeneratedCard,
+	GenerationConfig,
+	GenerationProgress,
+	IAIService,
+	RegenerateRequest,
+	SplitCardRequest,
+	SplitCardResponse,
+	SystemPromptConfig,
+} from "../../types/ai-types";
+import type { ParseTemplate } from "../../types/newCardParsingTypes";
+import { logger } from "../../utils/logger";
+import { sendAIHttpRequest } from "./ObsidianRequestAdapter";
+import type { AIHttpRequest, AIHttpResponse } from "./ObsidianRequestAdapter";
+import { PromptBuilderService } from "./PromptBuilderService";
+
 /**
  * AI服务抽象基类
  */
-
-import type {
-  IAIService,
-  GenerationConfig,
-  AIServiceResponse,
-  RegenerateRequest,
-  GenerationProgress,
-  SystemPromptConfig,
-  SplitCardRequest,
-  SplitCardResponse
-} from '../../types/ai-types';
-import type { ParseTemplate } from '../../types/newCardParsingTypes';
-import { OFFICIAL_TEMPLATES } from '../../constants/official-templates';
-import { PromptBuilderService } from './PromptBuilderService';
 
 /**
  * Chat消息接口
  */
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
+	role: "system" | "user" | "assistant";
+	content: string;
 }
 
 /**
  * Chat请求接口
  */
 export interface ChatRequest {
-  messages: ChatMessage[];
-  temperature?: number;
-  maxTokens?: number;
+	messages: ChatMessage[];
+	temperature?: number;
+	maxTokens?: number;
 }
 
 /**
  * Chat响应接口
  */
 export interface ChatResponse {
-  success: boolean;
-  content?: string;
-  model?: string;
-  tokensUsed?: number;
-  cost?: number;
-  error?: string;
+	success: boolean;
+	content?: string;
+	model?: string;
+	tokensUsed?: number;
+	cost?: number;
+	error?: string;
+}
+
+export interface ParsedAICard {
+	type?: GeneratedCard["type"];
+	content?: unknown;
+	front?: unknown;
+	back?: unknown;
+	choices?: string[];
+	correctAnswer?: number;
+	clozeText?: string;
+	tags?: string[];
+	images?: string[];
+	explanation?: string;
+	sourceText?: unknown;
+	[key: string]: unknown;
+}
+
+interface ErrorLike {
+	message?: string;
+	status?: number;
+	response?: {
+		data?: {
+			error?: {
+				message?: string;
+			};
+		};
+	};
+}
+
+function toErrorLike(error: unknown): ErrorLike {
+	if (typeof error === "string") {
+		return { message: error };
+	}
+
+	if (typeof error === "object" && error !== null) {
+		return error as ErrorLike;
+	}
+
+	return {};
 }
 
 export abstract class AIService implements IAIService {
-  protected apiKey: string;
-  protected model: string;
-  protected baseUrl: string = ''; // 🆕 API基础地址
-  protected systemPromptConfig?: SystemPromptConfig;
+	protected apiKey: string;
+	protected model: string;
+	protected baseUrl = "";
+	protected systemPromptConfig?: SystemPromptConfig;
 
-  constructor(apiKey: string, model: string, baseUrl?: string, systemPromptConfig?: SystemPromptConfig) {
-    this.apiKey = apiKey;
-    this.model = model;
-    this.systemPromptConfig = systemPromptConfig;
-    // 🆕 如果提供了自定义baseUrl，子类在调用super后会被覆盖
-    // 子类需要在调用super后处理baseUrl
-    if (baseUrl) {
-      this.baseUrl = baseUrl;
-    }
-  }
+	constructor(
+		apiKey: string,
+		model: string,
+		baseUrl?: string,
+		systemPromptConfig?: SystemPromptConfig
+	) {
+		this.apiKey = apiKey;
+		this.model = model;
+		this.systemPromptConfig = systemPromptConfig;
 
-  /**
-   * 生成卡片
-   */
-  abstract generateCards(
-    content: string,
-    config: GenerationConfig,
-    onProgress?: (progress: GenerationProgress) => void
-  ): Promise<AIServiceResponse>;
+		if (baseUrl) {
+			this.baseUrl = baseUrl;
+		}
+	}
 
-  /**
-   * 重新生成单张卡片
-   */
-  abstract regenerateCard(
-    request: RegenerateRequest,
-    config: GenerationConfig
-  ): Promise<AIServiceResponse>;
+	/**
+	 * 生成卡片
+	 */
+	abstract generateCards(
+		content: string,
+		config: GenerationConfig,
+		onProgress?: (progress: GenerationProgress) => void
+	): Promise<AIServiceResponse>;
 
-  /**
-   * 拆分父卡片为多个子卡片
-   */
-  abstract splitParentCard(
-    request: SplitCardRequest
-  ): Promise<SplitCardResponse>;
+	/**
+	 * 重新生成单张卡片
+	 */
+	abstract regenerateCard(
+		request: RegenerateRequest,
+		config: GenerationConfig
+	): Promise<AIServiceResponse>;
 
-  /**
-   * 测试API连接
-   */
-  abstract testConnection(): Promise<boolean>;
+	/**
+	 * 拆分父卡片为多个子卡片
+	 */
+	abstract splitParentCard(request: SplitCardRequest): Promise<SplitCardResponse>;
 
-  /**
-   * 通用对话接口（用于格式化等非生成场景）
-   */
-  abstract chat(request: ChatRequest): Promise<ChatResponse>;
+	/**
+	 * 测试API连接
+	 */
+	abstract testConnection(): Promise<boolean>;
 
-  /**
-   * 加载模板信息
-   */
-  protected loadTemplates(config: GenerationConfig): {
-    qa?: ParseTemplate;
-    choice?: ParseTemplate;
-    cloze?: ParseTemplate;
-  } {
-    const templates = config.templates;
-    if (!templates) return {};
+	/**
+	 * 通用对话接口（用于格式化等非生成场景）
+	 */
+	abstract chat(request: ChatRequest): Promise<ChatResponse>;
 
-    return {
-      qa: OFFICIAL_TEMPLATES.find(t => t.id === templates.qa),
-      choice: OFFICIAL_TEMPLATES.find(t => t.id === templates.choice),
-      cloze: OFFICIAL_TEMPLATES.find(t => t.id === templates.cloze)
-    };
-  }
+	/**
+	 * 加载模板信息
+	 */
+	protected loadTemplates(config: GenerationConfig): {
+		qa?: ParseTemplate;
+		choice?: ParseTemplate;
+		cloze?: ParseTemplate;
+	} {
+		const templates = config.templates;
 
-  /**
-   * 构建系统提示词（使用PromptBuilderService）
-   */
-  protected buildSystemPrompt(config: GenerationConfig): string {
-    return PromptBuilderService.buildSystemPrompt(config, this.systemPromptConfig);
-  }
+		if (!templates) {
+			return {};
+		}
 
-  /**
-   * 构建用户提示词（使用PromptBuilderService）
-   */
-  protected buildUserPrompt(content: string, promptTemplate: string): string {
-    return PromptBuilderService.buildUserPrompt(content, promptTemplate);
-  }
+		return {
+			qa: OFFICIAL_TEMPLATES.find((template) => template.id === templates.qa),
+			choice: OFFICIAL_TEMPLATES.find((template) => template.id === templates.choice),
+			cloze: OFFICIAL_TEMPLATES.find((template) => template.id === templates.cloze),
+		};
+	}
 
-  /**
-   * 解析AI响应为卡片数组
-   */
-  protected parseResponse(responseText: string): any[] {
-    try {
-      const trimmed = (responseText ?? '').trim();
+	/**
+	 * 构建系统提示词（使用PromptBuilderService）
+	 */
+	protected buildSystemPrompt(config: GenerationConfig): string {
+		return PromptBuilderService.buildSystemPrompt(config, this.systemPromptConfig);
+	}
 
-      // 尝试直接解析
-      const direct = this.tryParseJson(trimmed);
-      const directCards = this.extractCardsFromParsed(direct);
-      if (directCards) {
-        return directCards;
-      }
+	/**
+	 * 构建用户提示词（使用PromptBuilderService）
+	 */
+	protected buildUserPrompt(content: string, promptTemplate: string): string {
+		return PromptBuilderService.buildUserPrompt(content, promptTemplate);
+	}
 
-      const objectMatch = trimmed.match(/\{[\s\S]*\}/);
-      if (objectMatch) {
-        const obj = this.tryParseJson(objectMatch[0]);
-        const objCards = this.extractCardsFromParsed(obj);
-        if (objCards) {
-          return objCards;
-        }
-      }
+	/**
+	 * 统一走 Obsidian requestUrl，避免 provider 层各自直接依赖运行时模块
+	 */
+	protected request(request: AIHttpRequest): Promise<AIHttpResponse> {
+		return sendAIHttpRequest(request);
+	}
 
-      // 尝试提取JSON数组
-      const arrayMatch = trimmed.match(/\[[\s\S]*\]/);
-      if (arrayMatch) {
-        const arr = this.tryParseJson(arrayMatch[0]);
-        const arrCards = this.extractCardsFromParsed(arr);
-        if (arrCards) {
-          return arrCards;
-        }
-      }
+	/**
+	 * 解析AI响应为卡片数组
+	 */
+	protected parseResponse(responseText: string): ParsedAICard[] {
+		try {
+			const trimmed = (responseText ?? "").trim();
 
-      throw new Error('AI返回的内容格式不正确');
-    } catch (error) {
-      logger.error('Failed to parse AI response:', error);
-      throw new Error('AI返回的内容格式不正确');
-    }
-  }
+			const direct = this.tryParseJson(trimmed);
+			const directCards = this.extractCardsFromParsed(direct);
 
-  private tryParseJson(text: string): unknown {
-    if (!text) return null;
-    try {
-      return JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
+			if (directCards) {
+				return directCards;
+			}
 
-  private extractCardsFromParsed(parsed: unknown): any[] | null {
-    if (!parsed) return null;
+			const objectMatch = trimmed.match(/\{[\s\S]*\}/);
 
-    if (Array.isArray(parsed)) {
-      return parsed;
-    }
+			if (objectMatch) {
+				const objectResult = this.tryParseJson(objectMatch[0]);
+				const objectCards = this.extractCardsFromParsed(objectResult);
 
-    if (typeof parsed === 'object') {
-      const obj = parsed as Record<string, unknown>;
-      const cards = obj.cards;
-      if (Array.isArray(cards)) {
-        return cards;
-      }
-    }
+				if (objectCards) {
+					return objectCards;
+				}
+			}
 
-    return null;
-  }
+			const arrayMatch = trimmed.match(/\[[\s\S]*\]/);
 
-  /**
-   * 生成卡片ID
-   */
-  protected generateCardId(): string {
-    return `ai-card-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  }
+			if (arrayMatch) {
+				const arrayResult = this.tryParseJson(arrayMatch[0]);
+				const arrayCards = this.extractCardsFromParsed(arrayResult);
 
-  /**
-   * 估算成本（默认实现）
-   */
-  protected estimateCost(promptTokens: number, completionTokens: number): number {
-    // 默认按GPT-4定价估算（实际应根据不同模型调整）
-    const promptCost = (promptTokens / 1000) * 0.03;
-    const completionCost = (completionTokens / 1000) * 0.06;
-    return promptCost + completionCost;
-  }
+				if (arrayCards) {
+					return arrayCards;
+				}
+			}
 
-  /**
-   * 处理API错误
-   */
-  protected handleError(error: any): AIServiceResponse {
-    logger.error('AI Service Error:', error);
+			throw new Error("AI返回的内容格式不正确");
+		} catch (error) {
+			logger.error("Failed to parse AI response:", error);
+			throw new Error("AI返回的内容格式不正确");
+		}
+	}
 
-    let errorMessage = 'AI服务调用失败';
+	private tryParseJson(text: string): unknown {
+		if (!text) {
+			return null;
+		}
 
-    if (error.message) {
-      errorMessage = error.message;
-    } else if (error.response?.data?.error) {
-      errorMessage = error.response.data.error.message || errorMessage;
-    } else if (error.status === 401) {
-      errorMessage = 'API密钥无效或已过期';
-    } else if (error.status === 429) {
-      errorMessage = 'AI服务触发限流/配额限制（429），请稍后再试或检查账户配额/余额';
-    } else if (error.status === 500) {
-      errorMessage = 'AI服务暂时不可用';
-    }
+		try {
+			return JSON.parse(text);
+		} catch {
+			return null;
+		}
+	}
 
-    const msgLower = (errorMessage || '').toLowerCase();
-    if (
-      msgLower.includes('429') ||
-      msgLower.includes('rate limit') ||
-      msgLower.includes('too many requests') ||
-      msgLower.includes('quota') ||
-      errorMessage.includes('频率') ||
-      errorMessage.includes('限流')
-    ) {
-      errorMessage = 'AI服务触发限流/配额限制（429），请稍后再试；也可减少生成数量或检查账户配额/余额';
-    }
+	private extractCardsFromParsed(parsed: unknown): ParsedAICard[] | null {
+		if (!parsed) {
+			return null;
+		}
 
-    return {
-      success: false,
-      error: errorMessage
-    };
-  }
+		if (Array.isArray(parsed)) {
+			return parsed as ParsedAICard[];
+		}
+
+		if (typeof parsed === "object") {
+			const objectResult = parsed as { cards?: unknown };
+
+			if (Array.isArray(objectResult.cards)) {
+				return objectResult.cards as ParsedAICard[];
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * 生成卡片ID
+	 */
+	protected generateCardId(): string {
+		return `ai-card-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+	}
+
+	/**
+	 * 估算成本（默认实现）
+	 */
+	protected estimateCost(promptTokens: number, completionTokens: number): number {
+		const promptCost = (promptTokens / 1000) * 0.03;
+		const completionCost = (completionTokens / 1000) * 0.06;
+
+		return promptCost + completionCost;
+	}
+
+	/**
+	 * 处理API错误
+	 */
+	protected handleError(error: unknown): AIServiceResponse {
+		logger.error("AI Service Error:", error);
+
+		const errorLike = toErrorLike(error);
+		let errorMessage = "AI服务调用失败";
+
+		if (errorLike.message) {
+			errorMessage = errorLike.message;
+		} else if (errorLike.response?.data?.error?.message) {
+			errorMessage = errorLike.response.data.error.message;
+		} else if (errorLike.status === 401) {
+			errorMessage = "API密钥无效或已过期";
+		} else if (errorLike.status === 429) {
+			errorMessage = "AI服务触发限流/配额限制（429），请稍后再试或检查账户配额/余额";
+		} else if (errorLike.status === 500) {
+			errorMessage = "AI服务暂时不可用";
+		}
+
+		const loweredMessage = errorMessage.toLowerCase();
+
+		if (
+			loweredMessage.includes("429") ||
+			loweredMessage.includes("rate limit") ||
+			loweredMessage.includes("too many requests") ||
+			loweredMessage.includes("quota") ||
+			errorMessage.includes("频率") ||
+			errorMessage.includes("限流")
+		) {
+			errorMessage =
+				"AI服务触发限流/配额限制（429），请稍后再试；也可减少生成数量或检查账户配额/余额";
+		}
+
+		return {
+			success: false,
+			error: errorMessage,
+		};
+	}
+
+	/**
+	 * 分类连接测试错误，返回用户可理解的错误信息
+	 * 子类在 testConnection catch 中调用后 throw
+	 */
+	protected classifyConnectionError(error: unknown): Error {
+		const errorLike = toErrorLike(error);
+		const status = errorLike.status;
+		const message = errorLike.message || "";
+		const loweredMessage = message.toLowerCase();
+
+		if (
+			status === 401 ||
+			status === 403 ||
+			loweredMessage.includes("unauthorized") ||
+			loweredMessage.includes("invalid api key") ||
+			loweredMessage.includes("authentication")
+		) {
+			return new Error("API密钥无效或已过期，请检查密钥是否正确");
+		}
+
+		if (status === 404 || loweredMessage.includes("not found")) {
+			return new Error("API地址错误或服务不可达，请检查自定义URL是否正确");
+		}
+
+		if (
+			status === 429 ||
+			loweredMessage.includes("rate limit") ||
+			loweredMessage.includes("quota") ||
+			loweredMessage.includes("too many")
+		) {
+			return new Error("请求频率超限或配额不足，请稍后重试或检查账户余额");
+		}
+
+		if (
+			(status !== undefined && status >= 500) ||
+			loweredMessage.includes("internal server") ||
+			loweredMessage.includes("overloaded") ||
+			loweredMessage.includes("529")
+		) {
+			return new Error("服务端错误，AI服务暂时不可用，请稍后重试");
+		}
+
+		if (
+			loweredMessage.includes("timeout") ||
+			loweredMessage.includes("timed out") ||
+			loweredMessage.includes("econnaborted")
+		) {
+			return new Error("连接超时，请检查网络连接或增加超时时间");
+		}
+
+		if (
+			loweredMessage.includes("econnrefused") ||
+			loweredMessage.includes("enotfound") ||
+			loweredMessage.includes("network") ||
+			loweredMessage.includes("fetch failed")
+		) {
+			return new Error("无法连接到服务器，请检查网络连接和API地址");
+		}
+
+		return new Error(message || "连接失败，请检查配置");
+	}
 }
-
-

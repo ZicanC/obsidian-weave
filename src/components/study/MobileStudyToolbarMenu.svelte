@@ -17,11 +17,11 @@
     isPremium?: boolean;
     isGraphLinked?: boolean;
     enableDirectDelete?: boolean;
-    showTimingInfo?: boolean; // 🆕 计时信息栏是否展开
+    showTimingInfo?: boolean; // 计时信息栏是否展开
     onClose: () => void;
     onToggleEdit?: () => void;
     onDelete?: (skipConfirm?: boolean) => void;
-    onRemoveFromDeck?: () => void; // 🆕 v2.0 从牌组移除
+    onRemoveFromDeck?: () => void; // 从牌组移除
     onSetReminder?: () => void;
     onChangePriority?: (priority: number) => void;
     onChangeDeck?: (deckId: string) => void | Promise<void>;
@@ -33,7 +33,7 @@
     onGraphLinkToggle?: (enabled: boolean) => void;
     onOpenDetailedView?: () => void;
     onOpenSourceBlock?: () => void;
-    onToggleTimingInfo?: () => void; // 🆕 切换计时信息栏
+    onToggleTimingInfo?: () => void; // 切换计时信息栏
   }
 
   let {
@@ -49,7 +49,7 @@
     onClose,
     onToggleEdit,
     onDelete,
-    onRemoveFromDeck, // 🆕 v2.0 从牌组移除
+    onRemoveFromDeck, // 从牌组移除
     onSetReminder,
     onChangePriority,
     onChangeDeck,

@@ -4,6 +4,7 @@
   import { Menu, type App } from 'obsidian';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import { ICON_NAMES } from '../../icons/index.js';
+  import { logger } from '../../utils/logger';
   import type { Deck } from '../../data/types';
 
   type DataSource = 'memory' | 'questionBank' | 'incremental-reading';
@@ -27,7 +28,6 @@
     availableAccuracies?: string[];
     availableAttemptThresholds?: number[];
     availableErrorLevels?: string[];
-    availableSourceCards?: string[];
     availableYamlKeys?: string[];
     // 匹配计数
     matchCount?: number;
@@ -35,6 +35,7 @@
     // 排序状态
     sortField?: string;
     sortDirection?: 'asc' | 'desc';
+    showSortButton?: boolean;
   }
 
   let { 
@@ -55,12 +56,12 @@
     availableAccuracies = [],
     availableAttemptThresholds = [],
     availableErrorLevels = [],
-    availableSourceCards = [],
     availableYamlKeys = [],
     matchCount = -1,
     totalCount = -1,
     sortField = 'created',
-    sortDirection = 'desc'
+    sortDirection = 'desc',
+    showSortButton = true
   }: Props = $props();
 
   let inputRef: HTMLInputElement | null = $state(null);
@@ -91,7 +92,6 @@
       opts.push({ prefix: 'accuracy:', label: 'accuracy: 搜索正确率', afterInsert: () => showAccuracySuggestions() });
       opts.push({ prefix: 'attempts:', label: 'attempts: 搜索测试次数', afterInsert: () => showAttemptsSuggestions() });
       opts.push({ prefix: 'error:', label: 'error: 搜索错题等级', afterInsert: () => showErrorSuggestions() });
-      opts.push({ prefix: 'source_card:', label: 'source_card: 搜索关联卡片', afterInsert: () => showSourceCardSuggestions() });
     } else if (dataSource === 'incremental-reading') {
       opts.push({ prefix: 'state:', label: 'state: 搜索阅读状态', afterInsert: () => showStateSuggestions() });
     }
@@ -109,13 +109,12 @@
   }
 
   function removeHistoryItem(item: string, e: MouseEvent) {
-    e.stopPropagation();
+    e.preventDefault();
     searchHistory = searchHistory.filter(h => h !== item);
     saveSearchHistory();
   }
 
   function clearAllHistory(e: MouseEvent) {
-    e.stopPropagation();
     e.preventDefault();
     searchHistory = [];
     saveSearchHistory();
@@ -134,7 +133,7 @@
         searchHistory = JSON.parse(saved);
       }
     } catch (error) {
-      console.error('加载搜索历史失败:', error);
+      logger.error('加载搜索历史失败:', error);
     }
   });
   // NOTE: click-outside listener registered in the onMount above (with showDropdown state)
@@ -144,7 +143,7 @@
     try {
       vaultStorage.setItem(`weave-search-history-${dataSource}`, JSON.stringify(searchHistory));
     } catch (error) {
-      console.error('保存搜索历史失败:', error);
+      logger.error('保存搜索历史失败:', error);
     }
   }
 
@@ -202,8 +201,6 @@
       showAttemptsSuggestions();
     } else if (lastWord.endsWith('error:')) {
       showErrorSuggestions();
-    } else if (lastWord.endsWith('source_card:')) {
-      showSourceCardSuggestions();
     } else if (lastWord.endsWith('created:')) {
       showDateSuggestions('created');
     } else if (lastWord.endsWith('modified:')) {
@@ -325,33 +322,6 @@
     showMenuSafe(menu);
   }
 
-  function showSourceCardSuggestions() {
-    if (!containerRef || menuShown) return;
-    const menu = new Menu();
-    (menu as any).app = app;
-    menu.addItem((item) => {
-      item.setTitle('关联卡片');
-      item.setDisabled(true);
-    });
-    if (availableSourceCards.length === 0) {
-      menu.addItem((item) => {
-        item.setTitle('暂无关联卡片');
-        item.setDisabled(true);
-      });
-    } else {
-      availableSourceCards.slice(0, 20).forEach((id) => {
-        menu.addItem((item) => {
-          item.setTitle(id);
-          item.onClick(() => {
-            replaceLastWord(`"${id}"`);
-          });
-        });
-      });
-    }
-    showMenuSafe(menu);
-  }
-
-  // 显示日期范围建议（通用：created / modified / due）
   function showDateSuggestions(dateType: 'created' | 'modified' | 'due') {
     if (!containerRef || menuShown) return;
     const menu = new Menu();
@@ -566,7 +536,6 @@
   // 显示排序菜单（独立菜单，从排序图标触发）
   function showSortMenu(e: MouseEvent) {
     e.preventDefault();
-    e.stopPropagation();
     
     if (!containerRef || menuShown) return;
     
@@ -674,17 +643,19 @@
       </div>
     {/if}
 
-    <div
-      class="filter-button"
-      role="button"
-      tabindex="-1"
-      onclick={showSortMenu}
-      onkeydown={(e) => { if (e.key === 'Enter') showSortMenu(e as unknown as MouseEvent); }}
-      aria-label="排序"
-      title="排序选项"
-    >
-      <EnhancedIcon name={ICON_NAMES.SORT} size={14} />
-    </div>
+    {#if showSortButton}
+      <div
+        class="filter-button"
+        role="button"
+        tabindex="-1"
+        onclick={showSortMenu}
+        onkeydown={(e) => { if (e.key === 'Enter') showSortMenu(e as unknown as MouseEvent); }}
+        aria-label="排序"
+        title="排序选项"
+      >
+        <EnhancedIcon name={ICON_NAMES.SORT} size={14} />
+      </div>
+    {/if}
   </div>
 
   {#if showDropdown}
@@ -717,14 +688,26 @@
               class="dropdown-item"
               role="button"
               tabindex="-1"
-              onmousedown={(e) => { e.preventDefault(); value = historyItem; onSearch?.(value); showDropdown = false; }}
+              onmousedown={(e) => {
+                if ((e.target as HTMLElement).closest('.dropdown-item-remove')) {
+                  e.preventDefault();
+                  return;
+                }
+                e.preventDefault();
+                value = historyItem;
+                onSearch?.(value);
+                showDropdown = false;
+              }}
             >
               <span class="dropdown-item-label">{historyItem}</span>
               <span
                 class="dropdown-item-remove"
                 role="button"
                 tabindex="-1"
-                onmousedown={(e) => { e.stopPropagation(); removeHistoryItem(historyItem, e); }}
+                onmousedown={(e) => {
+                  e.preventDefault();
+                  removeHistoryItem(historyItem, e);
+                }}
                 aria-label="删除"
               >
                 <EnhancedIcon name={ICON_NAMES.TIMES} size={10} />

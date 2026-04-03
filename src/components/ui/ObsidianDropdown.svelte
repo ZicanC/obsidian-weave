@@ -16,6 +16,7 @@
     placeholder?: string;
     disabled?: boolean;
     className?: string;
+    iconPosition?: 'left' | 'right';
     onchange?: (value: string) => void;
   }
 
@@ -25,6 +26,7 @@
     placeholder = '请选择...',
     disabled = false,
     className = '',
+    iconPosition = 'right',
     onchange
   }: Props = $props();
 
@@ -96,6 +98,11 @@
   {disabled}
   type="button"
 >
+  <ObsidianIcon
+    name="chevron-down"
+    size={14}
+    class={iconPosition === 'left' ? 'dropdown-icon is-leading' : 'dropdown-icon'}
+  />
   <span class="dropdown-text">
     {#if selectedOption}
       {selectedOption.label}
@@ -103,7 +110,6 @@
       <span class="placeholder">{placeholder}</span>
     {/if}
   </span>
-  <ObsidianIcon name="chevron-down" size={14} />
 </button>
 
 <style>
@@ -148,6 +154,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .dropdown-icon.is-leading {
+    order: -1;
   }
 
   .placeholder {

@@ -2,20 +2,20 @@
  * 官方预设的AI测试题生成功能
  */
 
-import type { AIAction } from '../types/ai-types';
+import type { AIAction } from "../types/ai-types";
 
 /**
  * 官方测试题生成功能预设
  */
 export const OFFICIAL_TEST_GEN_ACTIONS: AIAction[] = [
-  {
-    id: 'official-choice-generator',
-    name: '选择题生成器',
-    description: '基于卡片内容生成高质量选择题',
-    icon: 'target', // 使用图标名称
-    type: 'test-generator',
-    
-    systemPrompt: `你是一个精通教育学和认知心理学的专业选择题设计专家。
+	{
+		id: "official-choice-generator",
+		name: "选择题生成器",
+		description: "基于卡片内容生成高质量选择题",
+		icon: "target", // 使用图标名称
+		type: "test-generator",
+
+		systemPrompt: `你是一个精通教育学和认知心理学的专业选择题设计专家。
 
 ## 核心任务
 基于给定的学习材料，设计科学、严谨、高质量的选择题，帮助学习者深度巩固知识、发现理解盲区、提升认知水平。
@@ -132,7 +132,7 @@ D. 产生能量
 - 缺少任何一个必需字段
 - explanation少于50字`,
 
-    userPromptTemplate: `请基于以下学习材料生成 {{数量}} 道高质量的{{类型}}（难度：{{难度}}）。
+		userPromptTemplate: `请基于以下学习材料生成 {{数量}} 道高质量的{{类型}}（难度：{{难度}}）。
 
 ## 学习材料
 **问题/概念**：{{cardFront}}
@@ -158,26 +158,26 @@ D. 产生能量
 
 请立即输出完整的JSON格式数据：`,
 
-    testConfig: {
-      defaultCount: 3,
-      questionType: 'multiple',
-      difficultyLevel: 'medium',
-      targetDeckStrategy: 'auto'
-    },
+		testConfig: {
+			defaultCount: 3,
+			questionType: "multiple",
+			difficultyLevel: "medium",
+			targetDeckStrategy: "auto",
+		},
 
-    category: 'official',
-    enabled: true,
-    createdAt: new Date().toISOString()
-  },
+		category: "official",
+		enabled: true,
+		createdAt: new Date().toISOString(),
+	},
 
-  {
-    id: 'official-cloze-generator',
-    name: '挖空题生成器',
-    description: '基于卡片内容生成Cloze挖空题',
-    icon: 'highlighter', // 使用图标名称
-    type: 'test-generator',
-    
-    systemPrompt: `你是一个精通认知科学和Cloze挖空技术的学习卡片设计专家，擅长通过主动回忆策略强化记忆。
+	{
+		id: "official-cloze-generator",
+		name: "挖空题生成器",
+		description: "基于卡片内容生成Cloze挖空题",
+		icon: "highlighter", // 使用图标名称
+		type: "test-generator",
+
+		systemPrompt: `你是一个精通认知科学和Cloze挖空技术的学习卡片设计专家，擅长通过主动回忆策略强化记忆。
 
 ## 核心任务
 基于学习材料设计Weave/Obsidian风格的挖空题，通过精确挖空关键信息触发主动回忆，提升长期记忆效果。
@@ -236,7 +236,7 @@ Weave使用**Obsidian高亮语法**进行挖空：
 - 每道题可以有多个挖空点（都用双等号包裹）
 - 支持富Markdown格式（代码块、列表、标题等）`,
 
-    userPromptTemplate: `请基于以下学习材料生成 {{数量}} 道Cloze挖空题（难度：{{难度}}）。
+		userPromptTemplate: `请基于以下学习材料生成 {{数量}} 道Cloze挖空题（难度：{{难度}}）。
 
 ## 学习材料
 **问题/概念**：{{cardFront}}
@@ -278,26 +278,26 @@ Weave使用**Obsidian高亮语法**进行挖空：
 
 请严格按照系统提示词中的JSON格式输出，确保所有挖空都使用 ==文本== 格式（双等号包裹）！`,
 
-    testConfig: {
-      defaultCount: 5,
-      questionType: 'fill',
-      difficultyLevel: 'medium',
-      targetDeckStrategy: 'auto'
-    },
+		testConfig: {
+			defaultCount: 5,
+			questionType: "fill",
+			difficultyLevel: "medium",
+			targetDeckStrategy: "auto",
+		},
 
-    category: 'official',
-    enabled: true,
-    createdAt: new Date().toISOString()
-  },
+		category: "official",
+		enabled: true,
+		createdAt: new Date().toISOString(),
+	},
 
-  {
-    id: 'official-judge-generator',
-    name: '判断题生成器',
-    description: '基于卡片内容生成判断题',
-    icon: 'check-circle', // 使用图标名称
-    type: 'test-generator',
-    
-    systemPrompt: `你是一个精通逻辑学和批判性思维的判断题设计专家，擅长设计有辨析价值的判断陈述。
+	{
+		id: "official-judge-generator",
+		name: "判断题生成器",
+		description: "基于卡片内容生成判断题",
+		icon: "check-circle", // 使用图标名称
+		type: "test-generator",
+
+		systemPrompt: `你是一个精通逻辑学和批判性思维的判断题设计专家，擅长设计有辨析价值的判断陈述。
 
 ## 核心任务
 基于学习材料设计高质量判断题，通过精心设计的陈述帮助学习者辨别真伪、澄清误区、深化理解。
@@ -370,7 +370,7 @@ FSRS算法相比SM-2算法引入了个性化参数优化，能够根据用户的
 - 陈述应当清晰明确，15-50字
 - 解析建议包含"正确"或"错误"标识`,
 
-    userPromptTemplate: `请基于以下学习材料生成 {{数量}} 道判断题（难度：{{难度}}）。
+		userPromptTemplate: `请基于以下学习材料生成 {{数量}} 道判断题（难度：{{难度}}）。
 
 ## 学习材料
 **问题/概念**：{{cardFront}}
@@ -393,20 +393,15 @@ FSRS算法相比SM-2算法引入了个性化参数优化，能够根据用户的
 
 请严格按照JSON格式输出。`,
 
-    testConfig: {
-      defaultCount: 5,
-      questionType: 'judge',
-      difficultyLevel: 'easy',
-      targetDeckStrategy: 'auto'
-    },
+		testConfig: {
+			defaultCount: 5,
+			questionType: "judge",
+			difficultyLevel: "easy",
+			targetDeckStrategy: "auto",
+		},
 
-    category: 'official',
-    enabled: true,
-    createdAt: new Date().toISOString()
-  }
+		category: "official",
+		enabled: true,
+		createdAt: new Date().toISOString(),
+	},
 ];
-
-
-
-
-

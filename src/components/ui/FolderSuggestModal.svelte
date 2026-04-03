@@ -11,6 +11,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { TFolder } from 'obsidian';
   import type WeavePlugin from '../../main';
+  import { logger } from '../../utils/logger';
   import ObsidianIcon from './ObsidianIcon.svelte';
 
   interface Props {
@@ -82,7 +83,7 @@
       folders = buildFolderList();
       onSelect(folderPath);
     } catch (error) {
-      console.error('创建文件夹失败:', error);
+      logger.error('创建文件夹失败:', error);
     }
   }
 
@@ -110,11 +111,17 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="folder-modal-overlay" onclick={onClose}>
+<div
+  class="folder-modal-overlay"
+  onclick={(event) => {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }}
+>
   <div 
     class="folder-modal-container"
     class:show={showContent}
-    onclick={(e) => e.stopPropagation()}
   >
     <!-- 头部 -->
     <div class="folder-modal-header">

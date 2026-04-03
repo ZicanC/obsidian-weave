@@ -247,7 +247,7 @@ export class GradientWeightOptimizer {
 		let correct = 0;
 
 		for (const review of history) {
-			const predicted = this.predictRetention(review, FSRS6_DEFAULTS.DEFAULT_WEIGHTS as any);
+			const predicted = this.predictRetention(review, Array.from(FSRS6_DEFAULTS.DEFAULT_WEIGHTS));
 			const actual = review.rating >= 3 ? 1 : 0;
 
 			if (Math.round(predicted) === actual) {

@@ -6,11 +6,12 @@
   // UI组件导入
   import EnhancedButton from "../ui/EnhancedButton.svelte";
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
+  import FloatingMenu from "../ui/FloatingMenu.svelte";
   import MarkdownView from "../atoms/MarkdownRenderer.svelte";
   import StatsCards from "./StatsCards.svelte";
   import SourceInfoBar from "./SourceInfoBar.svelte";
-  import MobileProficiencyStatsBar from "./MobileProficiencyStatsBar.svelte";  // 🆕 学习进度统计栏
-  import MobileTimingInfoBar from "./MobileTimingInfoBar.svelte";  // 🆕 卡片计时信息栏
+  import MobileProficiencyStatsBar from "./MobileProficiencyStatsBar.svelte";  // 学习进度统计栏
+  import MobileTimingInfoBar from "./MobileTimingInfoBar.svelte";  // 卡片计时信息栏
   import VerticalToolbar from "./VerticalToolbar.svelte";
   import RatingSection from "./RatingSection.svelte";
   import CardPreview from "./CardPreview.svelte";
@@ -35,8 +36,10 @@
   import type { WeaveDataStorage } from "../../data/storage";
   import type { WeavePlugin } from "../../main";
   import { generateId } from "../../utils/helpers";
-  import { MarkdownRenderer, Modal, Notice, Platform } from "obsidian";
-  import { onMount, onDestroy, tick } from "svelte";
+  import { Component, MarkdownRenderer, Modal, Notice, Platform } from "obsidian";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { getSourceLocateOverlayService } from "../../services/ui/SourceLocateOverlayService";
+  import { SourceNavigationService } from "../../services/ui/SourceNavigationService";
   import StudyProgressBar from "./StudyProgressBar.svelte";
   import { StudySessionManager } from "../../services/StudySessionManager";
   import { CachedChoiceStatistics } from '../../utils/cached-choice-statistics';
@@ -44,18 +47,26 @@
 
   import { CardType as PreviewCardType } from "../preview/ContentPreviewEngine";
   import { UnifiedCardType, getCardTypeName } from "../../types/unified-card-types";
+  import { detectCardQuestionType } from "../../utils/card-type-utils";
   import type { ParseTemplate } from "../../types/newCardParsingTypes";
   import { UI_CONSTANTS } from "../../constants/app-constants";
   import { cardToMarkdown, markdownToCard } from "../../utils/card-markdown-serializer";
+  import { detectClozeModeFromContent, setClozeModeInContent, type ClozeMode } from "../../utils/cloze-mode";
+  import { ClozeInputModeHintModal } from "../../modals/ClozeInputModeHintModal";
+  import {
+    GLOBAL_TUTORIAL_HINT_IDS,
+    markTutorialHintDismissed,
+    shouldShowTutorialHint
+  } from "../../services/tutorial/GlobalTutorialHints";
   import { CardFormatService } from "../../services/CardFormatService";
   import { AIFormatterService } from "../../services/ai/AIFormatterService";
   import type { FormatRequest } from "../../services/ai/AIFormatterService";
   import { AITestGeneratorService } from "../../services/ai/AITestGeneratorService";
   import { AISplitService } from "../../services/ai/AISplitService";
   
-  // 🆕 AI格式化功能组件
+  // AI 格式化功能组件
   import FormatPreviewModal from "./FormatPreviewModal.svelte";
-  import AIActionManager from "./AIActionManager.svelte";
+  import { AIActionManagerObsidian } from "./AIActionManagerObsidian";
   import type { FormatPreviewResult, CustomFormatAction, AIAction } from "../../types/ai-types";
   
   //  AI配置Store（单一数据源）
@@ -74,9 +85,10 @@
   
   //  渐进式挖空 V2架构
   import { CardAccessor } from "../../services/progressive-cloze/CardAccessor";
+  import { showObsidianConfirm } from "../../utils/obsidian-confirm";
   import { CardStoreAdapter } from "../../services/progressive-cloze/CardStoreAdapter";
-  // 🆕 卡片详细信息模态窗 - 改用全局方法 plugin.openViewCardModal()
-  // 🆕 卡片数据结构调试模态窗
+  // 卡片详细信息模态窗由全局方法 plugin.openViewCardModal() 处理
+  // 卡片数据结构调试模态窗
   import CardDebugModal from "../modals/CardDebugModal.svelte";
   //  导入国际化
   import { tr } from "../../utils/i18n";
@@ -95,17 +107,26 @@
     setupBlockLinkHandlers
   } from "../../utils/study/studyInterfaceUtils";
   import { processFieldContent } from "../../utils/study/fieldProcessing";
-  import { minutesToDays, formatStudyTime } from "../../utils/study/timeCalculation";
+  import { formatStudyTime } from "../../utils/study/timeCalculation";
   import { StepIndexCalculator } from "../../utils/learning-steps/StepIndexCalculator";
+  import { applyLearningStepScheduling } from "../../utils/learning-steps/learningStepScheduling";
+  import { getSessionQueueInsertionPlan, requeueFutureDueCards } from "../../utils/learning-steps/sessionQueueScheduling";
+  import {
+    DEFAULT_MEMORY_SCHEDULING_SETTINGS,
+    normalizeMemorySchedulingSettings,
+  } from "../../utils/learning-steps/memorySchedulingConfig";
   
-  // 🆕 回收卡片工具
+  // 回收卡片工具
   import { filterRecycledCards, recycleCard, getRecycleTagText } from "../../utils/recycle-utils";
   import { RecycleReason } from "../../constants/app-constants";  // 回收原因枚举
   import { TagExtractor } from "../../utils/tag-extractor";
   import { logger } from "../../utils/logger";
+  import { openLinkWithExistingLeaf } from "../../utils/workspace-navigation";
   import { vaultStorage } from '../../utils/vault-local-storage';
-  // 🆕 v2.2: 牌组信息获取工具
-  import { getCardMetadata, setCardProperties, getCardDeckIds, createContentWithMetadata } from "../../utils/yaml-utils";
+  // 牌组信息获取工具
+  import { getCardMetadata, parseEpubSourceInfo, parseSourceInfo, setCardProperties, getCardDeckIds, createContentWithMetadata } from "../../utils/yaml-utils";
+  import { resolveStudySessionDeckId } from "../../utils/study/sessionDeckId";
+  import { extractHintMarkdown, extractHintText } from "../../utils/hint-block-utils";
   //  v2.3: 使用 CardMetadataService 统一获取卡片元数据（带缓存 + 向后兼容）
   import { getCardMetadataService } from "../../services/CardMetadataService";
   
@@ -144,6 +165,8 @@
     dataStorage: WeaveDataStorage;
     plugin: WeavePlugin;
     viewInstance?: any;  //  StudyView 实例，用于设置移动端菜单回调
+    sessionDeckId?: string;
+    forcedDeckName?: string;
     mode?: 'normal' | 'advance';  // 学习模式：normal=正常，advance=提前学习
     initialCardIndex?: number;  // 重启恢复时的初始卡片索引
     onClose: () => void;
@@ -161,7 +184,19 @@
   //  核心状态管理 (43个$state变量)
   // ============================================
 
-  let { cards: rawCards, fsrs, dataStorage, plugin, viewInstance, mode, initialCardIndex = 0, onClose, onComplete }: Props = $props();
+  let {
+    cards: rawCards,
+    fsrs,
+    dataStorage,
+    plugin,
+    viewInstance,
+    sessionDeckId = '',
+    forcedDeckName = '',
+    mode,
+    initialCardIndex = 0,
+    onClose,
+    onComplete
+  }: Props = $props();
 
   //  过滤回收的卡片（初始化时过滤，后续手动管理）
   let cards = $state(filterRecycledCards(rawCards));
@@ -185,22 +220,13 @@
   $effect(() => {
     if (cards && cards.length > 0 && !cardsPreprocessed) {
       try {
-        // 🆕 v2.2: 设置session的deckId（优先从 content YAML 的 we_decks 获取）
+        // 设置 session 的 deckId，优先使用用户当前进入学习的牌组。
         if (!session.deckId) {
-          const firstCard = cards[0];
-          // 方式1：优先从 content YAML 的 we_decks 获取
-          const { primaryDeckId } = getCardDeckIds(firstCard);
-          if (primaryDeckId) {
-            session.deckId = primaryDeckId;
-          }
-          // 方式2：回退到 card.deckId（向后兼容）
-          else if (firstCard?.deckId) {
-            session.deckId = firstCard.deckId;
-          }
-          // 方式3：回退到 card.referencedByDecks（引用式牌组架构）
-          else if (firstCard?.referencedByDecks && firstCard.referencedByDecks.length > 0) {
-            session.deckId = firstCard.referencedByDecks[0];
-          }
+          session.deckId = resolveStudySessionDeckId({
+            currentDeckId: sessionDeckId,
+            firstCard: cards[0],
+            decks
+          });
           
           if (session.deckId) {
             devLog('debug', `${LOG_PREFIX.SESSION} 设置会话牌组ID: ${session.deckId}`);
@@ -232,7 +258,7 @@
       // 这确保了学习队列与牌组统计 100% 一致
       let queue = [...cards];
       
-      //  修复：使用 get() 同步获取当前激活状态，避免时序问题
+      // 使用 get() 同步获取当前激活状态，避免时序问题
       const currentPremiumStatus = get(premiumGuard.isPremiumActive);
       
       //  高级功能限制：未激活时过滤渐进式挖空子卡片
@@ -279,7 +305,7 @@
   //  移动端检测
   const isMobile = Platform.isMobile;
   
-  // 🆕 第4步修复：会话记忆 - 记录本次会话已学习的卡片
+  // 会话记忆：记录本次会话已学习的卡片
   // 用于防止学习完成后立即可以重新学习
   let sessionStudiedCards = $state(new Set<string>());
   
@@ -317,6 +343,22 @@
     }
   });
 
+  $effect(() => {
+    if (viewInstance && typeof viewInstance.updateSessionSnapshot === 'function' && queueInitialized) {
+      viewInstance.updateSessionSnapshot({
+        deckId: session.deckId,
+        currentCardIndex,
+        remainingCardIds: studyQueue.slice(currentCardIndex).map(c => c.uuid),
+        stats: {
+          completed: session.cardsReviewed,
+          correct: session.correctAnswers,
+          incorrect: Math.max(0, session.cardsReviewed - session.correctAnswers)
+        },
+        sessionType: 'mixed'
+      });
+    }
+  });
+
   // --- 数据状态 ---
   let decks = $state<Deck[]>([]);
   let availableTemplates = $state<ParseTemplate[]>([]);
@@ -327,7 +369,7 @@
 
   // --- 题型与预览状态 ---
   let detectedCardType = $state<UnifiedCardType | null>(null);
-  let cardTypeDisplayName = $derived(detectedCardType ? getCardTypeName(detectedCardType) : '未知题型');
+  let cardTypeDisplayName = $derived(detectedCardType ? getCardTypeName(detectedCardType) : t('studyInterface.labels.unknownCardType'));
 
   // --- 媒体自动播放状态 ---
   let autoPlayMedia = $state(plugin.settings.mediaAutoPlay?.enabled ?? false);
@@ -345,7 +387,7 @@
   let childCardsOverlayRef: any = $state(null); // 浮层组件引用
   let regeneratingCardIds = $state(new Set<string>()); // 正在重新生成的卡片ID集合
   let isRegenerating = $derived(regeneratingCardIds.size > 0); // 是否正在重新生成
-  let currentTestGenAction = $state<AIAction | null>(null); // 🆕 当前使用的测试题生成器
+  let currentTestGenAction = $state<AIAction | null>(null); // 当前使用的测试题生成器
   let currentSplitAction = $state<AIAction | null>(null); //  当前使用的AI拆分功能
   
   //  AI拆分目标牌组选择
@@ -358,6 +400,179 @@
   //  缓存转换后的牌组列表，避免每次渲染都重新创建数组
   let availableDecksList = $derived(memoryDecks.map(d => ({ id: d.id, name: d.name })));
 
+  // --- 提示功能状态 ---
+  let hintMaxUsesPerSession = $state(plugin.settings.hintMaxUses ?? 5);
+  let hintSessionUsedCount = $state(0); // 整个会话已使用次数
+  let hintVisible = $state(false);
+  let hintCapsuleElement: HTMLElement | null = $state(null); // 胶囊按钮引用（用于浮窗锚定）
+  let hintPanelShellElement: HTMLElement | null = $state(null); // 提示浮窗内容壳层
+  let hintRenderContainer: HTMLElement | null = $state(null); // Markdown 渲染容器
+  let hintResizeHandleElement: HTMLElement | null = $state(null); // 提示浮窗右上角缩放手柄
+  let hintRenderComponent: Component | null = null; // Obsidian Component 实例
+
+  const HINT_PANEL_DEFAULT_WIDTH = 420;
+  const HINT_PANEL_DEFAULT_HEIGHT = 300;
+  const HINT_PANEL_MIN_WIDTH = 260;
+  const HINT_PANEL_MIN_HEIGHT = 180;
+  const HINT_PANEL_MAX_WIDTH = 980;
+  const HINT_PANEL_MAX_HEIGHT = 720;
+
+  let hintPanelWidth = $state(HINT_PANEL_DEFAULT_WIDTH);
+  let hintPanelHeight = $state(HINT_PANEL_DEFAULT_HEIGHT);
+  let hintResizeActive = $state(false);
+  let hintResizePointerId: number | null = null;
+  let hintResizeStartX = 0;
+  let hintResizeStartY = 0;
+  let hintResizeStartWidth = HINT_PANEL_DEFAULT_WIDTH;
+  let hintResizeStartHeight = HINT_PANEL_DEFAULT_HEIGHT;
+
+  /**
+   * 从卡片正文中提取提示内容。
+   * 默认使用原始引用提示语法（>hint:），并兼容历史 we_tip 标注块。
+   */
+  function extractHintFromContent(content: string): string {
+    return extractHintText(content);
+  }
+
+  function extractHintMarkdownFromContent(content: string): string {
+    return extractHintMarkdown(content);
+  }
+
+  let currentHintText = $derived.by(() => {
+    if (!currentCard?.content) return '';
+    return extractHintFromContent(currentCard.content);
+  });
+
+  let currentHintMarkdown = $derived.by(() => {
+    if (!currentCard?.content) return '';
+    return extractHintMarkdownFromContent(currentCard.content);
+  });
+
+  let hintUsesRemaining = $derived(Math.max(0, hintMaxUsesPerSession - hintSessionUsedCount));
+
+  /**
+   * 使用 Obsidian MarkdownRenderer 渲染提示内容到浮窗
+   */
+  async function renderHintContent() {
+    if (!hintRenderContainer || !plugin?.app) return;
+
+    const hintMarkdown = currentHintMarkdown;
+    const hintText = currentHintText;
+
+    hintRenderContainer.replaceChildren();
+
+    if (!hintMarkdown) {
+      hintRenderContainer.textContent = hintText;
+      return;
+    }
+    
+    try {
+      if (hintRenderComponent) {
+        hintRenderComponent.unload();
+      }
+      
+      const comp = new Component();
+      await MarkdownRenderer.render(
+        plugin.app,
+        hintMarkdown,
+        hintRenderContainer,
+        currentCard?.sourceFile || '',
+        comp
+      );
+      comp.load();
+      hintRenderComponent = comp;
+    } catch (error) {
+      logger.error('[StudyInterface] Hint Markdown 渲染失败:', error);
+      hintRenderContainer.textContent = hintText;
+    }
+  }
+
+  function closeHintPanel() {
+    stopHintResizeInteraction();
+    hintVisible = false;
+  }
+
+  function clampHintPanelSize(width: number, height: number): { width: number; height: number } {
+    if (typeof window === 'undefined') {
+      return {
+        width: Math.max(HINT_PANEL_MIN_WIDTH, Math.min(HINT_PANEL_MAX_WIDTH, Math.round(width))),
+        height: Math.max(HINT_PANEL_MIN_HEIGHT, Math.min(HINT_PANEL_MAX_HEIGHT, Math.round(height)))
+      };
+    }
+
+    const viewportMaxWidth = Math.max(HINT_PANEL_MIN_WIDTH, window.innerWidth - 32);
+    const viewportMaxHeight = Math.max(HINT_PANEL_MIN_HEIGHT, window.innerHeight - 120);
+
+    return {
+      width: Math.max(HINT_PANEL_MIN_WIDTH, Math.min(Math.min(HINT_PANEL_MAX_WIDTH, viewportMaxWidth), Math.round(width))),
+      height: Math.max(HINT_PANEL_MIN_HEIGHT, Math.min(Math.min(HINT_PANEL_MAX_HEIGHT, viewportMaxHeight), Math.round(height)))
+    };
+  }
+
+  function applyHintPanelSize(width: number, height: number) {
+    const nextSize = clampHintPanelSize(width, height);
+    hintPanelWidth = nextSize.width;
+    hintPanelHeight = nextSize.height;
+  }
+
+  function stopHintResizeInteraction() {
+    if (hintResizeHandleElement && hintResizePointerId !== null) {
+      try {
+        if (hintResizeHandleElement.hasPointerCapture(hintResizePointerId)) {
+          hintResizeHandleElement.releasePointerCapture(hintResizePointerId);
+        }
+      } catch {
+        // 某些环境会在元素卸载后抛出 PointerCapture 异常，这里直接忽略
+      }
+    }
+
+    hintResizePointerId = null;
+    hintResizeActive = false;
+  }
+
+  function handleHintResizePointerDown(event: PointerEvent) {
+    if (!hintVisible) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+    event.preventDefault();
+
+    const target = event.currentTarget as HTMLElement | null;
+    if (!target) return;
+
+    stopHintResizeInteraction();
+
+    hintResizeHandleElement = target;
+    hintResizePointerId = event.pointerId;
+    hintResizeStartX = event.clientX;
+    hintResizeStartY = event.clientY;
+    hintResizeStartWidth = hintPanelWidth;
+    hintResizeStartHeight = hintPanelHeight;
+    hintResizeActive = true;
+
+    try {
+      target.setPointerCapture(event.pointerId);
+    } catch {
+      // PointerCapture 在部分环境不可用，退回 window 级事件即可
+    }
+  }
+
+  function handleHintResizePointerMove(event: PointerEvent) {
+    if (!hintResizeActive || hintResizePointerId === null || event.pointerId !== hintResizePointerId) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const nextWidth = hintResizeStartWidth + (event.clientX - hintResizeStartX);
+    const nextHeight = hintResizeStartHeight + (hintResizeStartY - event.clientY);
+    applyHintPanelSize(nextWidth, nextHeight);
+  }
+
+  function handleHintResizePointerUp(event: PointerEvent) {
+    if (hintResizePointerId === null || event.pointerId !== hintResizePointerId) return;
+    stopHintResizeInteraction();
+  }
+
   // --- 卡片详细信息模态窗状态 ---
   //  改用全局模态窗，不再需要本地状态
 
@@ -367,7 +582,7 @@
   // --- 图谱联动状态 ---
   let isGraphLinkEnabled = $state(false);
   let graphLinkEnabled = $derived(isGraphLinkEnabled); // 别名，为了兼容
-  //  修复：保存专属graphSyncLeaf引用，避免与官方功能冲突
+  // 保存专属 graphSyncLeaf 引用，避免与官方功能冲突
   let graphSyncLeaf = $state<any>(null);
 
   // ============================================
@@ -405,6 +620,26 @@
     };
   });
 
+  let showClozeModeSwitchButton = $state(plugin.settings.showClozeModeSwitchButton ?? true);
+
+  let currentStudyClozeMode = $derived.by(() => {
+    return detectClozeModeFromContent(currentCard?.content || '');
+  });
+
+  let showStudyClozeModeToggle = $derived.by(() => {
+    if (!showClozeModeSwitchButton) return false;
+    if (showAnswer || !currentCard) return false;
+
+    const isProgressiveCard =
+      currentCard.type === CardType.ProgressiveParent ||
+      currentCard.type === CardType.ProgressiveChild;
+
+    if (isProgressiveCard) return false;
+
+    return detectedCardType === UnifiedCardType.CLOZE_DELETION ||
+      (detectedCardType as string) === 'cloze-deletion';
+  });
+
   // ============================================
   //  核心业务逻辑
   // ============================================
@@ -418,7 +653,7 @@
   // 别名函数，为了兼容
   const handleGraphSyncToggle = handleGraphLinkToggle;
   
-  //  修复：接收VerticalToolbar传递的graphSyncLeaf引用
+  // 接收 VerticalToolbar 传递的 graphSyncLeaf 引用
   function handleGraphLeafChange(leaf: any) {
     graphSyncLeaf = leaf;
     logger.debug(`[图谱联动] Leaf引用更新:`, leaf ? '已设置' : '已清除');
@@ -426,7 +661,7 @@
 
   async function syncLocalGraphWithCard(sourceFilePath: string) {
     try {
-      //  修复：只使用专属leaf引用，避免与官方功能冲突
+      // 只使用专属 leaf 引用，避免与官方功能冲突
       if (!graphSyncLeaf) {
         logger.warn('[图谱同步] 未找到专属图谱视图引用，请先开启图谱联动');
         return;
@@ -640,7 +875,7 @@
     //  从 Store 中查找 AI拂分配置（与 AI格式化、测试题生成一致）
     const action = customActions.split.find((a: AIAction) => a.id === actionId);
     if (!action) {
-      new Notice('未找到该AI拂分功能');
+      new Notice(t('studyInterface.notices.aiSplitActionNotFound'));
       return;
     }
     
@@ -652,10 +887,10 @@
     try {
       aiSplitInProgress = true;
       
-      // 🆕 区分首次拆分和重新生成
+      // 区分首次拆分和重新生成
       const isRegeneration = positionMap && positionMap.size > 0;
       if (!isRegeneration) {
-        new Notice('正在拆分卡片...');
+        new Notice(t('studyInterface.notices.aiSplitting'));
       }
 
       //  使用CardAccessor获取内容（处理子卡片）
@@ -688,14 +923,14 @@
       }
 
       // 转换为临时卡片数据（用于预览）
-      //  v2.2: 使用新的工具函数获取牌组ID和名称
-      const { primaryDeckId } = getCardDeckIds(card);
+      // 使用工具函数获取牌组 ID 和名称
+      const { primaryDeckId } = getCardDeckIds(card, decks);
       const targetDeckId = primaryDeckId || card.deckId;
       const targetDeck = decks.find(d => d.id === targetDeckId);
       const targetDeckName = targetDeck?.name;
       
       const tempChildCards: Card[] = splitResult.splitCards.map((child: any, index: number) => {
-        // 🆕 v2.2: 构建带有 we_decks 的 content
+        // 构建带有 we_decks 的 content
         const bodyContent = child.content || '';
         const contentWithMetadata = targetDeckName 
           ? createContentWithMetadata({ we_decks: [targetDeckName] }, bodyContent)
@@ -733,7 +968,7 @@
         };
       });
 
-      // 🆕 根据是否有位置映射决定如何更新 childCards
+      // 根据是否有位置映射决定如何更新 childCards
       if (isRegeneration && positionMap) {
         // 重新生成模式：按位置替换卡片
         const newChildCards = [...childCards];
@@ -753,16 +988,17 @@
         currentSplitAction = action; //  保存当前使用的AI拆分配置，供重新生成时使用
         
         //  设置默认目标牌组为当前卡片所在的牌组
-        //  v2.2: 使用新的工具函数获取牌组ID
+        // 使用工具函数获取牌组 ID
         targetDeckIdForSplit = primaryDeckId || card.deckId || '';
         
         showChildCardsOverlay = true;
-        new Notice(`成功拆分为${childCards.length}张子卡片`);
+        new Notice(t('studyInterface.notices.aiSplitSuccess', { count: childCards.length }));
       }
     } catch (error) {
       logger.error('[StudyInterface] AI拆分失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '拆分失败';
-      new Notice(`拆分失败: ${errorMessage}`);
+      new Notice(t('studyInterface.notices.aiSplitFailed', {
+        error: error instanceof Error ? error.message : t('study.view.unknownError')
+      }));
     } finally {
       aiSplitInProgress = false;
     }
@@ -773,7 +1009,7 @@
    * - 如果有选中的卡片：只重新生成选中的部分，未选中的保留
    * - 如果没有选中：全部重新生成
    * - 重新生成的卡片替换原位置，未选中的卡片保持显示（待定状态）
-   * - 🆕 支持测试题重新生成模式
+   * - 支持测试题重新生成模式
    */
   async function handleRegenerateChildCards() {
     if (!currentCard || !childCardsOverlayRef) return;
@@ -791,7 +1027,7 @@
         // 有选中：只重新生成选中的，保留未选中的
         const selectedCount = selectedIds.length;
         
-        // 🆕 创建位置映射 Map<原索引, 卡片ID>
+        // 创建位置映射 Map<原索引, 卡片ID>
         const positionMap = new Map<number, string>();
         childCards.forEach((card, index) => {
           if (selectedIds.includes(card.uuid)) {
@@ -799,9 +1035,12 @@
           }
         });
         
-        new Notice(`正在重新生成 ${selectedCount} 张选中的${isTestGenMode ? '测试题' : '卡片'}...`);
+        new Notice(t('studyInterface.notices.regenerateSelected', {
+          count: selectedCount,
+          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+        }));
         
-        // 🆕 将选中的卡片ID添加到 regeneratingCardIds（触发UI更新）
+        // 将选中的卡片 ID 添加到 regeneratingCardIds（触发 UI 更新）
         regeneratingCardIds = new Set(selectedIds);
         
         // 清空选中状态
@@ -813,23 +1052,29 @@
         } else if (isSplitMode && currentSplitAction) {
           await handleAISplit(currentSplitAction.id, selectedCount, positionMap);
         } else {
-          new Notice('无法重新生成：未找到原始配置');
+          new Notice(t('studyInterface.notices.regenerateConfigMissing'));
         }
         
-        new Notice(`已重新生成 ${selectedCount} 张${isTestGenMode ? '测试题' : '卡片'}`);
+        new Notice(t('studyInterface.notices.regenerateSelectedDone', {
+          count: selectedCount,
+          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+        }));
       } else {
         // 无选中：全部重新生成
         const totalCount = childCards.length;
         
-        // 🆕 创建全部卡片的位置映射
+        // 创建全部卡片的位置映射
         const positionMap = new Map<number, string>();
         childCards.forEach((card, index) => {
           positionMap.set(index, card.uuid);
         });
         
-        new Notice(`正在重新生成全部 ${totalCount} 张${isTestGenMode ? '测试题' : '卡片'}...`);
+        new Notice(t('studyInterface.notices.regenerateAll', {
+          count: totalCount,
+          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+        }));
         
-        // 🆕 将所有卡片ID添加到 regeneratingCardIds
+        // 将所有卡片 ID 添加到 regeneratingCardIds
         regeneratingCardIds = new Set(childCards.map(card => card.uuid));
         
         // 清空选中状态
@@ -841,22 +1086,25 @@
         } else if (isSplitMode && currentSplitAction) {
           await handleAISplit(currentSplitAction.id, totalCount > 0 ? totalCount : 0, positionMap);
         } else {
-          new Notice('无法重新生成：未找到原始配置');
+          new Notice(t('studyInterface.notices.regenerateConfigMissing'));
         }
         
-        new Notice(`已重新生成全部 ${totalCount} 张${isTestGenMode ? '测试题' : '卡片'}`);
+        new Notice(t('studyInterface.notices.regenerateAllDone', {
+          count: totalCount,
+          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+        }));
       }
     } catch (error) {
       logger.error('[StudyInterface] 重新生成失败:', error);
-      new Notice('重新生成失败，已保留原卡片');
+      new Notice(t('studyInterface.notices.regenerateFailedKeepOriginal'));
     } finally {
-      // 🆕 清除 regeneratingCardIds 状态（恢复UI正常状态）
+      // 清除 regeneratingCardIds 状态（恢复 UI 正常状态）
       regeneratingCardIds = new Set();
     }
   }
 
   /**
-   * 🆕 重新生成测试题（带位置映射）
+   * 重新生成测试题（带位置映射）
    */
   async function regenerateTestsWithPositionMap(actionId: string, targetCount: number, positionMap: Map<number, string>) {
     if (!currentCard) return;
@@ -869,7 +1117,7 @@
     const action = allActions.find((a: AIAction) => a.id === actionId);
     
     if (!action || !action.testConfig) {
-      throw new Error('找不到指定的测试题生成功能');
+      throw new Error(t('studyInterface.notices.testGenerateActionNotFound'));
     }
 
     // 使用专用的AI测试题生成服务
@@ -891,8 +1139,8 @@
     }
 
     // 转换为临时卡片数据
-    //  v2.2: 使用新的工具函数获取牌组ID
-    const { primaryDeckId: regenDeckId } = getCardDeckIds(card);
+    // 使用工具函数获取牌组 ID
+    const { primaryDeckId: regenDeckId } = getCardDeckIds(card, decks);
     const tempChildCards: Card[] = response.generatedQuestions.map((question: any, index: number) => ({
       uuid: `temp-uuid-${Date.now()}-${index}`,
       deckId: regenDeckId || card.deckId,
@@ -960,16 +1208,16 @@
     targetDeckId: string
   ): Promise<number> {
     try {
-      const { generateUUID } = await import('../../utils/helpers');
+      const { generateCardUUID } = await import('../../services/identifier/WeaveIDGenerator');
       let savedCount = 0;
 
-      // 🆕 v2.2: 获取目标牌组名称
+      // 获取目标牌组名称
       const memoryDeck = decks.find(d => d.id === targetDeckId);
       const memoryDeckName = memoryDeck?.name;
       
       for (const card of cards) {
         try {
-          // 🆕 v2.2: 在 content 中写入 we_decks
+          // 在 content 中写入 we_decks
           let finalContent = card.content;
           if (memoryDeckName && card.content) {
             finalContent = createContentWithMetadata({ we_decks: [memoryDeckName] }, card.content);
@@ -978,9 +1226,9 @@
           //  构造子卡片，设置正确的字段
           const childCard: Card = {
             ...card,
-            uuid: generateUUID(), // 生成新的UUID
+            uuid: generateCardUUID(), // 生成新的UUID
             deckId: targetDeckId, //  使用用户选择的目标牌组
-            content: finalContent, // 🆕 包含 we_decks 的内容
+            content: finalContent, // 包含 we_decks 的内容
             cardPurpose: 'memory', //  设置为记忆卡片（非测试卡片）
             
             //  建立父子关系
@@ -1027,7 +1275,7 @@
       if (savedCount > 0) {
         try {
           const existingChildIds = parentCard.relationMetadata?.childCardIds || [];
-          //  修复：使用函数参数cards而非未定义的selectedCards
+          // 使用函数参数 cards，而非未定义的 selectedCards
           const newChildIds = cards.map((c: Card) => c.uuid);
           const updatedParent = {
             ...parentCard,
@@ -1054,10 +1302,10 @@
   }
 
   /**
-   * 🆕 保存AI拆分生成的卡片到题库系统
+   * 保存 AI 拆分生成的卡片到题库系统
    * 自动创建或使用现有的题库牌组
    * 
-   *  v2.3: 统一从 CardMetadataCache 获取牌组名称（Content-Only 架构）
+   * 统一从 CardMetadataCache 获取牌组名称
    */
   async function saveToQuestionBank(cards: Card[], parentCard: Card): Promise<number> {
     if (!plugin.questionBankService) {
@@ -1065,7 +1313,7 @@
     }
 
     try {
-      // 1.  v2.3: 统一从派生字段缓存获取牌组名称（Content-Only 架构）
+      // 1. 统一从派生字段缓存获取牌组名称
       let deckName: string;
       let deckTags: string[] = parentCard.tags || [];
       
@@ -1113,21 +1361,22 @@
       // 5. 将卡片转换为题库题目格式
       let savedCount = 0;
       
-      // 🆕 v2.2: 获取题库名称用于写入 we_decks（使用已有的 questionBankName 变量）
+      // 获取题库名称用于写入 we_decks（使用已有的 questionBankName 变量）
       const qbNameForWeDecks = questionBank.name;
       
       for (const card of cards) {
         try {
           // 生成新的题目ID
-          const { generateId, generateUUID } = await import('../../utils/helpers');
+          const { generateId } = await import('../../utils/helpers');
+          const { generateCardUUID } = await import('../../services/identifier/WeaveIDGenerator');
           
-          // 🆕 从卡片元数据中获取题目类型和难度（如果存在）
+          // 从卡片元数据中获取题目类型和难度（如果存在）
           const questionType = card.metadata?.questionType || 'short_answer';
           const rawDifficulty = card.difficulty || currentTestGenAction?.testConfig?.difficultyLevel || 'medium';
           // 确保难度符合 Card 类型（不包含 'mixed'）
           const difficulty: 'easy' | 'medium' | 'hard' = rawDifficulty === 'mixed' ? 'medium' : (rawDifficulty as 'easy' | 'medium' | 'hard');
           
-          // 🆕 v2.2: 在 content 中写入 we_decks
+          // 在 content 中写入 we_decks
           let finalContent = card.content;
           if (qbNameForWeDecks && card.content) {
             finalContent = createContentWithMetadata({ we_decks: [qbNameForWeDecks] }, card.content);
@@ -1136,7 +1385,7 @@
           //  构造题目卡片（仅设置必要字段，不使用扩展运算符）
           const questionCard: Card = {
             // 基础标识
-            uuid: generateUUID(),
+            uuid: generateCardUUID(),
             deckId: questionBank.id,
             templateId: card.templateId,
             type: card.type,
@@ -1222,7 +1471,7 @@
       const selectedIds = childCardsOverlayRef?.getSelectedCardIds?.() || [];
       
       if (selectedIds.length === 0) {
-        new Notice('请先选择要保存的卡片');
+        new Notice(t('studyInterface.notices.selectCardsFirst'));
         return;
       }
 
@@ -1236,22 +1485,22 @@
       if (isSplitMode) {
         //  AI拂分模式：保存到记忆牌组
         if (!targetDeckIdForSplit) {
-          new Notice('请先选择目标记忆牌组');
+          new Notice(t('studyInterface.notices.selectTargetMemoryDeckFirst'));
           return;
         }
         
-        new Notice('正在保存到记忆牌组...');
+        new Notice(t('studyInterface.notices.savingToMemoryDeck'));
         const savedCount = await saveChildCardsToMemoryDeck(selectedCards, currentCard, targetDeckIdForSplit);
-        new Notice(`成功导入${savedCount}张子卡片到记忆牌组`);
+        new Notice(t('studyInterface.notices.savedToMemoryDeck', { count: savedCount }));
         
       } else if (isTestGenMode) {
         //  测试题生成模式：保存到题库
-        new Notice('正在保存到题库...');
+        new Notice(t('studyInterface.notices.savingToQuestionBank'));
         const savedCount = await saveToQuestionBank(selectedCards, currentCard);
-        new Notice(`成功收入${savedCount}道题目到题库`);
+        new Notice(t('studyInterface.notices.savedToQuestionBank', { count: savedCount }));
         
       } else {
-        new Notice('无法确定保存模式');
+        new Notice(t('studyInterface.notices.saveModeUndetermined'));
         return;
       }
 
@@ -1270,8 +1519,9 @@
       }
     } catch (error) {
       logger.error('[StudyInterface] 保存子卡片失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '保存失败';
-      new Notice(`保存失败: ${errorMessage}`);
+      new Notice(t('study.view.saveFailed', {
+        error: error instanceof Error ? error.message : t('study.view.unknownError')
+      }));
     }
   }
 
@@ -1301,7 +1551,7 @@
     }
   }
 
-  // 🆕 打开卡片详细信息模态窗 - 使用全局方法
+  // 打开卡片详细信息模态窗，使用全局方法
   function handleOpenViewCardModal() {
     if (!currentCard) return;
     //  使用全局模态窗，支持在其他标签页上方显示
@@ -1327,13 +1577,8 @@
   }
 
   // --- UI控制状态 ---
-  // 🆕 从 plugin.settings 初始化视图偏好，兼容localStorage
-  const viewPrefs = plugin.settings.studyInterfaceViewPreferences || {
-    showSidebar: true,
-    sidebarCompactModeSetting: 'auto',
-    statsCollapsed: true,
-    cardOrder: 'sequential'
-  };
+  // 从 plugin.settings 初始化视图偏好，兼容 localStorage
+  const viewPrefs = plugin.getStudyInterfaceViewPreferences();
   
   //  卡片关联相关状态 - 功能已移除
   let loadBalanceManager = $state<LoadBalanceManager | null>(null);
@@ -1354,8 +1599,8 @@
   let showSidebar = $state(viewPrefs.showSidebar);
   let statsCollapsed = $state(viewPrefs.statsCollapsed);
   let sourceInfoCollapsed = $state(true);
-  let showProficiencyStats = $state(false);  // 🆕 学习进度统计栏展开状态
-  let showTimingInfo = $state(false);  // 🆕 卡片计时信息栏展开状态
+  let showProficiencyStats = $state(false);  // 学习进度统计栏展开状态
+  let showTimingInfo = $state(false);  // 卡片计时信息栏展开状态
   let showEditModal = $state(false);
   let editTargetCard = $state<Card | null>(null);
 
@@ -1364,7 +1609,7 @@
   //  删除功能设置
   let enableDirectDelete = $state(plugin.settings.enableDirectDelete ?? false);
 
-  // 🆕 教程按钮显示设置
+  // 教程按钮显示设置
   let showTutorialButton = $state(plugin.settings.showTutorialButton ?? true);
 
   //  删除确认弹窗状态
@@ -1381,7 +1626,7 @@
   //  侧边栏紧凑模式设置：auto(自动) | fixed(固定显示图标+名称)
   let sidebarCompactModeSetting = $state<'auto' | 'fixed'>(viewPrefs.sidebarCompactModeSetting);
   
-  // 🆕 卡片学习顺序设置
+  // 卡片学习顺序设置
   let cardOrder = $state<'sequential' | 'random'>(viewPrefs.cardOrder || 'sequential');
   
   //  监听侧边栏显示/隐藏状态变化，以及模式设置变化，及时重新检测
@@ -1401,7 +1646,7 @@
     }
   });
   
-  // 🆕 监听视图偏好状态变化并自动保存（防抖）
+  // 监听视图偏好状态变化并自动保存（防抖）
   let saveTimeoutId: number | null = null;
   $effect(() => {
     // 追踪状态变化
@@ -1428,24 +1673,32 @@
     };
   });
   
-  // 🆕 AI格式化功能状态
+  // AI 格式化功能状态
   let showFormatPreview = $state(false);
   let formatPreviewResult = $state<FormatPreviewResult | null>(null);
   let selectedFormatActionName = $state("");
-  let showFormatManager = $state(false);
+  let aiActionManagerModalInstance: AIActionManagerObsidian | null = null;
 
   // --- 高级功能状态 ---
-  //  修复：使用 get() 同步获取初始值，避免时序问题
+  // 使用 get() 同步获取初始值，避免时序问题
   let isPremium = $state(get(premiumGuard.isPremiumActive));
+  let showPremiumFeaturesPreview = $state(get(premiumGuard.premiumFeaturesPreviewEnabled));
   let showActivationPrompt = $state(false);
 
   // 订阅高级版状态变化
   $effect(() => {
-    const unsubscribe = premiumGuard.isPremiumActive.subscribe(value => {
+    const unsubscribePremium = premiumGuard.isPremiumActive.subscribe(value => {
       isPremium = value;
       logger.debug(`[StudyInterface] 激活状态更新: ${value ? '已激活' : '未激活'}`);
     });
-    return unsubscribe;
+    const unsubscribePreview = premiumGuard.premiumFeaturesPreviewEnabled.subscribe(value => {
+      showPremiumFeaturesPreview = value;
+    });
+
+    return () => {
+      unsubscribePremium();
+      unsubscribePreview();
+    };
   });
 
 
@@ -1501,8 +1754,8 @@
       });
 
       return `<div class="field-container error-field">
-                <div class="field-label">渲染错误</div>
-                <div class="field-content">字段内容处理失败，请刷新重试</div>
+                <div class="field-label">${t('studyInterface.fieldContent.renderErrorTitle')}</div>
+                <div class="field-content">${t('studyInterface.fieldContent.renderErrorBody')}</div>
               </div>`;
     }
   }
@@ -1542,8 +1795,8 @@
         } else {
           logger.debug('handleDefaultFieldContent: no content found in any field');
           return `<div class="field-container error-field">
-                    <div class="field-label">无内容</div>
-                    <div class="field-content">该卡片没有${side === 'front' ? '问题' : '答案'}内容</div>
+                    <div class="field-label">${t('studyInterface.fieldContent.noContentTitle')}</div>
+                    <div class="field-content">${side === 'front' ? t('studyInterface.fieldContent.noFrontContent') : t('studyInterface.fieldContent.noBackContent')}</div>
                   </div>`;
         }
       }
@@ -1552,7 +1805,7 @@
       const processedContent = processClozeText(content, side, showAnswer);
 
       // 为默认字段添加标签
-      const label = side === 'front' ? '问题' : '答案';
+      const label = side === 'front' ? t('studyInterface.fieldContent.frontLabel') : t('studyInterface.fieldContent.backLabel');
       return `<div class="field-container default-field">
                 <div class="field-label">${label}</div>
                 <div class="field-content">${processedContent}</div>
@@ -1561,8 +1814,8 @@
     } catch (error) {
       logger.error('handleDefaultFieldContent: error processing default fields', error);
       return `<div class="field-container error-field">
-                <div class="field-label">处理错误</div>
-                <div class="field-content">默认字段处理失败</div>
+                <div class="field-label">${t('studyInterface.fieldContent.processingErrorTitle')}</div>
+                <div class="field-content">${t('studyInterface.fieldContent.defaultFieldFailed')}</div>
               </div>`;
     }
   }
@@ -1667,20 +1920,22 @@
         }).filter(Boolean).join('');
       } else {
         return `<div class="field-container error-field">
-                  <div class="field-label">无内容</div>
-                  <div class="field-content">该卡片没有可显示的${side === 'front' ? '问题' : '答案'}内容</div>
+                  <div class="field-label">${t('studyInterface.fieldContent.noContentTitle')}</div>
+                  <div class="field-content">${side === 'front' ? t('studyInterface.fieldContent.noDisplayableFrontContent') : t('studyInterface.fieldContent.noDisplayableBackContent')}</div>
                 </div>`;
       }
     } catch (error) {
       logger.error('handleFallbackFieldContent: unexpected error', error);
       return `<div class="field-container error-field">
-                <div class="field-label">处理错误</div>
-                <div class="field-content">降级字段处理失败</div>
+                <div class="field-label">${t('studyInterface.fieldContent.processingErrorTitle')}</div>
+                <div class="field-content">${t('studyInterface.fieldContent.fallbackFieldFailed')}</div>
               </div>`;
     }
   }
 
   // enhanceEmbeds已提取到utils/study/studyInterfaceUtils.ts
+  const sourceLocateOverlay = getSourceLocateOverlayService();
+  const sourceNavigationService = new SourceNavigationService(plugin.app);
 
   // Handle block link click - navigate to Obsidian file and block with highlighting
   function handleBlockLinkClick(blockLink: string) {
@@ -1690,7 +1945,7 @@
       const match = blockLink.match(/\[\[([^#]+)#\^([^|\]]+)(?:\|[^\]]+)?\]\]/);
       if (!match) {
         logger.debug('Invalid block link format:', blockLink);
-        new Notice('无效的块链接格式');
+        new Notice(t('studyInterface.notices.invalidBlockLink'));
         return;
       }
 
@@ -1702,15 +1957,30 @@
 
       if (!file) {
         logger.debug('File not found:', fileName);
-        new Notice(`文件未找到: ${fileName}`);
+        new Notice(t('studyInterface.notices.fileNotFound', { fileName }));
         return;
       }
 
       // Open the file and navigate to the block with enhanced targeting
-      plugin.app.workspace.openLinkText(file.path, contextPath, true).then(async () => {
+      const linkText = `${file.basename}#^${blockId}`;
+      openLinkWithExistingLeaf(plugin.app, linkText, contextPath, { openInNewTab: true, focus: true }).then(async (openedLeaf) => {
         // Wait a bit longer to ensure file is fully loaded
         setTimeout(async () => {
-          const activeView = plugin.app.workspace.getActiveViewOfType('markdown' as any);
+          const activeView = (openedLeaf?.view?.getViewType?.() === 'markdown'
+            ? openedLeaf.view
+            : plugin.app.workspace.getActiveViewOfType('markdown' as any)) as any;
+          const locatedInPreview = await sourceNavigationService.locateInMarkdownView(activeView, [
+            blockLink,
+            `${fileName}#^${blockId}`,
+            blockId,
+            `^${blockId}`,
+            file.path,
+            file.basename
+          ], { label: t('studyInterface.notices.locatedSource'), icon: 'map-pinned' });
+          if (locatedInPreview) {
+            new Notice(t('studyInterface.notices.locatedSource'));
+            return;
+          }
           if (activeView && (activeView as any).editor) {
             const editor = (activeView as any).editor;
 
@@ -1761,6 +2031,16 @@
                   to: { line: targetLine, ch: lines[targetLine].length }
                 });
 
+                window.setTimeout(() => {
+                  try {
+                    const lineEl = (activeView as any)?.containerEl?.querySelector('.cm-active, .cm-line') as HTMLElement | null;
+                    const rect = lineEl?.getBoundingClientRect();
+                    if (rect) {
+                      sourceLocateOverlay.showAtRect(rect, { label: t('studyInterface.notices.locatedSource'), icon: 'map-pinned' });
+                    }
+                  } catch (_e) { /* ignore */ }
+                }, 120);
+
                 // Highlight the content if we found it
                 if (blockStartLine >= 0 && blockContent) {
                   // Select the block content for visual feedback
@@ -1778,31 +2058,33 @@
                     editor.setCursor({ line: cursorLine, ch: 0 });
                   }, 1000);
 
-                  new Notice(`已定位到块内容: ${blockContent.slice(0, 50)}${blockContent.length > 50 ? '...' : ''}`);
+                  new Notice(t('studyInterface.notices.locatedBlockContent', {
+                    content: `${blockContent.slice(0, 50)}${blockContent.length > 50 ? '...' : ''}`
+                  }));
                 } else {
-                  new Notice('已定位到块引用位置');
+                  new Notice(t('studyInterface.notices.locatedBlockReference'));
                 }
               } else {
                 logger.debug(`Block reference ^${blockId} not found in file`);
-                new Notice(`未找到块引用: ^${blockId}`);
+                new Notice(t('studyInterface.notices.blockReferenceNotFound', { blockId }));
               }
             } catch (readError) {
               logger.error('Error reading file content:', readError);
-              new Notice('读取文件内容时出错');
+              new Notice(t('studyInterface.notices.readFileFailed'));
             }
           } else {
             logger.debug('Could not access markdown editor');
-            new Notice('无法访问Markdown编辑器');
+            new Notice(t('studyInterface.notices.markdownEditorUnavailable'));
           }
         }, 200);
       }).catch(error => {
         logger.error('Error opening file:', error);
-        new Notice('打开文件时出错');
+        new Notice(t('studyInterface.notices.openFileFailed'));
       });
 
     } catch (error) {
       logger.error('Error handling block link click:', error);
-      new Notice('处理块链接时出错');
+      new Notice(t('studyInterface.notices.handleBlockLinkFailed'));
     }
   }
 
@@ -1831,7 +2113,7 @@
       //  设置展开/折叠统计栏回调
       if (viewInstance && typeof viewInstance.setToggleStatsCallback === 'function') {
         viewInstance.setToggleStatsCallback(() => {
-          // 🆕 互斥逻辑：展开FSRS信息栏时，折叠学习进度栏
+          // 互斥逻辑：展开 FSRS 信息栏时，折叠学习进度栏
           if (statsCollapsed) {
             // 当前是折叠状态，要展开
             showProficiencyStats = false;  // 先折叠学习进度栏
@@ -1847,7 +2129,7 @@
       //  设置展开/折叠学习进度统计栏回调
       if (viewInstance && typeof viewInstance.setToggleProficiencyStatsCallback === 'function') {
         viewInstance.setToggleProficiencyStatsCallback(() => {
-          // 🆕 互斥逻辑：展开学习进度栏时，折叠FSRS信息栏
+          // 互斥逻辑：展开学习进度栏时，折叠 FSRS 信息栏
           if (!showProficiencyStats) {
             // 当前是折叠状态，要展开
             statsCollapsed = true;  // 先折叠FSRS信息栏
@@ -1906,7 +2188,7 @@
   // --- 学习会话数据 ---
   let session = $state<StudySession>({
     id: generateId(),
-    deckId: "",  // 初始化为空，在$effect中设置
+    deckId: sessionDeckId || "",  // 优先绑定当前学习牌组，避免引用式牌组统计错位
     startTime: new Date(),
     cardsReviewed: 0,
     newCardsLearned: 0,
@@ -1915,9 +2197,21 @@
     cardReviews: []
   });
 
+  function setSessionCompletionStatus(reason: "completed" | "paused-until-next-due", pendingNextDueAt?: string) {
+    session.completionReason = reason;
+    session.pendingNextDueAt = pendingNextDueAt;
+  }
+
   // 牌组设置缓存
   // --- 牌组设置 ---
   let deckSettingsMap = $state(new Map<string, any>());
+
+  function resolveMemorySchedulingForCard(card: Card): LearningConfig {
+    const { primaryDeckId } = getCardDeckIds(card, decks);
+    const deckSettings = deckSettingsMap.get(primaryDeckId || card.deckId || '');
+    const globalMemoryScheduling = normalizeMemorySchedulingSettings(plugin.settings).settings;
+    return normalizeMemorySchedulingSettings(deckSettings, globalMemoryScheduling).settings;
+  }
 
   //  从学习队列获取当前卡片（支持渐进式挖空）
   let currentCard = $derived.by(() => {
@@ -1938,7 +2232,7 @@
     return undefined;
   });
 
-  // 🆕 提取当前卡片的激活挖空序号（渐进式挖空专用）
+  // 提取当前卡片的激活挖空序号（渐进式挖空专用）
   let activeClozeOrdinal = $derived.by(() => {
     if (!currentCard) return undefined;
     
@@ -1969,30 +2263,41 @@
     return Math.max(0, Math.min(100, ratio * 100));
   });
 
-  //  v2.3: 使用 CardMetadataService 统一获取牌组名称（带缓存 + 向后兼容）
+  //  v2.3: 优先显示点击进入时的牌组名，避免多牌组卡片把标题带偏
   let currentDeckName = $derived.by(() => {
+    if (forcedDeckName) {
+      return forcedDeckName;
+    }
+
+    const sessionDeck = session.deckId ? decks.find(x => x.id === session.deckId) : null;
+    if (sessionDeck?.name) {
+      return sessionDeck.name;
+    }
+
     const card = currentCard;
     if (card) {
-      // 使用 CardMetadataService 获取牌组名称（内部已处理缓存 + 向后兼容）
+      // 会话牌组不可用时，才回退到卡片自身的关联牌组名称
       const service = getCardMetadataService();
       const names = service.getCardDeckNames(card);
       return names.length > 0 ? names[0] : '';
-    } else {
-      // 无卡片时，尝试从 decks 数组查找
-      const deck = decks.find(x => x.id === session.deckId);
-      return deck?.name || '';
     }
+
+    return '';
   });
   
-  // 🆕 v2.0: 获取当前卡片被引用的牌组列表（引用式牌组架构）
+  // 获取当前卡片所属的牌组列表。
   let currentCardReferencedDecks = $derived.by(() => {
     const card = currentCard;
-    if (!card?.referencedByDecks || card.referencedByDecks.length === 0) {
+    if (!card) {
       return [];
     }
-    
-    // 获取引用此卡片的牌组名称列表
-    return card.referencedByDecks
+
+    const { deckIds } = getCardDeckIds(card, decks, { fallbackToReferences: false });
+    if (deckIds.length === 0) {
+      return [];
+    }
+
+    return deckIds
       .map(deckId => {
         const deck = decks.find(d => d.id === deckId);
         return deck ? { id: deckId, name: deck.name } : null;
@@ -2000,7 +2305,7 @@
       .filter((d): d is { id: string; name: string } => d !== null);
   });
   
-  // 🆕 v2.0: 是否显示多牌组引用标识
+  // 是否显示多牌组引用标识
   let hasMultipleReferences = $derived(currentCardReferencedDecks.length > 1);
   
   //  直接订阅Store（自动响应）
@@ -2054,6 +2359,8 @@
   // 计时器状态
   let currentCardTime = $state(0);
   let averageTime = $state(0);
+  let timerAutoPauseSeconds = $state(plugin.settings.timerAutoPauseSeconds ?? 60);
+  let timerPaused = $state(false);
 
   // 进度条刷新触发器
   let progressBarRefreshTrigger = $state(0);
@@ -2065,12 +2372,8 @@
     const deckCfg = deckSettingsMap.get(did) || {};
     const globalCfg = (plugin as any)?.settings || {};
     
-    learningConfig = {
-      learningSteps: deckCfg.learningSteps ?? globalCfg.learningSteps ?? [1, 10],
-      relearningSteps: deckCfg.relearningSteps ?? [10],
-      graduatingInterval: deckCfg.graduatingInterval ?? globalCfg.graduatingInterval ?? 1,
-      easyInterval: deckCfg.easyInterval ?? 4
-    };
+    const globalMemoryScheduling = normalizeMemorySchedulingSettings(globalCfg).settings;
+    learningConfig = normalizeMemorySchedulingSettings(deckCfg, globalMemoryScheduling).settings;
   });
 
   // 学习会话管理 - 当卡片变化时创建新会话
@@ -2082,8 +2385,10 @@
         sessionManager.dispose(currentSessionId);
       }
       // 创建新会话，传入learningSteps配置用于stepIndex推断
-      const learningSteps = learningConfig?.learningSteps ?? plugin.settings.learningSteps ?? [1, 10];
-      const relearningSteps = learningConfig?.relearningSteps ?? [10];
+      const learningSteps =
+        learningConfig?.learningSteps ?? [...DEFAULT_MEMORY_SCHEDULING_SETTINGS.learningSteps];
+      const relearningSteps =
+        learningConfig?.relearningSteps ?? [...DEFAULT_MEMORY_SCHEDULING_SETTINGS.relearningSteps];
       currentSessionId = sessionManager.createSession(card, learningSteps, relearningSteps);
     }
   });
@@ -2153,12 +2458,24 @@
     showTemplateList = false;
   }
 
+  function closeOnBackdropClick(event: MouseEvent, close: () => void) {
+    if (event.target === event.currentTarget) {
+      close();
+    }
+  }
+
+  function closeOnEscape(event: KeyboardEvent, close: () => void) {
+    if (event.key === 'Escape') {
+      close();
+    }
+  }
+
   // 处理模板选择
   function handleTemplateSelect(template: ParseTemplate) {
     logger.debug('选择模板:', template.name);
     // 这里可以添加模板切换逻辑
     showTemplateList = false;
-    new Notice(`已选择模板: ${template.name}`);
+    new Notice(t('studyInterface.notices.templateSelected', { name: template.name }));
   }
 
   /**
@@ -2182,6 +2499,267 @@
       cards[cardIndex] = updatedCard;
       cards = [...cards];  // 触发响应式更新，studyQueue 会自动重新生成
     }
+  }
+
+  function extractClozeOrdinals(content: string): number[] {
+    const ordinals = new Set<number>();
+    const clozePattern = /\{\{c(\d+)::/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = clozePattern.exec(content)) !== null) {
+      const ord = Number.parseInt(match[1], 10);
+      if (Number.isFinite(ord) && ord >= 1) {
+        ordinals.add(ord);
+      }
+    }
+
+    return Array.from(ordinals).sort((a, b) => a - b);
+  }
+
+  function buildProgressiveClozeSaveNotice(
+    previousEditTarget: Card | null,
+    persistedCard: Card,
+    newlyAddedChildren: ProgressiveClozeChildCard[]
+  ): string | null {
+    const previousOrdinals = previousEditTarget ? extractClozeOrdinals(previousEditTarget.content || '') : [];
+    const nextOrdinals = extractClozeOrdinals(persistedCard.content || '');
+
+    const previousOrdinalSet = new Set(previousOrdinals);
+    const nextOrdinalSet = new Set(nextOrdinals);
+
+    const removedOrdinals = previousOrdinals.filter(ord => !nextOrdinalSet.has(ord));
+    const addedOrdinals = nextOrdinals.filter(ord => !previousOrdinalSet.has(ord));
+    const retainedOrdinals = nextOrdinals.filter(ord => previousOrdinalSet.has(ord));
+
+    const parts: string[] = [];
+
+    if (addedOrdinals.length > 0) {
+      const labels = addedOrdinals.map(ord => `c${ord}`).join('、');
+      parts.push(`已新增子卡片 ${labels}，并通过 UUID 加入当前牌组引用`);
+    }
+
+    if (removedOrdinals.length > 0) {
+      const labels = removedOrdinals.map(ord => `c${ord}`).join('、');
+      parts.push(`已删除子卡片 ${labels}，对应子卡片及其复习历史已删除`);
+    }
+
+    if (addedOrdinals.length === 0 && removedOrdinals.length === 0 && retainedOrdinals.length > 0) {
+      parts.push(`已同步 ${retainedOrdinals.length} 张现有渐进式子卡片的内容`);
+    }
+
+    if (newlyAddedChildren.length > 0) {
+      parts.push('新增子卡片不会进入当前学习会话，下次学习时再由兄弟分散规则自动处理');
+    }
+
+    return parts.length > 0 ? parts.join('；') : null;
+  }
+
+  function getStudyCardTypeDisplayName(card: Card | null | undefined): string {
+    if (!card) return t('studyInterface.labels.unknownCardType');
+
+    switch (card.type) {
+      case CardType.ProgressiveParent:
+      case CardType.ProgressiveChild:
+        return t('studyInterface.labels.progressiveClozeCard');
+      case CardType.Basic:
+        return t('studyInterface.labels.basicQACard');
+      case CardType.Cloze:
+        return t('studyInterface.labels.clozeCard');
+      case CardType.Multiple:
+        return t('studyInterface.labels.choiceCard');
+      default:
+        return getCardTypeName(detectCardQuestionType(card));
+    }
+  }
+
+  function notifyCardTypeChange(
+    previousEditTarget: Card | null,
+    persistedCard: Card
+  ) {
+    if (!previousEditTarget || previousEditTarget.type === persistedCard.type) {
+      return;
+    }
+
+    const previousTypeLabel = getStudyCardTypeDisplayName(previousEditTarget);
+    const nextTypeLabel = getStudyCardTypeDisplayName(persistedCard);
+    new Notice(t('studyInterface.notices.cardTypeChanged', {
+      from: previousTypeLabel,
+      to: nextTypeLabel
+    }), 7000);
+  }
+
+  async function syncStudyQueueAfterProgressiveEdit(
+    persistedCard: Card,
+    previousStudyCard: Card,
+    previousEditTarget: Card | null
+  ) {
+    const editedParentId = previousEditTarget?.uuid || persistedCard.uuid;
+    const currentStudyCardId = previousStudyCard.uuid;
+
+    const { primaryDeckId: persistedDeckId } = getCardDeckIds(persistedCard, decks);
+    const { primaryDeckId: previousDeckId } = getCardDeckIds(previousStudyCard, decks);
+    const deckId =
+      persistedDeckId ||
+      previousDeckId ||
+      persistedCard.deckId ||
+      previousStudyCard.deckId ||
+      session.deckId;
+
+    if (!deckId) {
+      logger.warn('[StudyInterface] 渐进式挖空保存后无法确定牌组，降级为单卡同步');
+      const cardsIndex = cards.findIndex(c => c.uuid === persistedCard.uuid);
+      if (cardsIndex !== -1) {
+        cards[cardsIndex] = persistedCard;
+        cards = [...cards];
+      }
+
+      const queueIndex = studyQueue.findIndex(c => c.uuid === currentStudyCardId || c.uuid === persistedCard.uuid);
+      if (queueIndex !== -1) {
+        studyQueue[queueIndex] = persistedCard;
+        studyQueue = [...studyQueue];
+      }
+      return;
+    }
+
+    const latestDeckCards = await dataStorage.getDeckCards(deckId);
+    const latestParent = latestDeckCards.find(c => c.uuid === editedParentId) || persistedCard;
+
+    const latestRelatedCards =
+      latestParent.type === CardType.ProgressiveParent
+        ? latestDeckCards
+            .filter(c =>
+              c.uuid === latestParent.uuid ||
+              (c.type === CardType.ProgressiveChild && (c as ProgressiveClozeChildCard).parentCardId === latestParent.uuid)
+            )
+            .sort((a, b) => {
+              if (a.uuid === latestParent.uuid) return -1;
+              if (b.uuid === latestParent.uuid) return 1;
+              const ordA = isProgressiveClozeChild(a) ? a.clozeOrd : -1;
+              const ordB = isProgressiveClozeChild(b) ? b.clozeOrd : -1;
+              return ordA - ordB;
+            })
+        : [latestParent];
+
+    const previousRelatedIds = new Set<string>([
+      editedParentId,
+      persistedCard.uuid,
+      ...(previousEditTarget?.type === CardType.ProgressiveParent
+        ? (previousEditTarget as Card & { progressiveCloze?: { childCardIds?: string[] } }).progressiveCloze?.childCardIds || []
+        : []),
+      ...cards
+        .filter(c => c.uuid === editedParentId || ((c as ProgressiveClozeChildCard).parentCardId === editedParentId))
+        .map(c => c.uuid),
+      ...studyQueue
+        .filter(c => c.uuid === editedParentId || ((c as ProgressiveClozeChildCard).parentCardId === editedParentId))
+        .map(c => c.uuid)
+    ]);
+
+    const newlyAddedChildren = latestRelatedCards.filter(
+      (c): c is ProgressiveClozeChildCard =>
+        isProgressiveClozeChild(c) && !previousRelatedIds.has(c.uuid)
+    );
+
+    const relatedIds = new Set<string>([
+      ...previousRelatedIds,
+      ...latestRelatedCards.map(c => c.uuid)
+    ]);
+
+    const baseCards = cards.filter(c => !relatedIds.has(c.uuid));
+    cards = [
+      ...baseCards,
+      ...latestRelatedCards
+    ];
+
+    const latestById = new Map(latestRelatedCards.map(card => [card.uuid, card] as const));
+    const matchProgressiveChildByOrd = (card: Card): ProgressiveClozeChildCard | undefined => {
+      if (!isProgressiveClozeChild(card)) return undefined;
+
+      return latestRelatedCards.find(
+        (candidate): candidate is ProgressiveClozeChildCard =>
+          isProgressiveClozeChild(candidate) &&
+          candidate.parentCardId === latestParent.uuid &&
+          candidate.clozeOrd === card.clozeOrd
+      );
+    };
+
+    const resolveLatestRelatedCard = (card: Card): Card => {
+      if (latestById.has(card.uuid)) {
+        return latestById.get(card.uuid) || card;
+      }
+
+      return matchProgressiveChildByOrd(card) || card;
+    };
+
+    studyQueue = studyQueue.map(card => resolveLatestRelatedCard(card));
+
+    const currentReplacement = resolveLatestRelatedCard(previousStudyCard);
+    const queueIndex = studyQueue.findIndex(c => {
+      if (c.uuid === currentStudyCardId) {
+        return true;
+      }
+
+      return (
+        isProgressiveClozeChild(previousStudyCard) &&
+        isProgressiveClozeChild(c) &&
+        c.parentCardId === latestParent.uuid &&
+        c.clozeOrd === previousStudyCard.clozeOrd
+      );
+    });
+    if (queueIndex !== -1) {
+      studyQueue[queueIndex] = currentReplacement;
+      currentCardIndex = queueIndex;
+    }
+
+    const progressiveSaveNotice = buildProgressiveClozeSaveNotice(
+      previousEditTarget,
+      persistedCard,
+      newlyAddedChildren
+    );
+    if (progressiveSaveNotice) {
+      new Notice(progressiveSaveNotice, 7000);
+    }
+
+    cards = [...cards];
+    studyQueue = [...studyQueue];
+    detectedCardType = detectCardQuestionType(currentReplacement);
+    forceRefresh();
+  }
+
+  function isProgressiveEditContext(
+    persistedCard: Card,
+    previousStudyCard: Card,
+    previousEditTarget: Card | null
+  ): boolean {
+    return (
+      persistedCard.type === CardType.ProgressiveParent ||
+      persistedCard.type === CardType.ProgressiveChild ||
+      previousStudyCard.type === CardType.ProgressiveParent ||
+      previousStudyCard.type === CardType.ProgressiveChild ||
+      previousEditTarget?.type === CardType.ProgressiveParent ||
+      previousEditTarget?.type === CardType.ProgressiveChild
+    );
+  }
+
+  function syncStudyQueueAfterRegularEdit(
+    persistedCard: Card,
+    previousStudyCard: Card
+  ) {
+    const currentStudyCardId = previousStudyCard.uuid;
+
+    const cardsIndex = cards.findIndex(c => c.uuid === currentStudyCardId || c.uuid === persistedCard.uuid);
+    if (cardsIndex !== -1) {
+      cards[cardsIndex] = persistedCard;
+    }
+
+    const queueIndex = studyQueue.findIndex(c => c.uuid === currentStudyCardId || c.uuid === persistedCard.uuid);
+    if (queueIndex !== -1) {
+      studyQueue[queueIndex] = persistedCard;
+    }
+
+    cards = [...cards];
+    studyQueue = [...studyQueue];
+    detectedCardType = detectCardQuestionType(persistedCard);
+    forceRefresh();
   }
 
   function getCurrentTemplateInfo() {
@@ -2222,6 +2800,7 @@
   // 响应式刷新机制 - 确保界面状态与数据同步
   // --- 刷新触发器 ---
   let refreshTrigger = $state(0);
+  let isClozeModeSaving = $state(false);
 
   function forceRefresh() {
     refreshTrigger++;
@@ -2246,8 +2825,22 @@
       if (!showEditModal && currentCard) {
         // 更新时间相关的状态
         const elapsed = Date.now() - cardStartTime;
-        currentCardTime = elapsed;
-        currentStudyTime = elapsed; // 同步更新计时信息栏显示
+        const autoPauseMs = timerAutoPauseSeconds * 1000;
+        // 超时自动暂停：当超过设定阈值时停止计时
+        if (autoPauseMs > 0 && elapsed >= autoPauseMs) {
+          if (!timerPaused) {
+            timerPaused = true;
+            const duration = timerAutoPauseSeconds >= 60
+              ? t('studyInterface.intervals.minutes', { n: String(timerAutoPauseSeconds / 60) })
+              : t('studyInterface.intervals.seconds', { n: String(timerAutoPauseSeconds) });
+            new Notice(t('studyInterface.notices.timerAutoPaused', { duration }), 3000);
+          }
+          currentCardTime = autoPauseMs;
+          currentStudyTime = autoPauseMs;
+        } else {
+          currentCardTime = elapsed;
+          currentStudyTime = elapsed;
+        }
 
         // 更新会话总时间
         session.totalTime = Math.floor((Date.now() - session.startTime.getTime()) / 1000);
@@ -2288,66 +2881,48 @@
     })();
   });
 
-  // minutesToDays已从utils/study/timeCalculation.ts导入
-
   function applyLearningScheduling(prevState: number, rating: Rating, updatedFsrsCard: any, card: Card) {
-    // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取牌组ID
-    const { primaryDeckId } = getCardDeckIds(card);
+    // 优先从 content YAML 的 we_decks 获取牌组 ID
+    const { primaryDeckId } = getCardDeckIds(card, decks);
     const deckSettings = deckSettingsMap.get(primaryDeckId || card.deckId || '');
     const globalSettings = plugin.settings;
-    const learningSteps: number[] = deckSettings?.learningSteps ?? globalSettings.learningSteps ?? [1, 10];
-    const relearningSteps: number[] = deckSettings?.relearningSteps ?? [10];
-    const graduatingInterval: number = deckSettings?.graduatingInterval ?? globalSettings.graduatingInterval ?? 1;
-    const easyInterval: number = deckSettings?.easyInterval ?? 4;
+    const globalMemoryScheduling = normalizeMemorySchedulingSettings(globalSettings).settings;
+    const resolvedMemoryScheduling = normalizeMemorySchedulingSettings(
+      deckSettings,
+      globalMemoryScheduling
+    ).settings;
+    const {
+      learningSteps,
+      relearningSteps,
+      graduatingInterval,
+      easyInterval,
+    } = resolvedMemoryScheduling;
     
-    // 从SessionManager读取learningStepIndex（不再从card.fields读取）
+    // 从 SessionManager 读取当前 stepIndex；若会话刚创建，则从 FSRS 推断一次。
     const sessionState = currentSessionId ? sessionManager.getSessionState(currentSessionId) : null;
-    let stepIndex: number = sessionState?.learningStepIndex ?? 0;
-    
-    // 检查FSRS计算后的状态：只有仍处于New/Learning/Relearning的卡片才需要Learning Steps
-    const fsrsResultState = updatedFsrsCard.state;
-    const isNewOrLearning = fsrsResultState === CardState.New || fsrsResultState === CardState.Learning;
-    const isRelearning = fsrsResultState === CardState.Relearning;
+    const currentStepIndex =
+      sessionState?.learningStepIndex ??
+      StepIndexCalculator.calculate(card, learningSteps, relearningSteps);
 
-    // 如果FSRS已经将卡片毕业到Review，不应用Learning Steps
-    if (!isNewOrLearning && !isRelearning) {
+    const { applied, nextStepIndex } = applyLearningStepScheduling({
+      prevState,
+      rating,
+      updatedCard: updatedFsrsCard,
+      config: {
+        learningSteps,
+        relearningSteps,
+        graduatingInterval,
+        easyInterval
+      },
+      currentStepIndex
+    });
+
+    if (!applied) {
       return;
     }
 
-    const steps = isRelearning ? relearningSteps : learningSteps;
-    const nextStepDays = (idx: number) => minutesToDays(steps[Math.min(idx, steps.length - 1)] ?? 1);
-
-    const now = new Date();
-    const setDueAfterDays = (days: number) => {
-      updatedFsrsCard.scheduledDays = Math.max(0, days);
-      const ms = Math.round(days * 24 * 60 * 60 * 1000);
-      updatedFsrsCard.due = new Date(now.getTime() + ms);
-    };
-
-    // 使用StepIndexCalculator统一计算下一步
-    const nextStepIndex = StepIndexCalculator.calculateNext(
-      stepIndex,
-      rating,
-      steps
-    );
-    
-    // -1表示毕业，>=0表示继续Learning/Relearning
-    if (nextStepIndex === -1) {
-      // 毕业到Review状态
-      const interval = rating === 4 ? easyInterval : graduatingInterval;
-      setDueAfterDays(Math.max(1, interval));
-      updatedFsrsCard.state = CardState.Review;
-      // Review状态下stepIndex无意义，不更新SessionManager
-    } else {
-      // 继续Learning/Relearning
-      stepIndex = nextStepIndex;
-      setDueAfterDays(nextStepDays(stepIndex));
-      updatedFsrsCard.state = isNewOrLearning ? CardState.Learning : CardState.Relearning;
-      
-      // 只在仍处于Learning/Relearning时更新stepIndex
-      if (currentSessionId) {
-        sessionManager.updateStepIndex(currentSessionId, stepIndex);
-      }
+    if (nextStepIndex !== null && updatedFsrsCard.state !== CardState.Review && currentSessionId) {
+      sessionManager.updateStepIndex(currentSessionId, nextStepIndex);
     }
   }
 
@@ -2443,6 +3018,69 @@
     logger.debug('撤销显示答案，返回预览状态');
   }
 
+  // --- 提示功能处理函数 ---
+  
+  /**
+   * 显示/隐藏提示浮窗（消耗一次会话使用次数）
+   */
+  async function toggleHint() {
+    if (!currentCard) return;
+    
+    if (hintVisible) {
+      closeHintPanel();
+      return;
+    }
+    
+    if (!currentHintText) {
+      new Notice(t('studyInterface.hint.noHint'));
+      return;
+    }
+    
+    if (hintUsesRemaining <= 0) {
+      new Notice(t('studyInterface.hint.usedUp'));
+      return;
+    }
+    
+    hintSessionUsedCount++;
+    applyHintPanelSize(hintPanelWidth, hintPanelHeight);
+    hintVisible = true;
+
+    await tick();
+    if (!hintVisible) return;
+
+    await renderHintContent();
+  }
+
+  function handleHintPointerDownOutside(event: PointerEvent) {
+    if (!hintVisible) return;
+
+    const eventPath = (typeof event.composedPath === 'function' ? event.composedPath() : [])
+      .filter((target): target is EventTarget => target != null);
+    if (hintCapsuleElement && eventPath.includes(hintCapsuleElement)) {
+      return;
+    }
+
+    if (hintPanelShellElement && eventPath.includes(hintPanelShellElement)) {
+      return;
+    }
+
+    const target = event.target as Node | null;
+    if (target && (hintCapsuleElement?.contains(target) || hintPanelShellElement?.contains(target))) {
+      return;
+    }
+
+    closeHintPanel();
+  }
+
+  /**
+   * 提示次数限制变更处理
+   */
+  function handleHintMaxUsesChange(value: number) {
+    hintMaxUsesPerSession = value;
+    plugin.settings.hintMaxUses = value;
+    plugin.saveSettings();
+  }
+
   //  撤销上一次评分
   /**
    * 撤销最后一次评分操作
@@ -2458,7 +3096,7 @@
     const snapshot = reviewUndoManager.undo();
     
     if (!snapshot) {
-      new Notice('没有可撤销的操作');
+      new Notice(t('studyInterface.notices.nothingToUndo'));
       logger.debug('撤销栈为空');
       return;
     }
@@ -2502,7 +3140,7 @@
         
         // 重置UI状态
         showAnswer = false;
-        cardStartTime = Date.now();
+        cardStartTime = Date.now(); timerPaused = false;
         
         // 更新撤销计数
         updateUndoCount();
@@ -2510,14 +3148,16 @@
         // 触发进度条刷新
         progressBarRefreshTrigger++;
         
-        new Notice('已撤销上一次评分');
+        new Notice(t('studyInterface.notices.undoSuccess'));
         logger.debug('撤销成功');
       } else {
         throw new Error('保存卡片失败');
       }
     } catch (error) {
       logger.error('[StudyModal] 撤销失败:', error);
-      new Notice('撤销失败: ' + (error instanceof Error ? error.message : '未知错误'));
+      new Notice(t('studyInterface.notices.undoFailed', {
+        error: error instanceof Error ? error.message : t('study.view.unknownError')
+      }));
       
       // 恢复撤销栈（将快照放回）
       if (snapshot) {
@@ -2544,7 +3184,7 @@
    * 7. 保存卡片并切换下一张
    */
   async function rateCard(rating: Rating) {
-    //  关键修复：在函数开头立即缓存currentCard
+    // 在函数开头立即缓存 currentCard
     // 避免响应式更新导致currentCard在评分过程中失效
     const cardToRate = currentCard;
     
@@ -2568,7 +3208,7 @@
     // 确保fsrs对象存在
     if (!cardToRate.fsrs) {
       logger.error('[StudyModal] fsrs is undefined, cannot rate card');
-      new Notice('卡片数据异常，无法评分');
+      new Notice(t('studyInterface.notices.ratingDataInvalid'));
       return;
     }
 
@@ -2703,7 +3343,7 @@
       progressBarRefreshTrigger++;
       logger.debug('Card saved, triggering progress bar refresh:', progressBarRefreshTrigger);
       
-      // 🆕 第3步修复：Learning Steps处理（会话内重学）
+      // Learning Steps 处理（会话内重学）
       // 判断卡片是否需要在本次会话中重复学习
       await handleLearningStepsInsertion(cardToRate, rating, prevState);
       
@@ -2721,7 +3361,7 @@
   }
   
   /**
-   * 🆕 处理Learning Steps插入逻辑
+   * 处理 Learning Steps 插入逻辑
    * 
    * 根据评分和卡片状态，判断是否需要在会话中重学
    * 
@@ -2735,29 +3375,29 @@
     prevState: CardState
   ) {
     // 获取Learning Steps配置
-    const learningStepsConfig = plugin.settings.learningSteps || [1, 10];
-    const maxMinutes = Math.max(...learningStepsConfig);
+    const memoryScheduling = resolveMemorySchedulingForCard(card);
+    const queueInsertionPlan = getSessionQueueInsertionPlan(prevState, rating, memoryScheduling);
+    let shouldInsert = queueInsertionPlan.shouldInsert;
+    let insertOffset = queueInsertionPlan.insertOffset;
     
     // 判断是否需要插入队列
-    let shouldInsert = false;
-    let insertOffset = 1;
     
     // 情况1：新卡片评分Hard或Again -> 需要短期重学
-    if (prevState === CardState.New && rating <= Rating.Hard) {
+    if (shouldInsert && prevState === CardState.New && rating <= Rating.Hard) {
       shouldInsert = true;
       insertOffset = rating === Rating.Again ? 1 : 3;  // Again立即重学，Hard稍后
       devLog('debug', `${LOG_PREFIX.SESSION} 📝 新卡片需要重学: ${card.uuid.slice(0,8)}, rating=${rating}, offset=${insertOffset}`);
     }
     
     // 情况2：Learning状态评分Again -> 重置，立即重学
-    else if (prevState === CardState.Learning && rating === Rating.Again) {
+    else if (shouldInsert && prevState === CardState.Learning && rating === Rating.Again) {
       shouldInsert = true;
       insertOffset = 1;  // 立即重学
       devLog('debug', `${LOG_PREFIX.SESSION} 🔄 学习中卡片重置: ${card.uuid.slice(0,8)}`);
     }
     
     // 情况3：Review状态评分Again -> 进入重学
-    else if (prevState === CardState.Review && rating === Rating.Again) {
+    else if (shouldInsert && prevState === CardState.Review && rating === Rating.Again) {
       shouldInsert = true;
       insertOffset = 2;  // 稍后重学
       devLog('debug', `${LOG_PREFIX.SESSION} ⚠️ 复习卡片遗忘: ${card.uuid.slice(0,8)}`);
@@ -2996,7 +3636,7 @@
   }
 
   /**
-   *  查找容器中的所有媒体元素（增强版）
+   * 查找容器中的所有媒体元素
    * 
    * 支持：
    * - Obsidian 原生媒体嵌入
@@ -3182,7 +3822,7 @@
   }
 
   /**
-   *  播放媒体元素（增强版 - 支持等待加载和顺序播放）
+   * 播放媒体元素，支持等待加载和顺序播放
    * 
    * @param mediaElements 要播放的媒体元素数组
    */
@@ -3526,7 +4166,7 @@
   }
 
   /**
-   *  自动播放媒体文件（增强版 v2.0）
+   * 自动播放媒体文件
    * 
    * 四重策略确保可靠性：
    * 1. 立即查找（快速响应）
@@ -3612,7 +4252,7 @@
       await tick(); // 等待状态更新
     }
 
-    //  关键修复：使用 studyQueue 而不是 cards 来判断边界
+    // 使用 studyQueue 而不是 cards 来判断边界
     // 原因：Bury Siblings 机制导致 studyQueue.length 可能小于 cards.length
     if (!Array.isArray(studyQueue) || studyQueue.length === 0) {
       logger.warn('nextCard: No study queue available');
@@ -3620,7 +4260,7 @@
       return;
     }
 
-    //  第5步修复：详细的切换卡片日志
+    // 详细记录切换卡片日志
     devLog('debug', `${LOG_PREFIX.SESSION} ➡️  切换卡片:`, {
       from: currentCardIndex,
       queueLength: studyQueue.length,
@@ -3633,13 +4273,26 @@
       logger.debug('[StudyModal] Reached end of study queue, finishing session');
       finishSession();
     } else {
-      // 安全地更新索引
-      const nextIndex = currentCardIndex + 1;
-      if (nextIndex < studyQueue.length) {
+      const { nextIndex, movedCount, nextPendingDueAt } = requeueFutureDueCards(
+        studyQueue,
+        currentCardIndex,
+        Date.now(),
+        { allowFutureDueCards: mode === 'advance' }
+      );
+
+      if (nextIndex >= 0 && nextIndex < studyQueue.length) {
         const prevIndex = currentCardIndex;
         currentCardIndex = nextIndex;
         showAnswer = false;
-        cardStartTime = Date.now(); // 重置卡片计时
+        cardStartTime = Date.now(); timerPaused = false; // 重置卡片计时
+
+        if (movedCount > 0) {
+          logger.debug('[StudyModal] Deferred future-due cards in session queue', {
+            movedCount,
+            nextIndex,
+            nextCardId: studyQueue[currentCardIndex]?.uuid
+          });
+        }
 
         // 添加状态变更确认日志
         if (plugin?.settings?.enableDebugMode) {
@@ -3660,7 +4313,15 @@
           // 触发 $effect 中的定时器逻辑
         }
       } else {
-        logger.warn('nextCard: Invalid next index', nextIndex, 'queueLength:', studyQueue.length);
+        if (nextPendingDueAt) {
+          setSessionCompletionStatus('paused-until-next-due', nextPendingDueAt);
+          logger.debug('[StudyModal] No later card is due yet, ending session for now', {
+            nextPendingDueAt
+          });
+        } else {
+          setSessionCompletionStatus('completed');
+          logger.warn('nextCard: Invalid next index', nextIndex, 'queueLength:', studyQueue.length);
+        }
         finishSession();
       }
     }
@@ -3668,6 +4329,10 @@
 
 
   async function finishSession() {
+    if (!session.completionReason) {
+      setSessionCompletionStatus('completed');
+    }
+
     session.endTime = new Date();
     session.totalTime = Math.max(0, Math.round((session.endTime.getTime() - session.startTime.getTime()) / 1000));
     try {
@@ -3686,43 +4351,24 @@
 
 
 
-  function handleClose() {
+  async function handleClose() {
     // 清理hover tooltips
     clearHoverTooltips(plugin);
 
     if (session.cardsReviewed > 0) {
-      //  使用 Obsidian Modal 代替 confirm()，避免焦点劫持问题
-      const modal = new Modal(plugin.app);
-      modal.titleEl.setText('确认退出');
-      modal.contentEl.setText('确定要退出学习吗？当前进度将会保存。');
-      
-      const buttonContainer = modal.contentEl.createDiv({ cls: 'confirm-buttons' });
-      buttonContainer.style.display = 'flex';
-      buttonContainer.style.justifyContent = 'flex-end';
-      buttonContainer.style.gap = '10px';
-      buttonContainer.style.marginTop = '16px';
-      
-      let shouldExit = false;
-      
-      const cancelButton = buttonContainer.createEl('button', { text: '取消' });
-      cancelButton.onclick = () => modal.close();
-      
-      const confirmButton = buttonContainer.createEl('button', { 
-        text: '确认退出',
-        cls: 'mod-cta'
-      });
-      confirmButton.onclick = () => {
-        shouldExit = true;
-        modal.close();
-      };
-      
-      modal.onClose = () => {
-        if (shouldExit) {
-          finishSession();
+      const shouldExit = await showObsidianConfirm(
+        plugin.app,
+        t('studyInterface.labels.exitConfirmMessage'),
+        {
+          title: t('study.session.exit'),
+          confirmText: t('study.session.exit'),
+          cancelText: t('common.cancel'),
+          confirmClass: 'mod-cta'
         }
-      };
-      
-      modal.open();
+      );
+      if (shouldExit) {
+        finishSession();
+      }
     } else {
       onClose();
     }
@@ -3773,6 +4419,8 @@
 
       try {
         const sessionCardId = editorSessionId;
+        const previousStudyCard = currentCard;
+        const previousEditTarget = editTargetCard;
         const saveTargetId = editTargetCard?.uuid || currentCard.uuid;
         
         // 使用学习会话模式保存
@@ -3782,6 +4430,7 @@
         });
 
         if (result.success && result.updatedCard) {
+          let persistedCard = result.updatedCard;
           try {
             const saveResult = await dataStorage.saveCard(result.updatedCard);
             if (!saveResult.success) {
@@ -3791,41 +4440,29 @@
                 return;
               }
               logger.error('卡片持久化失败（点击预览）:', saveResult.error);
-              new Notice('保存失败: ' + (saveResult.error || '未知错误'));
+              new Notice(t('study.view.saveFailed', {
+                error: saveResult.error || t('study.view.unknownError')
+              }));
               return;
             }
-            logger.debug('卡片已持久化到数据库:', result.updatedCard.uuid);
+            persistedCard = saveResult.data || result.updatedCard;
+            logger.debug('卡片已持久化到数据库:', persistedCard.uuid);
           } catch (persistError) {
             logger.error('卡片持久化异常（点击预览）:', persistError);
-            new Notice('保存失败: ' + (persistError instanceof Error ? persistError.message : '未知错误'));
+            new Notice(t('study.view.saveFailed', {
+              error: persistError instanceof Error ? persistError.message : t('study.view.unknownError')
+            }));
             return;
           }
           
-          new Notice('卡片已保存');
+          new Notice(t('studyInterface.notices.cardSaved'));
+
+          notifyCardTypeChange(previousEditTarget, persistedCard);
           
-          // 同步更新 cards 和 studyQueue（内存缓存）
-          const cardUuid = result.updatedCard.uuid;
-          
-          const cardsIndex = cards.findIndex(c => c.uuid === cardUuid);
-          if (cardsIndex !== -1) {
-            cards[cardsIndex] = result.updatedCard;
-            cards = [...cards];
-          }
-          
-          const queueIndex = studyQueue.findIndex(c => c.uuid === cardUuid);
-          if (queueIndex !== -1) {
-            studyQueue[queueIndex] = result.updatedCard;
-            studyQueue = [...studyQueue];
-          }
-          
-          // 如果编辑的是父卡片，同步更新当前子卡片的content
-          if (editTargetCard && isProgressiveClozeChild(currentCard) && 
-              editTargetCard.uuid !== currentCard.uuid) {
-            const childIndex = studyQueue.findIndex(c => c.uuid === currentCard.uuid);
-            if (childIndex !== -1) {
-              studyQueue[childIndex] = { ...studyQueue[childIndex], content: result.updatedCard.content };
-              studyQueue = [...studyQueue];
-            }
+          if (isProgressiveEditContext(persistedCard, previousStudyCard, previousEditTarget)) {
+            await syncStudyQueueAfterProgressiveEdit(persistedCard, previousStudyCard, previousEditTarget);
+          } else {
+            syncStudyQueueAfterRegularEdit(persistedCard, previousStudyCard);
           }
           
           // 退出编辑模式
@@ -3835,11 +4472,15 @@
           isClozeMode = false;
         } else {
           logger.error('保存失败（点击预览）:', result.error);
-          new Notice('保存失败: ' + (result.error || '未知错误'));
+          new Notice(t('study.view.saveFailed', {
+            error: result.error || t('study.view.unknownError')
+          }));
         }
       } catch (error) {
         logger.error('保存异常（点击预览）:', error);
-        new Notice('保存失败: ' + (error instanceof Error ? error.message : '未知错误'));
+        new Notice(t('study.view.saveFailed', {
+          error: error instanceof Error ? error.message : t('study.view.unknownError')
+        }));
       }
     }
   }
@@ -3860,9 +4501,82 @@
   // 挖空预览切换回调
   // 注意：实际的编辑器容器切换逻辑已移至 CardEditorContainer 组件
   // 这里只更新状态，组件会自动应用CSS类
-  function handleToggleCloze() {
-    isClozeMode = !isClozeMode;
-    logger.debug('Cloze mode toggled:', isClozeMode);
+  async function maybeShowClozeInputModeHint(): Promise<void> {
+    if (showAnswer) return;
+    if (!plugin?.app) return;
+
+    const shouldShowHint = shouldShowTutorialHint(
+      plugin.settings,
+      GLOBAL_TUTORIAL_HINT_IDS.CLOZE_INPUT_MODE_SWITCH
+    );
+    if (!shouldShowHint) return;
+
+    const modal = new ClozeInputModeHintModal(plugin.app, {
+      onConfirm: async (dismissPermanently: boolean) => {
+        if (!dismissPermanently) return;
+
+        try {
+          markTutorialHintDismissed(
+            plugin.settings,
+            GLOBAL_TUTORIAL_HINT_IDS.CLOZE_INPUT_MODE_SWITCH
+          );
+          await plugin.saveSettings();
+        } catch (error) {
+          logger.error('[StudyInterface] 保存教程提示状态失败:', error);
+          new Notice('保存教程提示设置失败');
+        }
+      }
+    });
+    modal.open();
+  }
+
+  async function handlePreviewClozeModeChange(mode: ClozeMode) {
+    const previousStudyCard = currentCard;
+    if (!previousStudyCard) return;
+
+    if (
+      previousStudyCard.type === CardType.ProgressiveParent ||
+      previousStudyCard.type === CardType.ProgressiveChild
+    ) {
+      return;
+    }
+
+    const currentContent = previousStudyCard.content || '';
+    const nextContent = setClozeModeInContent(currentContent, mode);
+
+    if (nextContent === currentContent) {
+      return;
+    }
+
+    const updatedCard: Card = {
+      ...previousStudyCard,
+      content: nextContent
+    };
+
+    try {
+      isClozeModeSaving = true;
+
+      const saveResult = await saveCardUnified(updatedCard, dataStorage, {
+        operation: '切换挖空模式',
+        showErrorNotice: true,
+        errorMessage: '切换挖空模式失败'
+      });
+
+      if (!saveResult.success) {
+        return;
+      }
+
+      syncStudyQueueAfterRegularEdit(updatedCard, previousStudyCard);
+      new Notice(mode === 'input' ? '已切换为输入模式' : '已切换为显示模式');
+      if (mode === 'input') {
+        void maybeShowClozeInputModeHint();
+      }
+    } catch (error) {
+      logger.error('[StudyInterface] 切换挖空模式失败:', error);
+      new Notice(error instanceof Error ? error.message : '切换挖空模式失败');
+    } finally {
+      isClozeModeSaving = false;
+    }
   }
 
   // 旧的编辑模态窗相关函数已移除，现在使用行内编辑
@@ -3885,9 +4599,11 @@
       const res = await dataStorage.deleteCard(currentCard.uuid);
       if (!res?.success) {
         try {
-          new Notice(`删除失败：${res?.error || '未知错误'}`);
+          new Notice(t('studyInterface.notices.deleteFailed', {
+            error: res?.error || t('study.view.unknownError')
+          }));
         } catch {
-          alert(`删除失败：${res?.error || '未知错误'}`);
+          logger.warn('[StudyInterface] 删除失败:', res?.error || '未知错误');
         }
         return;
       }
@@ -3934,7 +4650,7 @@
       
       // 重置显示状态
       showAnswer = false;
-      cardStartTime = Date.now();
+      cardStartTime = Date.now(); timerPaused = false;
       showEditModal = false;
 
       // 强制触发界面刷新
@@ -3944,7 +4660,7 @@
 
       // 显示删除成功提示
       try {
-        new Notice('卡片已删除');
+        new Notice(t('studyInterface.notices.cardDeleted'));
       } catch {
         logger.debug('卡片已删除');
       }
@@ -3964,79 +4680,70 @@
     } catch (e) {
       logger.error('删除失败', e);
       try {
-        new Notice('删除卡片时发生错误，请重试');
+        new Notice(t('studyInterface.notices.deleteRetry'));
       } catch {
-        alert('删除卡片时发生错误，请重试');
+        logger.warn('[StudyInterface] 删除卡片时发生错误，请重试');
       }
     }
   }
 
   /**
-   * 🆕 v2.0 从当前牌组移除卡片（引用式牌组系统）
+   * 从当前牌组移除卡片
    * 只移除引用关系，不删除卡片数据
    */
   async function handleRemoveFromDeck() {
     if (!currentCard) return;
     
-    // 🆕 v2.0: 获取当前牌组ID（支持引用式牌组架构）
-    // 优先级：session.deckId > card.referencedByDecks[0] > card.deckId
+    // 优先使用当前会话牌组；缺失时再根据卡片内容推断。
     let currentDeckId = session.deckId;
     
-    // 🆕 v2.2: 如果 session.deckId 为空，优先从 content YAML 的 we_decks 获取
     if (!currentDeckId) {
-      const { primaryDeckId } = getCardDeckIds(currentCard);
+      const { primaryDeckId } = getCardDeckIds(currentCard, decks, {
+        fallbackToReferences: false
+      });
       if (primaryDeckId) {
         currentDeckId = primaryDeckId;
-      } else if (currentCard.referencedByDecks && currentCard.referencedByDecks.length > 0) {
-        currentDeckId = currentCard.referencedByDecks[0];
       } else if (currentCard.deckId) {
         currentDeckId = currentCard.deckId;
       }
     }
     
     if (!currentDeckId) {
-      new Notice('无法确定当前牌组');
+      new Notice(t('studyInterface.notices.currentDeckUndetermined'));
       return;
     }
     
     // 检查引用式牌组服务是否可用
     if (!plugin?.referenceDeckService) {
-      new Notice('引用式牌组服务未初始化');
+      new Notice(t('studyInterface.notices.referenceDeckServiceUnavailable'));
       return;
     }
     
     // 获取牌组信息
     const deck = decks.find(d => d.id === currentDeckId);
-    const deckName = deck?.name || '当前牌组';
+    const deckName = deck?.name || t('toolbar.currentDeck');
     
     // 使用 Obsidian Modal 确认
     const modal = new Modal(plugin.app);
-    modal.titleEl.setText('从牌组移除');
+    modal.titleEl.setText(t('toolbar.removeFromDeck'));
     
     // 创建消息内容
     const messageEl = modal.contentEl.createDiv({ cls: 'remove-confirm-message' });
-    messageEl.createEl('p', { text: `确定要从"${deckName}"中移除此卡片吗？` });
+    messageEl.createEl('p', { text: `${t('toolbar.removeFromDeck')}: "${deckName}"` });
     messageEl.createEl('p', { 
-      text: '卡片数据会保留，只是不再属于此牌组。',
+      text: t('studyInterface.labels.removeFromDeckKeepData'),
       cls: 'remove-warning'
     });
     
-    // 🆕 v2.0: 检查是否会变成孤儿卡片（使用完整的引用式牌组架构）
-    // 统计有多少个牌组引用了当前卡片
-    let referencingDeckCount = 0;
-    for (const d of decks) {
-      if (d.cardUUIDs?.includes(currentCard.uuid)) {
-        referencingDeckCount++;
-      }
-    }
-    // 如果 deck.cardUUIDs 未填充，回退到 card.referencedByDecks
-    if (referencingDeckCount === 0) {
-      referencingDeckCount = (currentCard.referencedByDecks || []).length;
-    }
+    // 以卡片内容中的牌组归属判断移除后是否会成为孤儿卡片。
+    const { deckIds: referencedDeckIds } = getCardDeckIds(currentCard, decks, {
+      fallbackToReferences: false
+    });
+    const referencingDeckCount = referencedDeckIds.length;
     
     if (referencingDeckCount <= 1) {
       messageEl.createEl('p', { 
-        text: '⚠️ 此卡片已无其它牌组引用，移除后将成为孤儿卡片。',
+        text: t('studyInterface.labels.removeFromDeckOrphanWarning'),
         cls: 'remove-orphan-warning'
       });
     }
@@ -4050,13 +4757,13 @@
     
     let shouldRemove = false;
     
-    const cancelButton = buttonContainer.createEl('button', { text: '取消' });
+    const cancelButton = buttonContainer.createEl('button', { text: t('common.cancel') });
     cancelButton.onclick = () => {
       modal.close();
     };
     
     const removeButton = buttonContainer.createEl('button', { 
-      text: '确认移除',
+      text: t('studyInterface.labels.confirmRemove'),
       cls: 'mod-warning'
     });
     removeButton.onclick = () => {
@@ -4068,14 +4775,17 @@
       if (!shouldRemove) return;
       
       try {
-        const result = await plugin.referenceDeckService!.removeCardsFromDeck(currentDeckId, [currentCard.uuid]);
+        const cardToRemove = currentCard;
+        if (!cardToRemove) return;
+
+        const result = await plugin.referenceDeckService!.removeCardsFromDeck(currentDeckId, [cardToRemove.uuid]);
         
         if (!result.success) {
           throw new Error(result.error || '移除失败');
         }
         
         // 从学习队列中移除
-        const cardUuid = currentCard.uuid;
+        const cardUuid = cardToRemove.uuid;
         cards = cards.filter(c => c.uuid !== cardUuid);
         studyQueue = studyQueue.filter(c => c.uuid !== cardUuid);
         
@@ -4093,7 +4803,7 @@
         
         // 重置显示状态
         showAnswer = false;
-        cardStartTime = Date.now();
+        cardStartTime = Date.now(); timerPaused = false;
         
         // 强制刷新
         cards = [...cards];
@@ -4101,9 +4811,9 @@
         forceRefresh();
         
         // 显示成功提示
-        let message = `已从“${deckName}”移除`;
+        let message = t('studyInterface.notices.removedFromDeck', { name: deckName });
         if (result.orphanedCards && result.orphanedCards.length > 0) {
-          message += '（卡片已变为孤儿卡片）';
+          message += t('studyInterface.notices.removedFromDeckOrphan');
         }
         new Notice(message);
         
@@ -4114,7 +4824,9 @@
         });
       } catch (error) {
         logger.error('[RemoveFromDeck] 移除失败:', error);
-        new Notice(`移除失败: ${error instanceof Error ? error.message : '未知错误'}`);
+        new Notice(t('studyInterface.notices.removeFailed', {
+          error: error instanceof Error ? error.message : t('study.view.unknownError')
+        }));
       }
     };
     
@@ -4130,18 +4842,20 @@
     if (!currentCard) return;
 
     try {
-      //  关键修复1：使用回收功能（而非旧版搁置）
+      // 使用回收功能（而非旧版搁置）
       const cardToRecycle: Card = { ...currentCard };
       await recycleCard(cardToRecycle, RecycleReason.MANUAL, 5);
 
       // 保存回收后的卡片
       const res = await dataStorage.saveCard(cardToRecycle);
       if (!res?.success) {
-        new Notice(`回收失败：${res?.error || '未知错误'}`);
+        new Notice(t('studyInterface.notices.recycleFailed', {
+          error: res?.error || t('study.view.unknownError')
+        }));
         return;
       }
 
-      //  关键修复2：同步更新三层数据结构
+      // 同步更新三层数据结构
       const cardUuid = currentCard.uuid;
       
       // 记录移除前的信息
@@ -4157,7 +4871,7 @@
       // 2 从 studyQueue 移除（关键：解决概率性切换问题）
       studyQueue = studyQueue.filter(c => c.uuid !== cardUuid);
 
-      //  关键修复3：智能索引调整（自动切换到下一张）
+      // 智能索引调整（自动切换到下一张）
       if (studyQueue.length === 0) {
         // 没有卡片了，结束学习会话
         currentCardIndex = 0;
@@ -4178,7 +4892,7 @@
       
       // 重置显示状态
       showAnswer = false;
-      cardStartTime = Date.now();
+      cardStartTime = Date.now(); timerPaused = false;
       showEditModal = false;
 
       // 强制刷新界面
@@ -4188,7 +4902,7 @@
 
       // 显示成功通知
       const tagText = getRecycleTagText(true);  // #回收
-      new Notice(`已回收卡片（添加了 ${tagText} 标签）`);
+      new Notice(t('studyInterface.notices.recycleSuccessAddedTag', { tag: tagText }));
 
       // 详细日志
       logger.info('[Recycle] 卡片已回收并切换:', {
@@ -4205,7 +4919,7 @@
 
     } catch (error) {
       logger.error('[Recycle] 回收卡片失败:', error);
-      new Notice('回收卡片失败，请重试');
+      new Notice(t('studyInterface.notices.recycleRetry'));
     }
   }
 
@@ -4213,10 +4927,12 @@
   let showReminderModal = $state(false);
   let customReviewDate = $state("");
   let customReviewTime = $state("");
+  let reminderAnchorElement: HTMLElement | null = $state(null);
 
   // 优先级功能状态
   let showPriorityModal = $state(false);
   let selectedPriority = $state(2);
+  let priorityAnchorElement: HTMLElement | null = $state(null);
 
   // 倒计时定时器ID
   let countdownTimerId: number | null = $state(null);
@@ -4231,12 +4947,13 @@
     customReviewDate = tomorrow.toISOString().split('T')[0];
     customReviewTime = new Date().toTimeString().slice(0, 5);
 
+    showPriorityModal = false;
     showReminderModal = true;
   }
 
   async function confirmSetReminder() {
     if (!currentCard || !customReviewDate || !customReviewTime) {
-      new Notice('请选择有效的日期和时间');
+      new Notice(t('studyInterface.notices.reminderInvalidDateTime'));
       return;
     }
 
@@ -4245,7 +4962,7 @@
       const reviewDateTime = new Date(`${customReviewDate}T${customReviewTime}`);
 
       if (reviewDateTime <= new Date()) {
-        new Notice('复习时间必须是未来时间');
+        new Notice(t('studyInterface.notices.reminderMustBeFuture'));
         return;
       }
 
@@ -4277,20 +4994,23 @@
           studyQueue = [...studyQueue];
         }
         
-        new Notice(`复习时间已设置为：${reviewDateTime.toLocaleString()}`);
+        new Notice(t('studyInterface.notices.reminderSetAt', {
+          time: reviewDateTime.toLocaleString()
+        }));
         showReminderModal = false;
       } else {
-        new Notice('设置复习时间失败');
+        new Notice(t('studyInterface.notices.reminderSetFailed'));
       }
     } catch (error) {
       logger.error('Error setting reminder:', error);
-      new Notice('设置复习时间时出错');
+      new Notice(t('studyInterface.notices.reminderSetError'));
     }
   }
 
   function handleChangePriority() {
     if (!currentCard) return;
     selectedPriority = (currentCard as any).priority || 2;
+    showReminderModal = false;
     showPriorityModal = true;
   }
 
@@ -4298,9 +5018,14 @@
     if (!currentCard) return;
 
     try {
-      // 更新卡片的优先级
+      const nextContent = setCardProperties(currentCard.content || '', {
+        we_priority: selectedPriority
+      });
+
+      // 更新卡片的优先级和 YAML
       const updatedCard = {
         ...currentCard,
+        content: nextContent,
         priority: selectedPriority,
         modified: new Date().toISOString()
       } as any;
@@ -4308,30 +5033,40 @@
       // 保存卡片
       const result = await dataStorage.saveCard(updatedCard);
       if (result.success) {
+        const savedCard = (result.data || updatedCard) as any;
+
         //  同步更新 cards 和 studyQueue
         const cardUuid = currentCard.uuid;
         
         const cardsIndex = cards.findIndex(c => c.uuid === cardUuid);
         if (cardsIndex !== -1) {
-          cards[cardsIndex] = updatedCard;
+          cards[cardsIndex] = savedCard;
           cards = [...cards];
         }
         
         const queueIndex = studyQueue.findIndex(c => c.uuid === cardUuid);
         if (queueIndex !== -1) {
-          studyQueue[queueIndex] = updatedCard;
+          studyQueue[queueIndex] = savedCard;
           studyQueue = [...studyQueue];
         }
 
-        const priorityText = ['', '低', '中', '高', '紧急'][selectedPriority] || '中';
-        new Notice(`优先级已设置为：${priorityText}`);
+        currentCard = savedCard;
+
+        const priorityText = [
+          '',
+          t('study.priority.low'),
+          t('study.priority.medium'),
+          t('study.priority.high'),
+          t('study.priority.urgent')
+        ][selectedPriority] || t('study.priority.medium');
+        new Notice(t('studyInterface.notices.prioritySetTo', { priority: priorityText }));
         showPriorityModal = false;
       } else {
-        new Notice('设置优先级失败');
+        new Notice(t('studyInterface.notices.prioritySetFailed'));
       }
     } catch (error) {
       logger.error('Error changing priority:', error);
-      new Notice('设置优先级时出错');
+      new Notice(t('studyInterface.notices.prioritySetError'));
     }
   }
 
@@ -4343,9 +5078,14 @@
     if (!currentCard) return;
 
     try {
-      // 更新卡片的优先级
+      const nextContent = setCardProperties(currentCard.content || '', {
+        we_priority: priority
+      });
+
+      // 更新卡片的优先级和 YAML
       const updatedCard = {
         ...currentCard,
+        content: nextContent,
         priority: priority,
         modified: new Date().toISOString()
       } as any;
@@ -4353,29 +5093,39 @@
       // 保存卡片
       const result = await dataStorage.saveCard(updatedCard);
       if (result.success) {
+        const savedCard = (result.data || updatedCard) as any;
+
         //  同步更新 cards 和 studyQueue
         const cardUuid = currentCard.uuid;
         
         const cardsIndex = cards.findIndex(c => c.uuid === cardUuid);
         if (cardsIndex !== -1) {
-          cards[cardsIndex] = updatedCard;
+          cards[cardsIndex] = savedCard;
           cards = [...cards];
         }
         
         const queueIndex = studyQueue.findIndex(c => c.uuid === cardUuid);
         if (queueIndex !== -1) {
-          studyQueue[queueIndex] = updatedCard;
+          studyQueue[queueIndex] = savedCard;
           studyQueue = [...studyQueue];
         }
 
-        const priorityText = ['', '低', '中', '高', '紧急'][priority] || '中';
-        new Notice(`优先级已设置为：${priorityText}`);
+        currentCard = savedCard;
+
+        const priorityText = [
+          '',
+          t('study.priority.low'),
+          t('study.priority.medium'),
+          t('study.priority.high'),
+          t('study.priority.urgent')
+        ][priority] || t('study.priority.medium');
+        new Notice(t('studyInterface.notices.prioritySetTo', { priority: priorityText }));
       } else {
-        new Notice('设置优先级失败');
+        new Notice(t('studyInterface.notices.prioritySetFailed'));
       }
     } catch (error) {
       logger.error('Error changing priority:', error);
-      new Notice('设置优先级时出错');
+      new Notice(t('studyInterface.notices.prioritySetError'));
     }
   }
 
@@ -4387,14 +5137,14 @@
   // 处理AI格式化
   async function handleAIFormat(formatType: string) {
     if (!currentCard) {
-      new Notice('当前没有可格式化的卡片');
+      new Notice(t('studyInterface.notices.noCardToFormat'));
       return;
     }
 
     // 检查AI配置
     const aiConfig = plugin.settings.aiConfig;
     if (!aiConfig?.formatting?.enabled) {
-      new Notice('AI格式化功能未启用\n请在设置→AI配置中开启');
+      new Notice(t('studyInterface.notices.aiFormatDisabled'));
       return;
     }
 
@@ -4402,7 +5152,7 @@
       logger.debug(`开始AI格式化，类型: ${formatType}`);
       
       // 显示加载提示
-      const loadingNotice = new Notice('AI正在格式化卡片...', 0);
+      const loadingNotice = new Notice(t('studyInterface.notices.aiFormattingCard'), 0);
       
       //  使用CardAccessor获取内容（处理子卡片）
       let currentContent = '';
@@ -4427,7 +5177,7 @@
       
       if (!currentContent.trim()) {
         loadingNotice.hide();
-        new Notice('卡片内容为空，无法格式化');
+        new Notice(t('studyInterface.notices.emptyCardContent'));
         return;
       }
       
@@ -4443,13 +5193,15 @@
       loadingNotice.hide();
       
       if (!formatResult.success) {
-        new Notice(`格式化失败\n${formatResult.error || '未知错误'}`);
+        new Notice(t('studyInterface.notices.formatFailedMultiline', {
+          error: formatResult.error || t('study.view.unknownError')
+        }));
         logger.error('[StudyModal] AI格式化失败:', formatResult);
         return;
       }
       
       if (!formatResult.formattedContent) {
-        new Notice('格式化结果为空');
+        new Notice(t('studyInterface.notices.formatResultEmpty'));
         return;
       }
       
@@ -4476,7 +5228,7 @@
       const result = await dataStorage.saveCard(updatedCard);
       
       if (result.success) {
-        //  关键修复：同步更新 cards 和 studyQueue
+        // 同步更新 cards 和 studyQueue
         const cardUuid = currentCard.uuid;
         
         // 1 更新 cards 数组
@@ -4495,7 +5247,9 @@
         
         // 3 显示成功提示
         const providerLabel = formatResult.provider ? ` (${formatResult.provider})` : '';
-        new Notice(`AI格式化成功${providerLabel}`);
+        new Notice(t('studyInterface.notices.aiFormatSuccess', {
+          provider: providerLabel
+        }));
         
         // 4 强制刷新预览界面
         forceRefresh();
@@ -4509,31 +5263,35 @@
           queueUpdated: queueIndex !== -1
         });
       } else {
-        new Notice('保存失败：' + (result.error || '未知错误'));
+        new Notice(t('study.view.saveFailed', {
+          error: result.error || t('study.view.unknownError')
+        }));
       }
       
     } catch (error) {
       logger.error('[StudyModal] AI格式化异常:', error);
       new Notice(
-        `格式化失败\n${error instanceof Error ? error.message : '未知错误'}`
+        t('studyInterface.notices.formatFailedMultiline', {
+          error: error instanceof Error ? error.message : t('study.view.unknownError')
+        })
       );
     }
   }
 
-  // 🆕 处理自定义AI格式化
+  // 处理自定义 AI 格式化
   async function handleAIFormatCustom(actionId: string) {
     if (!currentCard) {
-      new Notice('当前没有可格式化的卡片');
+      new Notice(t('studyInterface.notices.noCardToFormat'));
       return;
     }
     
     const action = customActions.format.find((a: AIAction) => a.id === actionId);
     if (!action) {
-      new Notice('未找到该格式化功能');
+      new Notice(t('studyInterface.notices.formatActionNotFound'));
       return;
     }
     
-    const loadingNotice = new Notice('AI正在格式化...', 0);
+    const loadingNotice = new Notice(t('studyInterface.notices.aiFormatting'), 0);
     
     const card = currentCard;
     if (!card) return;
@@ -4544,8 +5302,8 @@
         card,
         {
           template: availableTemplates.find(t => t.id === card.templateId),
-          // 🆕 v2.2: 优先从 content YAML 的 we_decks 获取牌组ID
-          deck: decks.find(d => d.id === (getCardDeckIds(card).primaryDeckId || card.deckId))
+          // 优先从 content YAML 的 we_decks 获取牌组 ID
+          deck: decks.find(d => d.id === (getCardDeckIds(card, decks).primaryDeckId || card.deckId))
         },
         plugin
       );
@@ -4557,20 +5315,24 @@
         selectedFormatActionName = action.name;
         showFormatPreview = true;
       } else {
-        new Notice('格式化失败: ' + result.error);
+        new Notice(t('studyInterface.notices.formatFailedInline', {
+          error: result.error || t('study.view.unknownError')
+        }));
       }
     } catch (error) {
       loadingNotice.hide();
       logger.error('[StudyInterface] 格式化异常:', error);
-      new Notice('格式化失败: ' + (error instanceof Error ? error.message : '未知错误'));
+      new Notice(t('studyInterface.notices.formatFailedInline', {
+        error: error instanceof Error ? error.message : t('study.view.unknownError')
+      }));
     }
   }
 
-  // 🆕 应用格式化结果
+  // 应用格式化结果
   async function applyFormattedContent() {
     if (!currentCard || !formatPreviewResult?.formattedContent) return;
     
-    //  关键修复：在函数开头缓存所有需要的值，避免竞态条件
+    // 在函数开头缓存所有需要的值，避免竞态条件
     const previewResult = formatPreviewResult;  // 缓存引用
     const providerInfo = previewResult.provider || 'Unknown';
     // 使用非空断言，因为已在第3710行检查过 formattedContent 存在
@@ -4613,7 +5375,9 @@
         
         // 3 显示成功提示（使用缓存的值）
         const providerLabel = providerInfo ? ` (${providerInfo})` : '';
-        new Notice(`AI格式化成功${providerLabel}`);
+        new Notice(t('studyInterface.notices.aiFormatSuccess', {
+          provider: providerLabel
+        }));
         
         // 4 详细日志（使用缓存的值，在清空前记录）
         logger.info('[Format] AI格式化已应用:', {
@@ -4631,20 +5395,41 @@
         showFormatPreview = false;
         formatPreviewResult = null;
       } else {
-        new Notice('保存失败：' + (result.error || '未知错误'));
+        new Notice(t('study.view.saveFailed', {
+          error: result.error || t('study.view.unknownError')
+        }));
       }
     } catch (error) {
       logger.error('[Format] 应用格式化失败:', error);
-      new Notice('应用失败: ' + (error instanceof Error ? error.message : '未知错误'));
+      new Notice(t('studyInterface.notices.applyFailed', {
+        error: error instanceof Error ? error.message : t('study.view.unknownError')
+      }));
     }
   }
 
   //  saveAIActions已移除，Store自动处理保存
 
-  // 🆕 处理测试题生成 - 使用现有预览流程
+  function openAIActionManagerWithObsidianAPI() {
+    if (aiActionManagerModalInstance) {
+      aiActionManagerModalInstance.close();
+      aiActionManagerModalInstance = null;
+    }
+
+    aiActionManagerModalInstance = new AIActionManagerObsidian(plugin.app, {
+      plugin,
+      availableDecks: decks,
+      onClose: () => {
+        aiActionManagerModalInstance = null;
+      }
+    });
+
+    aiActionManagerModalInstance.open();
+  }
+
+  // 处理测试题生成，使用现有预览流程
   async function handleTestGenerate(actionId: string) {
     if (!currentCard || aiSplitInProgress) {
-      new Notice('当前没有可生成测试题的卡片');
+      new Notice(t('studyInterface.notices.noCardForTestGenerate'));
       return;
     }
 
@@ -4660,11 +5445,11 @@
       const action = allActions.find((a: AIAction) => a.id === actionId);
       
       if (!action || !action.testConfig) {
-        new Notice('找不到指定的测试题生成功能');
+        new Notice(t('studyInterface.notices.testGenerateActionNotFound'));
         return;
       }
 
-      new Notice('正在生成测试题...');
+      new Notice(t('studyInterface.notices.testGenerating'));
 
       // 2. 使用专用的AI测试题生成服务
       const { AITestGeneratorService } = await import('../../services/ai/AITestGeneratorService');
@@ -4687,14 +5472,14 @@
       }
 
       // 5. 转换为临时卡片数据（用于预览）
-      //  v2.2: 使用新的工具函数获取牌组ID和名称
-      const { primaryDeckId: testGenDeckId } = getCardDeckIds(card);
+      // 使用工具函数获取牌组 ID 和名称
+      const { primaryDeckId: testGenDeckId } = getCardDeckIds(card, decks);
       const targetTestDeckId = testGenDeckId || card.deckId;
       const targetTestDeck = decks.find(d => d.id === targetTestDeckId);
       const targetTestDeckName = targetTestDeck?.name;
       
       const tempChildCards: Card[] = response.generatedQuestions.map((question: any, index: number) => {
-        // 🆕 v2.2: 构建带有 we_decks 的 content
+        // 构建带有 we_decks 的 content
         const bodyContent = question.content || `${question.front}\n\n---div---\n\n${question.back}`;
         const contentWithMetadata = targetTestDeckName 
           ? createContentWithMetadata({ we_decks: [targetTestDeckName] }, bodyContent)
@@ -4751,21 +5536,22 @@
 
       // 6. 显示预览界面
       childCards = tempChildCards;
-      currentTestGenAction = action; // 🆕 保存当前使用的生成器配置
+      currentTestGenAction = action; // 保存当前使用的生成器配置
       showChildCardsOverlay = true;
-      new Notice(`成功生成${childCards.length}道测试题`);
+      new Notice(t('studyInterface.notices.testGenerateSuccess', { count: childCards.length }));
       
     } catch (error) {
       logger.error('[StudyInterface] 生成测试题失败:', error);
-      const errorMessage = error instanceof Error ? error.message : '生成失败';
-      new Notice(`生成失败: ${errorMessage}`);
+      new Notice(t('studyInterface.notices.testGenerateFailed', {
+        error: error instanceof Error ? error.message : t('study.view.unknownError')
+      }));
     } finally {
       aiSplitInProgress = false;
     }
   }
 
 
-  // 处理牌组切换（🆕 引用式牌组：多选 toggle）
+  // 处理牌组切换（引用式牌组：多选 toggle）
   async function handleChangeDeck(deckId: string) {
     if (!currentCard || isDeckChanging) {
       logger.debug('handleChangeDeck: 跳过 - 无当前卡片或正在切换中');
@@ -4776,13 +5562,13 @@
 
     try {
       if (!plugin?.referenceDeckService) {
-        new Notice('引用式牌组服务未初始化');
+        new Notice(t('studyInterface.notices.referenceDeckServiceUnavailable'));
         return;
       }
 
       const targetDeck = decks.find((d) => d.id === deckId);
       if (!targetDeck) {
-        new Notice('目标牌组不存在');
+        new Notice(t('studyInterface.notices.targetDeckNotFound'));
         return;
       }
 
@@ -4794,7 +5580,7 @@
       const isSelected = currentDeckIdSet.has(deckId);
 
       if (isSelected && currentDeckIdSet.size <= 1) {
-        new Notice('至少保留一个牌组');
+        new Notice(t('studyInterface.notices.keepAtLeastOneDeck'));
         return;
       }
 
@@ -4842,13 +5628,15 @@
       studyQueue = [...studyQueue];
       forceRefresh();
 
-      new Notice(isSelected ? `已从牌组移除：${targetDeck.name}` : `已添加到牌组：${targetDeck.name}`);
+      new Notice(isSelected
+        ? t('studyInterface.notices.removedFromDeck', { name: targetDeck.name })
+        : t('studyInterface.notices.addedToDeck', { name: targetDeck.name }));
     } catch (error) {
       logger.error('Error changing deck:', error);
       try {
-        new Notice('更换牌组时发生错误');
+        new Notice(t('studyInterface.notices.changeDeckError'));
       } catch {
-        alert('更换牌组时发生错误');
+        logger.warn('[StudyInterface] 更换牌组时发生错误');
       }
     } finally {
       isDeckChanging = false;
@@ -4891,6 +5679,33 @@
     
   }
 
+  // 切换卡片时重置提示状态
+  $effect(() => {
+    const _idx = currentCardIndex;
+    untrack(() => {
+      closeHintPanel();
+    });
+  });
+
+  // 提示面板改为页脚内置上弹层后，统一在当前视图上下文里处理外部点击关闭
+  $effect(() => {
+    const isVisible = hintVisible;
+
+    if (!isVisible || typeof document === 'undefined') {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      handleHintPointerDownOutside(event);
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown, true);
+
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+    };
+  });
+
   // 自动显示答案与快捷键绑定（编辑模态开启时暂停监听与自动计时）
   $effect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -4902,7 +5717,7 @@
   });
 
   // 高度自适应响应式监听
-  //  关键修复：移动端编辑模式下不调用 applyAdaptiveHeight，由 visualViewport 监听处理
+  // 移动端编辑模式下不调用 applyAdaptiveHeight，由 visualViewport 监听处理
   $effect(() => {
     // 监听影响高度的状态变化
     if (modalRef && (showEditModal !== undefined || showAnswer !== undefined || statsCollapsed !== undefined)) {
@@ -4927,69 +5742,21 @@
   });
 
   //  移动端编辑模式：监听 visualViewport 并设置容器高度
-  //  核心修复：让整个容器链使用 visualViewport.height 作为高度基准
+  // 让整个容器链使用 visualViewport.height 作为高度基准
   let mobileViewportHeight = $state<number | null>(null);
   let mobileViewportCleanup: (() => void) | null = null;
-  let mobileTopOffset = $state(0);
-  let mobileTopOffsetIntervalId: number | null = null;
-  let isKeyboardVisible = $state(false);
   
   //  Obsidian 移动端顶部栏高度（用于计算编辑器可用高度）
-  const OBSIDIAN_MOBILE_HEADER_HEIGHT = 44;
-
-  const getMobileTopOffset = (): number => {
-    try {
-      const topSelectors = [
-        '.mobile-navbar',
-        '.workspace-tab-header-container',
-        '.workspace-tab-header',
-        '.view-header',
-        '.titlebar',
-      ];
-
-      let top = 0;
-      for (const selector of topSelectors) {
-        const el = document.querySelector(selector) as HTMLElement | null;
-        if (!el) continue;
-        const rect = el.getBoundingClientRect();
-        if (rect.top < 200 && rect.bottom > 0) {
-          top = Math.max(top, rect.bottom);
-        }
-      }
-
-      if (top < 10) return 0;
-      if (!Number.isFinite(top)) return OBSIDIAN_MOBILE_HEADER_HEIGHT;
-      return Math.max(0, Math.min(160, top));
-    } catch {
-      return OBSIDIAN_MOBILE_HEADER_HEIGHT;
-    }
-  };
-  
   $effect(() => {
     // 只在移动端编辑模式下启用 visualViewport 监听
     if (Platform.isMobile && showEditModal) {
       const viewport = window.visualViewport;
       if (viewport) {
         const updateViewportHeight = () => {
-          const topOffset = getMobileTopOffset();
-          mobileTopOffset = topOffset;
-          const availableHeight = viewport.height - topOffset;
-          mobileViewportHeight = Math.max(200, availableHeight); // 确保最小高度
-
-          const keyboardHeight = Math.max(0, window.innerHeight - viewport.height);
-          isKeyboardVisible = keyboardHeight > 150;
-
-          if (modalRef) {
-            if (isKeyboardVisible) {
-              modalRef.classList.add('keyboard-visible');
-            } else {
-              modalRef.classList.remove('keyboard-visible');
-            }
-          }
+          mobileViewportHeight = Math.max(200, viewport.height); // 确保最小高度
 
           logger.debug('[StudyInterface] 📱 visualViewport 高度更新:', {
             viewportHeight: viewport.height,
-            headerOffset: topOffset,
             availableHeight: mobileViewportHeight
           });
         };
@@ -5001,34 +5768,10 @@
         viewport.addEventListener('resize', updateViewportHeight);
         viewport.addEventListener('scroll', updateViewportHeight);
 
-        const startTopOffsetSync = () => {
-          if (mobileTopOffsetIntervalId) {
-            window.clearInterval(mobileTopOffsetIntervalId);
-          }
-
-          mobileTopOffsetIntervalId = window.setInterval(() => {
-            if (!(Platform.isMobile && showEditModal)) return;
-            try {
-              const nextTop = getMobileTopOffset();
-              if (Math.abs((mobileTopOffset ?? 0) - nextTop) >= 1) {
-                mobileTopOffset = nextTop;
-                const availableHeight = viewport.height - nextTop;
-                mobileViewportHeight = Math.max(200, availableHeight);
-              }
-            } catch {}
-          }, 100);
-        };
-
-        startTopOffsetSync();
-        
         // 保存清理函数
         mobileViewportCleanup = () => {
           viewport.removeEventListener('resize', updateViewportHeight);
           viewport.removeEventListener('scroll', updateViewportHeight);
-          if (mobileTopOffsetIntervalId) {
-            window.clearInterval(mobileTopOffsetIntervalId);
-            mobileTopOffsetIntervalId = null;
-          }
         };
       }
     } else {
@@ -5038,12 +5781,6 @@
         mobileViewportCleanup = null;
       }
       mobileViewportHeight = null;
-      mobileTopOffset = 0;
-      isKeyboardVisible = false;
-
-      if (modalRef) {
-        modalRef.classList.remove('keyboard-visible');
-      }
     }
     
     // 返回清理函数
@@ -5184,19 +5921,17 @@
     }
   }
   
-  // 🆕 保存视图偏好到 plugin.settings（使用 Obsidian 官方持久化方案）
+  // 保存视图偏好到 plugin.settings（使用 Obsidian 官方持久化方案）
   async function saveViewPreferences() {
     try {
-      if (!plugin.settings.studyInterfaceViewPreferences) {
-        plugin.settings.studyInterfaceViewPreferences = {} as any;
-      }
-      
-      plugin.settings.studyInterfaceViewPreferences!.showSidebar = showSidebar;
-      plugin.settings.studyInterfaceViewPreferences!.sidebarCompactModeSetting = sidebarCompactModeSetting;
-      plugin.settings.studyInterfaceViewPreferences!.statsCollapsed = statsCollapsed;
-      
-      await plugin.saveSettings();
-      logger.debug('✅ 学习界面视图偏好已保存到 plugin.settings');
+      await plugin.saveStudyInterfaceViewPreferences({
+        showSidebar,
+        sidebarCompactModeSetting,
+        statsCollapsed,
+        cardOrder,
+        sidebarPosition: viewPrefs.sidebarPosition ?? 'right'
+      });
+      logger.debug('✅ 学习界面视图偏好已保存到插件本地 state/');
     } catch (error) {
       logger.error('[StudyInterface] ❌ 保存视图偏好失败:', error);
     }
@@ -5226,6 +5961,29 @@
     }
   }
 
+  async function handleClozeModeSwitchButtonToggle(enabled: boolean) {
+    showClozeModeSwitchButton = enabled;
+    plugin.settings.showClozeModeSwitchButton = enabled;
+    try {
+      await plugin.saveSettings();
+      logger.debug('作答方式切换按钮显示设置已保存:', enabled);
+    } catch (error) {
+      logger.error('[StudyInterface] 保存作答方式切换按钮显示设置失败:', error);
+    }
+  }
+
+  // 处理超时自动暂停计时设置变化
+  async function handleTimerAutoPauseChange(seconds: number) {
+    timerAutoPauseSeconds = seconds;
+    plugin.settings.timerAutoPauseSeconds = seconds;
+    try {
+      await plugin.saveSettings();
+      logger.debug('超时自动暂停计时设置已保存:', seconds);
+    } catch (error) {
+      logger.error('[StudyInterface] 保存超时自动暂停计时设置失败:', error);
+    }
+  }
+
   //  确认删除卡片
   async function confirmDeleteCard() {
     showDeleteConfirmModal = false;
@@ -5238,27 +5996,25 @@
     deleteConfirmCardId = '';
   }
 
-  // 🆕 处理卡片学习顺序变化
+  // 处理卡片学习顺序变化
   async function handleCardOrderChange(order: 'sequential' | 'random') {
     cardOrder = order;
-    if (!plugin.settings.studyInterfaceViewPreferences) {
-      plugin.settings.studyInterfaceViewPreferences = {
-        showSidebar: true,
-        sidebarCompactModeSetting: 'auto',
-        statsCollapsed: true,
-        cardOrder: 'sequential',
-        sidebarPosition: 'right'
-      };
-    }
-    plugin.settings.studyInterfaceViewPreferences.cardOrder = order;
     try {
-      await plugin.saveSettings();
-      const orderLabel = order === 'sequential' ? '正序学习' : '乱序学习';
-      new Notice(`卡片顺序已切换为「${orderLabel}」，将在下次重新生成学习会话和队列时生效`);
+      await plugin.saveStudyInterfaceViewPreferences({
+        showSidebar,
+        sidebarCompactModeSetting,
+        statsCollapsed,
+        cardOrder: order,
+        sidebarPosition: viewPrefs.sidebarPosition ?? 'right'
+      });
+      const orderLabel = order === 'sequential'
+        ? t('studyInterface.notices.cardOrderSequential')
+        : t('studyInterface.notices.cardOrderRandom');
+      new Notice(t('studyInterface.notices.cardOrderChanged', { orderLabel }));
       logger.debug('卡片学习顺序设置已保存:', order);
     } catch (error) {
       logger.error('[StudyInterface] 保存卡片学习顺序设置失败:', error);
-      new Notice('卡片顺序切换失败，请重试');
+      new Notice(t('studyInterface.notices.cardOrderChangeFailed'));
     }
   }
   
@@ -5271,15 +6027,15 @@
       // 固定紧凑模式：仅显示图标
       sidebarCompactMode = true;
       lastCheckResult = true;
-      new Notice('侧边栏已切换为固定紧凑模式（仅显示图标）');
+      new Notice(t('studyInterface.notices.sidebarFixedCompact'));
     } else {
       // 自动调整模式：根据内容动态检测
-      new Notice('侧边栏已切换为自动调整模式');
+      new Notice(t('studyInterface.notices.sidebarAutoMode'));
       
-      //  修复：强制重置缓存，确保重新评估状态
+      // 强制重置缓存，确保重新评估状态
       lastCheckResult = null;
       
-      //  修复：立即执行一次检测并更新状态
+      // 立即执行一次检测并更新状态
       setTimeout(() => {
         performScrollCheck();
       }, 100);
@@ -5331,17 +6087,22 @@
     if (!currentCard?.sourceFile) return;
     
     // TODO: 打开源笔记
-    new Notice(`打开笔记: ${currentCard.sourceFile}`);
+    new Notice(t('studyInterface.notices.openingNote', { path: currentCard.sourceFile }));
   }
   
   /**
    *  打开源文本块（跳转到卡片来源位置）
-   *  v2.1.1: 使用 Obsidian 原生 openLinkText API，支持仅文件名格式
-   *  v2.1.2: 添加文件存在性检查，防止创建新文档
+   * 使用 Obsidian 原生 openLinkText API，支持仅文件名格式
+   * 添加文件存在性检查，防止创建新文档
    */
   async function handleOpenSourceBlock() {
-    if (!currentCard?.sourceFile) {
-      new Notice('该卡片没有关联的源文件');
+    const content = currentCard?.content || '';
+    const parsedSource = parseSourceInfo(content);
+    const epubSource = parseEpubSourceInfo(content);
+    const sourceFile = epubSource.sourceFile || parsedSource.sourceFile || currentCard?.sourceFile;
+
+    if (!sourceFile) {
+      new Notice(t('studyInterface.notices.noSourceFile'));
       return;
     }
     
@@ -5349,12 +6110,12 @@
       const app = plugin.app;
       const contextPath = app.workspace.getActiveFile()?.path ?? '';
       // 移除 .md 后缀，使用 wikilink 格式
-      const docName = currentCard.sourceFile.replace(/\.md$/, '');
+      const docName = sourceFile.replace(/\.md$/, '');
       
       // 验证文件是否存在
-      const file = app.metadataCache.getFirstLinkpathDest(docName, contextPath);
+      const file = app.vault.getAbstractFileByPath(sourceFile) ?? app.metadataCache.getFirstLinkpathDest(docName, contextPath);
       if (!file) {
-        new Notice('源文档不存在或已删除');
+        new Notice(t('studyInterface.notices.sourceDocMissing'));
         return;
       }
       
@@ -5362,29 +6123,29 @@
       if (file.path.toLowerCase().endsWith('.epub')) {
         const { EpubLinkService } = await import('../../services/epub/EpubLinkService');
         const linkService = new EpubLinkService(app);
-        await linkService.navigateToEpubLocation(file.path, '', '');
-        new Notice('已打开EPUB源文档');
+        await linkService.navigateToEpubLocation(file.path, epubSource.cfi || '', epubSource.text || '');
+        new Notice(t('studyInterface.notices.epubSourceOpened'));
         return;
       }
       
-      const blockId = (currentCard as any).sourceBlock?.replace(/^\^/, '');
+      const blockId = (parsedSource.sourceBlock || (currentCard as any).sourceBlock)?.replace(/^\^/, '');
       
       // 构建 wikilink 格式：文档名#^blockId
       const linkText = blockId ? `${docName}#^${blockId}` : docName;
       
       // 使用 Obsidian 原生 API 跳转，自动处理文件查找和块定位
-      app.workspace.openLinkText(linkText, contextPath, false);
+      await openLinkWithExistingLeaf(app, linkText, contextPath, { focus: true });
       
-      new Notice(`已打开: ${currentCard.sourceFile}`);
+      new Notice(t('studyInterface.notices.sourceOpened', { path: sourceFile }));
     } catch (error) {
       logger.error('打开源文件失败:', error);
-      new Notice('打开源文件失败');
+      new Notice(t('studyInterface.notices.sourceOpenFailed'));
     }
   }
-  
+
   function handleOpenGraphLeaf() {
     // TODO: 实现图谱打开逻辑
-    new Notice('图谱功能开发中...');
+    new Notice(t('studyInterface.notices.graphInDevelopment'));
   }
   
   onMount(() => {
@@ -5396,7 +6157,7 @@
     }
 
     // 添加窗口大小变化监听（同时触发滚动检测）
-    //  关键修复：移动端编辑模式下不调用 applyAdaptiveHeight，避免与 CardEditorContainer 的 visualViewport 高度计算冲突
+    // 移动端编辑模式下不调用 applyAdaptiveHeight，避免与 CardEditorContainer 的 visualViewport 高度计算冲突
     const handleResize = () => {
       //  移动端编辑模式：跳过高度调整，由 CardEditorContainer 的 visualViewport 监听处理
       if (Platform.isMobile && showEditModal) {
@@ -5466,7 +6227,14 @@
     };
   });
   onDestroy(() => {
+    stopHintResizeInteraction();
     document.removeEventListener('focus', trapFocus, true);
+
+    // 清理提示渲染组件
+    if (hintRenderComponent) {
+      hintRenderComponent.unload();
+      hintRenderComponent = null;
+    }
 
     //  移动端：移除学习界面激活类
     document.body.classList.remove('weave-study-active');
@@ -5490,7 +6258,7 @@
       countdownTimerId = null;
     }
 
-    // 🆕 清理学习会话编辑器资源
+    // 清理学习会话编辑器资源
     if (editorPoolManager) {
       logger.debug(' 🧹 清理学习会话编辑器资源');
       
@@ -5503,6 +6271,11 @@
       sessionManager.dispose(currentSessionId);
       logger.debug(' 会话已清理:', currentSessionId);
     }
+
+    if (aiActionManagerModalInstance) {
+      aiActionManagerModalInstance.close();
+      aiActionManagerModalInstance = null;
+    }
   });
 
   // setupBlockLinkHandlers已提取到utils/study/studyInterfaceUtils.ts
@@ -5512,14 +6285,19 @@
 <!--  全局键盘监听 - 修复 Obsidian 快捷键阻塞问题 -->
 <!-- 参照 ResizableModal.svelte 的成功实现，在 window 对象上监听键盘事件 -->
 <!-- 这样可以避免被 aria-modal="true" 的元素阻塞事件传播 -->
-<svelte:window onkeydown={handleGlobalKeydown} />
+<svelte:window
+  onkeydown={handleGlobalKeydown}
+  onpointermove={handleHintResizePointerMove}
+  onpointerup={handleHintResizePointerUp}
+  onpointercancel={handleHintResizePointerUp}
+/>
 
 <div
   class="study-interface-overlay"
   class:mobile-edit-mode={Platform.isMobile && showEditModal}
   role="presentation"
   style={Platform.isMobile && showEditModal
-    ? `${mobileViewportHeight ? `height: ${mobileViewportHeight}px !important; --weave-viewport-height: ${mobileViewportHeight}px;` : ''} --weave-top-offset: ${Number.isFinite(mobileTopOffset) ? mobileTopOffset : OBSIDIAN_MOBILE_HEADER_HEIGHT}px;`
+    ? `${mobileViewportHeight ? `height: ${mobileViewportHeight}px !important; --weave-viewport-height: ${mobileViewportHeight}px;` : ''}`
     : ''}
   ondrop={(e) => e.preventDefault()}
   ondragover={(e) => e.preventDefault()}
@@ -5560,7 +6338,6 @@
         if (!sourceInfoCollapsed) statsCollapsed = true;
       }}
       onToggleSidebar={() => showSidebar = !showSidebar}
-      {onClose}
     />
 
     <!-- 主要内容区域 -->
@@ -5604,16 +6381,16 @@
           {#if !statsCollapsed}
             {#if isPremium}
               <StatsCards card={currentCard} {fsrs} />
-            {:else}
+            {:else if showPremiumFeaturesPreview}
               <div class="stats-locked-hint">
                 <div class="stats-locked-content">
                   <span class="lock-icon">[P]</span>
-                  <span class="lock-text">统计情况详情</span>
+                  <span class="lock-text">{t('studyInterface.labels.statsDetails')}</span>
                   <button 
                     class="unlock-btn" 
                     onclick={() => showActivationPrompt = true}
                   >
-                    激活查看
+                    {t('studyInterface.labels.activateToView')}
                   </button>
                 </div>
               </div>
@@ -5635,18 +6412,11 @@
                   dataStorage={dataStorage}
                   {modalRef}
                   {statsCollapsed}
-                  keyboardVisible={isKeyboardVisible}
-                  onKeyboardStateChange={(isVisible) => {
-                    //  键盘状态变化时，可选禁用父容器滚动
-                    if (modalRef) {
-                      if (isVisible) {
-                        modalRef.classList.add('keyboard-visible');
-                      } else {
-                        modalRef.classList.remove('keyboard-visible');
-                      }
-                    }
-                  }}
                   onEditComplete={async (updatedCard) => {
+                    const previousStudyCard = currentCard;
+                    const previousEditTarget = editTargetCard;
+                    let persistedCard = updatedCard;
+
                     try {
                       const saveResult = await dataStorage.saveCard(updatedCard);
                       if (!saveResult.success) {
@@ -5655,38 +6425,28 @@
                           return;
                         }
                         logger.error('[StudyInterface] 卡片保存失败:', saveResult.error);
-                        new Notice('保存失败: ' + (saveResult.error || '未知错误'));
+                        new Notice(t('study.view.saveFailed', {
+                          error: saveResult.error || t('study.view.unknownError')
+                        }));
                         return;
                       }
-                      logger.debug('[StudyInterface] 卡片已保存到数据库:', updatedCard.uuid);
+                      persistedCard = saveResult.data || updatedCard;
+                      logger.debug('[StudyInterface] 卡片已保存到数据库:', persistedCard.uuid);
                     } catch (error) {
                       logger.error('[StudyInterface] 卡片保存异常:', error);
-                      new Notice('保存失败: ' + (error instanceof Error ? error.message : '未知错误'));
+                      new Notice(t('study.view.saveFailed', {
+                        error: error instanceof Error ? error.message : t('study.view.unknownError')
+                      }));
                       return;
                     }
                     
-                    // 同步更新 cards 和 studyQueue（内存缓存）
-                    const cardUuid = updatedCard.uuid;
-                    
-                    const cardsIndex = cards.findIndex(c => c.uuid === cardUuid);
-                    if (cardsIndex !== -1) {
-                      cards[cardsIndex] = updatedCard;
-                      cards = [...cards];
-                    }
-                    
-                    const queueIndex = studyQueue.findIndex(c => c.uuid === cardUuid);
-                    if (queueIndex !== -1) {
-                      studyQueue[queueIndex] = updatedCard;
-                      studyQueue = [...studyQueue];
-                    }
-                    
-                    // 如果编辑的是父卡片，同步子卡片content
-                    if (editTargetCard && currentCard && isProgressiveClozeChild(currentCard) &&
-                        editTargetCard.uuid !== currentCard.uuid) {
-                      const childIdx = studyQueue.findIndex(c => c.uuid === currentCard.uuid);
-                      if (childIdx !== -1) {
-                        studyQueue[childIdx] = { ...studyQueue[childIdx], content: updatedCard.content };
-                        studyQueue = [...studyQueue];
+                    notifyCardTypeChange(previousEditTarget, persistedCard);
+
+                    if (previousStudyCard) {
+                      if (isProgressiveEditContext(persistedCard, previousStudyCard, previousEditTarget)) {
+                        await syncStudyQueueAfterProgressiveEdit(persistedCard, previousStudyCard, previousEditTarget);
+                      } else {
+                        syncStudyQueueAfterRegularEdit(persistedCard, previousStudyCard);
                       }
                     }
                     
@@ -5696,7 +6456,6 @@
                     isClozeMode = false;
                   }}
                   onEditCancel={handleEditorCancel}
-                  onToggleCloze={handleToggleCloze}
                 />
               {:else}
             <!-- 新的预览系统 - 统一处理所有题型 -->
@@ -5716,6 +6475,8 @@
               onAddToErrorBook={handleAddToErrorBook}
               onRemoveFromErrorBook={handleRemoveFromErrorBook}
               {currentResponseTime}
+              onClozeModeChange={handlePreviewClozeModeChange}
+              isClozeModeSaving={isClozeModeSaving}
             />
 
           {/if}
@@ -5753,9 +6514,9 @@
         />
       {/if}
 
-      <!-- 🆕 卡片详细信息模态窗 - 改用全局方法 plugin.openViewCardModal() -->
+      <!-- 卡片详细信息模态窗由全局方法 plugin.openViewCardModal() 处理 -->
 
-      <!-- 🆕 卡片数据结构调试模态窗 -->
+      <!-- 卡片数据结构调试模态窗 -->
       {#if currentCard && showCardDebug}
         <CardDebugModal
           card={currentCard}
@@ -5765,29 +6526,29 @@
 
       <!--  删除确认弹窗 -->
       {#if showDeleteConfirmModal}
-        <div class="modal-backdrop" onclick={cancelDeleteCard} role="button" tabindex="0">
-          <div class="delete-confirm-modal" onclick={(e) => {
+        <div class="modal-backdrop" onclick={(event) => closeOnBackdropClick(event, cancelDeleteCard)} onkeydown={(event) => closeOnEscape(event, cancelDeleteCard)} role="button" tabindex="0">
+          <div class="delete-confirm-modal" role="dialog" aria-modal="true" tabindex="-1">
             // Svelte 5: 检查是否点击了模态框本身
-            if (e.target === e.currentTarget) e.preventDefault();
-          }} role="dialog" aria-modal="true" tabindex="-1">
+            
+          
             <div class="modal-header">
-              <h3>确认删除卡片</h3>
+              <h3>{t('studyInterface.labels.confirmDeleteCard')}</h3>
               <button class="close-btn" onclick={cancelDeleteCard}>
                 <EnhancedIcon name="times" size="14" />
               </button>
             </div>
             
             <div class="modal-content">
-              <p>确定要删除卡片 <strong>"{deleteConfirmCardId}..."</strong> 吗？</p>
-              <p class="warning-text">此操作无法撤销</p>
+              <p>{t('studyInterface.labels.confirmDeleteMessage', { cardId: deleteConfirmCardId })}</p>
+              <p class="warning-text">{t('studyInterface.labels.deleteIrreversible')}</p>
             </div>
             
             <div class="modal-footer">
               <button class="btn btn-secondary" onclick={cancelDeleteCard}>
-                取消
+                {t('common.cancel')}
               </button>
               <button class="btn btn-danger" onclick={confirmDeleteCard}>
-                确认删除
+                {t('common.confirmDelete')}
               </button>
             </div>
           </div>
@@ -5797,29 +6558,105 @@
       <!-- 底部功能栏 - 移到Grid内部 -->
       {#if currentCard && !showEditModal}
         <div class="study-footer">
-          <!-- 🆕 撤销/预览按钮在评分区域上方居中显示（仅图标） -->
-          {#if showAnswer}
-            <div class="footer-top-controls footer-top-controls-centered">
-              <!-- 返回预览按钮 -->
-              <button 
-                class="compact-control-btn return-btn"
-                onclick={undoShowAnswer}
-                title="返回预览状态（重新隐藏答案）"
-                aria-label="返回预览状态"
-              >
-                <EnhancedIcon name="arrow-left" size="18" />
-              </button>
-              
-              <!-- 撤销按钮 -->
+          <!-- 提示胶囊（仅在未显示答案且有提示内容时显示，左对齐） -->
+          {#if !showAnswer && currentHintText}
+            <div class="hint-area">
               <button
-                class="compact-control-btn undo-btn"
-                class:disabled={undoCount === 0}
-                onclick={undoCount > 0 ? handleUndoReview : undefined}
-                title={undoCount > 0 ? "撤销上一次评分" : "没有可撤销的操作"}
-                disabled={undoCount === 0}
+                bind:this={hintCapsuleElement}
+                type="button"
+                class="hint-capsule"
+                class:hint-active={hintVisible}
+                class:hint-used-up={hintUsesRemaining <= 0}
+                onclick={toggleHint}
+                title={hintUsesRemaining > 0 
+                  ? t('studyInterface.hint.usesRemaining').replace('{n}', String(hintUsesRemaining))
+                  : t('studyInterface.hint.usedUp')}
               >
-                <EnhancedIcon name="undo" size="18" />
+                <span class="hint-capsule-icon">?</span>
+                <span class="hint-capsule-label">{t('studyInterface.hint.showHint')}</span>
+                <span class="hint-capsule-count">{hintUsesRemaining}</span>
               </button>
+
+              {#if hintVisible}
+                <div class="hint-floating-panel">
+                  <div
+                    bind:this={hintPanelShellElement}
+                    class="hint-floating-shell"
+                    style={`width: ${hintPanelWidth}px; height: ${hintPanelHeight}px;`}
+                    role="dialog"
+                    aria-label="提示浮窗"
+                  >
+                    <button
+                      bind:this={hintResizeHandleElement}
+                      type="button"
+                      class="hint-resize-handle"
+                      class:active={hintResizeActive}
+                      onpointerdown={handleHintResizePointerDown}
+                      aria-label="从右上角调整提示浮窗大小"
+                      title="拖动右上角可调整提示浮窗大小"
+                    >
+                      <span class="hint-resize-handle-icon" aria-hidden="true"></span>
+                    </button>
+                    <div class="hint-floating-content" bind:this={hintRenderContainer}></div>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/if}
+
+          <!-- 底部左侧工具行：未显示答案时显示挖空模式切换；显示答案后显示返回预览/撤销 -->
+          {#if showStudyClozeModeToggle || showAnswer}
+            <div class="footer-top-controls">
+              {#if showStudyClozeModeToggle}
+                <div class="footer-cloze-mode-switch" role="group" aria-label="挖空模式切换">
+                  <span class="cloze-mode-label">作答方式</span>
+                  <div class="cloze-mode-segmented">
+                    <button
+                      type="button"
+                      class="cloze-mode-btn"
+                      class:active={currentStudyClozeMode === 'reveal'}
+                      onclick={() => handlePreviewClozeModeChange('reveal')}
+                      disabled={isClozeModeSaving || currentStudyClozeMode === 'reveal'}
+                      aria-pressed={currentStudyClozeMode === 'reveal'}
+                    >
+                      显示答案
+                    </button>
+                    <button
+                      type="button"
+                      class="cloze-mode-btn"
+                      class:active={currentStudyClozeMode === 'input'}
+                      onclick={() => handlePreviewClozeModeChange('input')}
+                      disabled={isClozeModeSaving || currentStudyClozeMode === 'input'}
+                      aria-pressed={currentStudyClozeMode === 'input'}
+                    >
+                      输入作答
+                    </button>
+                  </div>
+                </div>
+              {/if}
+
+              {#if showAnswer}
+                <!-- 返回预览按钮 -->
+                <button 
+                  class="compact-control-btn return-btn"
+                  onclick={undoShowAnswer}
+                  title={t('studyInterface.labels.returnToPreview')}
+                  aria-label={t('studyInterface.labels.returnToPreviewAria')}
+                >
+                  <EnhancedIcon name="arrow-left" size="18" />
+                </button>
+                
+                <!-- 撤销按钮 -->
+                <button
+                  class="compact-control-btn undo-btn"
+                  class:disabled={undoCount === 0}
+                  onclick={undoCount > 0 ? handleUndoReview : undefined}
+                  title={undoCount > 0 ? t('studyInterface.notices.undoLastRating') : t('studyInterface.notices.nothingToUndo')}
+                  disabled={undoCount === 0}
+                >
+                  <EnhancedIcon name="undo" size="18" />
+                </button>
+              {/if}
             </div>
           {/if}
           
@@ -5835,6 +6672,95 @@
           />
         </div>
       {/if}
+      <!-- 提醒设置浮窗 -->
+      <FloatingMenu
+        bind:show={showReminderModal}
+        anchor={reminderAnchorElement}
+        placement="left-start"
+        onClose={() => showReminderModal = false}
+        class="study-side-panel-menu"
+      >
+        {#snippet children()}
+          <div class="study-side-panel reminder-modal" role="dialog" aria-modal="true" tabindex="-1">
+            <div class="modal-header">
+              <h3>{t('studyInterface.labels.setReminder')}</h3>
+              <button class="modal-close" onclick={() => showReminderModal = false}>×</button>
+            </div>
+            <div class="modal-body">
+              <p class="modal-description">{t('studyInterface.labels.reminderDescription')}</p>
+              <div class="form-group">
+                <label for="review-date">{t('studyInterface.labels.reviewDate')}</label>
+                <input id="review-date" type="date" bind:value={customReviewDate} class="date-input" />
+              </div>
+              <div class="form-group">
+                <label for="review-time">{t('studyInterface.labels.reviewTime')}</label>
+                <input id="review-time" type="time" bind:value={customReviewTime} class="time-input" />
+              </div>
+              <div class="warning-message">
+                <EnhancedIcon name="info" size="16" />
+                <span>{t('studyInterface.labels.reminderNotice')}</span>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn-secondary" onclick={() => showReminderModal = false}>{t('settings.actions.cancel')}</button>
+              <button class="btn-primary" onclick={confirmSetReminder}>{t('studyInterface.labels.confirmSet')}</button>
+            </div>
+          </div>
+        {/snippet}
+      </FloatingMenu>
+
+      <!-- 优先级设置浮窗 -->
+      <FloatingMenu
+        bind:show={showPriorityModal}
+        anchor={priorityAnchorElement}
+        placement="left-start"
+        onClose={() => showPriorityModal = false}
+        class="study-side-panel-menu"
+      >
+        {#snippet children()}
+          <div class="study-side-panel priority-modal" role="dialog" aria-modal="true" tabindex="-1">
+            <div class="modal-header">
+              <h3>{t('studyInterface.labels.setPriority')}</h3>
+              <button class="modal-close" onclick={() => showPriorityModal = false}>×</button>
+            </div>
+            <div class="modal-body">
+              <p class="modal-description">{t('studyInterface.labels.priorityDescription')}</p>
+              <div class="priority-options">
+                {#each [1, 2, 3, 4] as priority}
+                  <button
+                    class="priority-option"
+                    class:selected={selectedPriority === priority}
+                    onclick={() => { selectedPriority = priority; }}
+                  >
+                    <div class="priority-stars">
+                      {#each Array(priority) as _}
+                        <EnhancedIcon name="starFilled" size="16" />
+                      {/each}
+                      {#each Array(4 - priority) as _}
+                        <EnhancedIcon name="star" size="16" />
+                      {/each}
+                    </div>
+                    <span class="priority-label">
+                      {[
+                        '',
+                        t('study.priority.low'),
+                        t('study.priority.medium'),
+                        t('study.priority.high'),
+                        t('study.priority.urgent')
+                      ][priority]}
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button class="btn-secondary" onclick={() => showPriorityModal = false}>{t('settings.actions.cancel')}</button>
+              <button class="btn-primary" onclick={confirmChangePriority}>{t('studyInterface.labels.confirmSet')}</button>
+            </div>
+          </div>
+        {/snippet}
+      </FloatingMenu>
+
       </div><!-- 关闭 main-study-area -->
 
       <!-- 右侧垂直工具栏 -->
@@ -5856,12 +6782,17 @@
             onRemoveFromDeck={plugin?.referenceDeckService ? handleRemoveFromDeck : undefined}
             onSetReminder={handleSetReminder}
             onChangePriority={handleChangePriority}
+            onReminderAnchorChange={(element) => reminderAnchorElement = element}
+            onPriorityAnchorChange={(element) => priorityAnchorElement = element}
+            onPanelOpen={() => { showReminderModal = false; showPriorityModal = false; }}
             onRecycleCard={suspendCurrentCard}
             onChangeDeck={handleChangeDeck}
             {enableDirectDelete}
             onDirectDeleteToggle={handleDirectDeleteToggle}
             {showTutorialButton}
             onTutorialButtonToggle={handleTutorialButtonToggle}
+            {showClozeModeSwitchButton}
+            onClozeModeSwitchButtonToggle={handleClozeModeSwitchButtonToggle}
             {cardOrder}
             onCardOrderChange={handleCardOrderChange}
             onOpenPlainEditor={() => {
@@ -5871,11 +6802,7 @@
             onAIFormatCustom={handleAIFormatCustom}
             onTestGenerate={handleTestGenerate}
             onSplitCard={(actionId) => handleAISplit(actionId, 0)}
-            onManageFormatActions={() => {
-              logger.debug('触发管理功能，当前showFormatManager:', showFormatManager);
-              showFormatManager = true;
-              logger.debug('设置showFormatManager为true:', showFormatManager);
-            }}
+            onManageFormatActions={openAIActionManagerWithObsidianAPI}
             onOpenDetailedView={handleOpenViewCardModal}
             onOpenCardDebug={handleOpenCardDebug}
             {autoPlayMedia}
@@ -5887,6 +6814,10 @@
             onGraphLinkToggle={handleGraphLinkToggle}
             onGraphLeafChange={handleGraphLeafChange}
             {isPremium}
+            {timerAutoPauseSeconds}
+            onTimerAutoPauseChange={handleTimerAutoPauseChange}
+            hintMaxUses={hintMaxUsesPerSession}
+            onHintMaxUsesChange={handleHintMaxUsesChange}
           />
         </div><!-- 关闭 sidebar-content -->
       {/if}
@@ -5918,7 +6849,7 @@
       onAIFormatCustom={handleAIFormatCustom}
       onTestGenerate={handleTestGenerate}
       onSplitCard={(actionId) => handleAISplit(actionId, 0)}
-      onOpenAIConfig={() => showFormatManager = true}
+      onOpenAIConfig={openAIActionManagerWithObsidianAPI}
       onGraphLinkToggle={handleGraphLinkToggle}
       onOpenDetailedView={handleOpenViewCardModal}
       onOpenSourceBlock={handleOpenSourceBlock}
@@ -5929,14 +6860,13 @@
 
 <!-- 模板选择列表（锚定到功能键左侧展开） -->
 {#if showTemplateList}
-  <div class="menu-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={handleCloseTemplateList}>
+  <div class="menu-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={(event) => closeOnBackdropClick(event, handleCloseTemplateList)} onkeydown={(event) => closeOnEscape(event, handleCloseTemplateList)}>
     <div
       class="template-menu"
       role="menu"
       tabindex="0"
       bind:this={templateMenuEl}
       style={`top:${templateMenuTop}px; left:${templateMenuLeft}px;`}
-      onclick={(e) => e.stopPropagation()}
       onkeydown={(_e) => {
         // 其他键不阻止传播，让编辑器接收 Obsidian 快捷键
       }}
@@ -5953,7 +6883,7 @@
             </div>
           {/each}
         {:else}
-          <div class="no-templates-message">未找到可用模板</div>
+          <div class="no-templates-message">{t('studyInterface.labels.noTemplates')}</div>
         {/if}
       </div>
     </div>
@@ -5963,111 +6893,6 @@
 
 
 
-<!-- 提醒设置模态窗 -->
-{#if showReminderModal}
-  <div class="modal-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={() => showReminderModal = false}>
-    <div class="reminder-modal" role="button" tabindex="0" onclick={(e) => e.stopPropagation()} onkeydown={(_e) => {
-      // 其他键不阻止传播，让编辑器接收 Obsidian 快捷键
-    }}>
-      <div class="modal-header">
-        <h3>设置复习提醒</h3>
-        <button class="modal-close" onclick={() => showReminderModal = false}>×</button>
-      </div>
-
-      <div class="modal-body">
-        <p class="modal-description">为当前卡片自定义下次复习时间：</p>
-
-        <div class="form-group">
-          <label for="review-date">复习日期：</label>
-          <input
-            id="review-date"
-            type="date"
-            bind:value={customReviewDate}
-            class="date-input"
-          />
-        </div>
-
-        <div class="form-group">
-          <label for="review-time">复习时间：</label>
-          <input
-            id="review-time"
-            type="time"
-            bind:value={customReviewTime}
-            class="time-input"
-          />
-        </div>
-
-        <div class="warning-message">
-          <EnhancedIcon name="info" size="16" />
-          <span>注意：自定义复习时间将覆盖算法计算的时间</span>
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn-secondary" onclick={() => showReminderModal = false}>
-          取消
-        </button>
-        <button class="btn-primary" onclick={confirmSetReminder}>
-          确认设置
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
-
-<!-- 优先级设置模态窗 -->
-{#if showPriorityModal}
-  <div class="modal-overlay" role="dialog" aria-modal="true" tabindex="-1" onclick={() => showPriorityModal = false}>
-    <div class="priority-modal" role="button" tabindex="0" onclick={(e) => e.stopPropagation()} onkeydown={(_e) => {
-      // 其他键不阻止传播，让编辑器接收 Obsidian 快捷键
-    }}>
-      <div class="modal-header">
-        <h3>设置优先级</h3>
-        <button class="modal-close" onclick={() => showPriorityModal = false}>×</button>
-      </div>
-
-      <div class="modal-body">
-        <p class="modal-description">选择当前卡片的重要程度：</p>
-
-        <div class="priority-options">
-          {#each [1, 2, 3, 4] as priority}
-            <button
-              class="priority-option"
-              class:selected={selectedPriority === priority}
-              onclick={(e) => {
-                e.stopPropagation();
-                selectedPriority = priority;
-              }}
-            >
-              <div class="priority-stars">
-                {#each Array(priority) as _}
-                  <EnhancedIcon name="starFilled" size="16" />
-                {/each}
-                {#each Array(4 - priority) as _}
-                  <EnhancedIcon name="star" size="16" />
-                {/each}
-              </div>
-              <span class="priority-label">
-                {['', '低优先级', '中优先级', '高优先级', '紧急'][priority]}
-              </span>
-            </button>
-          {/each}
-        </div>
-      </div>
-
-      <div class="modal-footer">
-        <button class="btn-secondary" onclick={() => showPriorityModal = false}>
-          取消
-        </button>
-        <button class="btn-primary" onclick={confirmChangePriority}>
-          确认设置
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
-
-
 <!--  激活提示 -->
 <ActivationPrompt
   featureId={PREMIUM_FEATURES.DECK_ANALYTICS}
@@ -6075,7 +6900,7 @@
   onClose={() => showActivationPrompt = false}
 />
 
-<!-- 🆕 AI格式化预览对比 -->
+<!-- AI 格式化预览对比 -->
 {#if showFormatPreview && formatPreviewResult}
   <FormatPreviewModal
     show={showFormatPreview}
@@ -6086,16 +6911,6 @@
       showFormatPreview = false;
       formatPreviewResult = null;
     }}
-  />
-{/if}
-
-<!-- 🆕 AI功能配置管理（格式化+测试题生成） -->
-{#if showFormatManager}
-  <AIActionManager
-    show={showFormatManager}
-    plugin={plugin}
-    availableDecks={decks}
-    onClose={() => showFormatManager = false}
   />
 {/if}
 
@@ -6119,7 +6934,14 @@
   }
 
   .study-interface-content {
-    background: var(--background-primary);
+    --weave-study-page-bg: var(--weave-surface-background, var(--background-primary));
+    --weave-study-panel-bg: var(--weave-elevated-background, var(--background-secondary));
+    --weave-study-panel-alt-bg: color-mix(
+      in srgb,
+      var(--weave-study-panel-bg) 88%,
+      var(--weave-study-page-bg)
+    );
+    background: var(--weave-study-page-bg);
     border-radius: var(--radius-l, 12px);
     width: 100%;
     max-width: 100%;
@@ -6167,6 +6989,7 @@
     flex-direction: column;
     min-height: 0; /* 允许flex子元素收缩 */
     overflow: hidden;
+    position: relative; /* 为模态窗提供定位上下文 */
   }
 
   /* 侧边栏内容容器 - 延伸到底部 */
@@ -6297,34 +7120,36 @@
   }
 
 
-  /* 提醒和优先级模态窗样式 */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: var(--weave-z-sticky);
-    backdrop-filter: blur(2px);
-    pointer-events: none; /* 🔧 让遮罩层透明且不捕获鼠标事件 */
+  /* 提醒和优先级浮窗样式 - 统一复用侧边功能栏 FloatingMenu 定位逻辑 */
+  :global(.study-side-panel-menu) {
+    min-width: 300px;
+    max-width: 340px;
   }
 
+  .study-side-panel,
   .reminder-modal,
   .priority-modal {
-    background: var(--background-primary);
+    position: relative;
+    background: var(--weave-study-panel-bg);
     border: 1px solid var(--background-modifier-border);
     border-radius: 12px;
     box-shadow: var(--shadow-s);
-    max-width: 450px;
-    min-width: 350px;
-    pointer-events: auto; /* 🔧 恢复模态窗内容的交互能力 */
-    max-height: 80vh;
+    min-width: 300px;
+    max-width: 340px;
+    max-height: min(70vh, 720px);
     overflow: hidden;
-    animation: bounceIn 0.3s ease-out;
+    animation: slideInRight 0.2s ease-out;
+  }
+
+  @keyframes slideInRight {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
   }
 
   .modal-header {
@@ -6333,7 +7158,7 @@
     justify-content: space-between;
     padding: 1rem 1.5rem;
     border-bottom: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
+    background: var(--weave-study-panel-alt-bg);
   }
 
   .modal-header h3 {
@@ -6389,7 +7214,7 @@
     padding: 0.75rem;
     border: 1.5px solid var(--background-modifier-border);
     border-radius: 8px;
-    background: var(--background-primary);
+    background: color-mix(in srgb, var(--weave-study-panel-bg) 84%, var(--weave-study-page-bg));
     color: var(--text-normal);
     font-size: 0.95rem;
     transition: all 0.2s ease;
@@ -6429,7 +7254,7 @@
     padding: 1rem;
     border: 1.5px solid var(--background-modifier-border);
     border-radius: 8px;
-    background: var(--background-primary);
+    background: color-mix(in srgb, var(--weave-study-panel-bg) 88%, var(--weave-study-page-bg));
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: left;
@@ -6441,7 +7266,7 @@
   }
 
   .priority-option.selected {
-    background: color-mix(in srgb, var(--text-accent) 10%, var(--background-primary));
+    background: color-mix(in srgb, var(--text-accent) 10%, var(--weave-study-panel-bg));
     border-color: var(--text-accent);
   }
 
@@ -6467,7 +7292,7 @@
     gap: 0.75rem;
     justify-content: flex-end;
     padding: 1rem 1.5rem;
-    background: var(--background-secondary);
+    background: var(--weave-study-panel-alt-bg);
   }
 
   .btn-secondary,
@@ -6483,7 +7308,7 @@
   }
 
   .btn-secondary {
-    background: var(--background-primary);
+    background: var(--weave-study-page-bg);
     color: var(--text-normal);
     border: 1px solid var(--background-modifier-border);
   }
@@ -6509,15 +7334,17 @@
     grid-column: 1;
     grid-row: 2;
     padding: 0.75rem 1.5rem;
-    background: var(--background-primary);
+    background: var(--weave-study-page-bg);
     position: relative;
+    z-index: 2;
+    overflow: visible;
   }
 
-  /* 🆕 底部功能按钮区域（撤销/返回预览） - 放在评分按钮上方左侧 */
+  /* 底部功能按钮区域（撤销/返回预览），放在评分按钮上方左侧 */
   .footer-top-controls {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 0.5rem;
     margin-top: -36px;
     margin-bottom: 0.25rem;
@@ -6525,9 +7352,83 @@
     z-index: 1;
   }
 
-  /*  居中显示的底部控制按钮 */
-  .footer-top-controls.footer-top-controls-centered {
-    justify-content: center;
+  .footer-cloze-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.35rem 0.45rem 0.35rem 0.65rem;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 82%, var(--interactive-accent) 18%);
+    border-radius: 0.9rem;
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--weave-study-panel-bg) 90%, var(--weave-study-page-bg) 10%) 0%,
+      color-mix(in srgb, var(--weave-study-panel-bg) 96%, transparent) 100%
+    );
+    box-shadow:
+      0 1px 2px color-mix(in srgb, var(--background-modifier-border) 48%, transparent),
+      0 8px 18px color-mix(in srgb, var(--background-modifier-border) 24%, transparent);
+  }
+
+  .footer-cloze-mode-switch .cloze-mode-label {
+    padding: 0 2px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .footer-cloze-mode-switch .cloze-mode-segmented {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.2rem;
+    border-radius: 0.72rem;
+    background: color-mix(in srgb, var(--weave-study-page-bg) 66%, var(--weave-study-panel-bg) 34%);
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+  }
+
+  .footer-cloze-mode-switch .cloze-mode-btn {
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 0.6rem;
+    padding: 0.38rem 0.72rem;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .footer-cloze-mode-switch .cloze-mode-btn:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--background-modifier-hover) 78%, var(--background-primary) 22%);
+    color: var(--text-normal);
+    border-color: color-mix(in srgb, var(--interactive-accent) 26%, var(--background-modifier-border));
+    transform: translateY(-1px);
+  }
+
+  .footer-cloze-mode-switch .cloze-mode-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 24%, transparent);
+  }
+
+  .footer-cloze-mode-switch .cloze-mode-btn.active {
+    background: linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--interactive-accent) 92%, white 8%) 0%,
+      var(--interactive-accent) 100%
+    );
+    color: var(--text-on-accent);
+    border-color: color-mix(in srgb, var(--interactive-accent) 74%, var(--background-modifier-border));
+    box-shadow: 0 4px 10px color-mix(in srgb, var(--interactive-accent) 32%, transparent);
+    transform: none;
+  }
+
+  .footer-cloze-mode-switch .cloze-mode-btn:disabled {
+    opacity: 0.62;
+    cursor: not-allowed;
+    transform: none;
   }
 
   .footer-top-controls .compact-control-btn {
@@ -6536,7 +7437,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--background-secondary);
+    background: var(--weave-study-panel-bg);
     border: 1px solid var(--background-modifier-border);
     border-radius: 0.5rem;
     color: var(--text-muted);
@@ -6553,6 +7454,204 @@
   .footer-top-controls .compact-control-btn.disabled {
     opacity: 0.4;
     cursor: not-allowed;
+  }
+
+  /* --- 提示胶囊样式 --- */
+  .hint-area {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.375rem;
+    padding: 0 0.5rem;
+    margin-bottom: 0.25rem;
+    position: relative;
+    z-index: 5;
+    overflow: visible;
+  }
+
+  .hint-capsule {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.25rem 0.75rem;
+    background: var(--weave-study-panel-bg);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 999px;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+  }
+
+  .hint-capsule:hover {
+    background: var(--background-modifier-hover);
+    border-color: var(--text-accent);
+    color: var(--text-normal);
+  }
+
+  .hint-capsule.hint-active {
+    color: var(--text-normal);
+    border-color: var(--text-accent);
+    background: color-mix(in srgb, var(--text-accent) 10%, var(--background-secondary));
+  }
+
+  .hint-capsule.hint-used-up {
+    opacity: 0.45;
+    cursor: not-allowed;
+    border-color: var(--background-modifier-border);
+  }
+
+  .hint-capsule-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--text-accent);
+    color: var(--text-on-accent, #fff);
+    font-size: 0.6875rem;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .hint-capsule.hint-used-up .hint-capsule-icon {
+    background: var(--text-muted);
+  }
+
+  .hint-capsule-label {
+    font-weight: 500;
+  }
+
+  .hint-capsule-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-accent) 15%, transparent);
+    color: var(--text-accent);
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+
+  .hint-capsule.hint-used-up .hint-capsule-count {
+    background: color-mix(in srgb, var(--text-muted) 15%, transparent);
+    color: var(--text-muted);
+  }
+
+  /* 提示浮窗面板：直接附着在页脚提示按钮上方，避免 portal 浮层在学习页脚场景下的层级/定位不稳定 */
+  .hint-floating-panel {
+    position: absolute;
+    left: 0;
+    bottom: calc(100% + 10px);
+    z-index: calc(var(--weave-z-overlay) + 1);
+    min-width: 0;
+    max-width: min(92vw, 980px);
+    width: auto;
+  }
+
+  .hint-floating-shell {
+    position: relative;
+    min-width: 260px;
+    min-height: 180px;
+    max-width: min(92vw, 980px);
+    max-height: min(78vh, 720px);
+    box-sizing: border-box;
+    background: var(--background-primary);
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow:
+      0 8px 24px rgba(0, 0, 0, 0.12),
+      0 2px 8px rgba(0, 0, 0, 0.08);
+    backdrop-filter: blur(8px);
+    animation: slideInFade 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    transform-origin: bottom left;
+  }
+
+  .hint-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: nesw-resize;
+    touch-action: none;
+    z-index: 2;
+    display: inline-flex;
+    align-items: flex-start;
+    justify-content: flex-end;
+  }
+
+  .hint-resize-handle-icon {
+    width: 0;
+    height: 0;
+    border-top: 14px solid color-mix(in srgb, var(--text-accent, #f59e0b) 45%, transparent);
+    border-left: 14px solid transparent;
+    opacity: 0.6;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+  }
+
+  .hint-resize-handle.active .hint-resize-handle-icon,
+  .hint-resize-handle:hover .hint-resize-handle-icon {
+    opacity: 0.95;
+    transform: translate(-1px, 1px);
+  }
+
+  .hint-floating-content {
+    padding: 1rem;
+    padding-top: 1.1rem;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--text-normal);
+    height: 100%;
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+
+  /* Obsidian 渲染内容样式微调 */
+  .hint-floating-content :global(p) {
+    margin: 0 0 0.5rem;
+  }
+
+  .hint-floating-content :global(p:last-child) {
+    margin-bottom: 0;
+  }
+
+  .hint-floating-content :global(img) {
+    max-width: 100%;
+    border-radius: 6px;
+  }
+
+  /* 移动端提示样式适配 */
+  :global(body.is-phone) .hint-area {
+    margin-bottom: 0.25rem;
+    padding: 0 0.375rem;
+  }
+
+  :global(body.is-phone) .hint-capsule {
+    font-size: 0.75rem;
+    padding: 0.1875rem 0.625rem;
+  }
+
+  :global(body.is-phone) .hint-floating-panel {
+    max-width: calc(100vw - 20px);
+  }
+
+  :global(body.is-phone) .hint-floating-shell {
+    min-width: 220px;
+    min-height: 160px;
+  }
+
+  :global(body.is-phone) .hint-resize-handle {
+    display: none;
   }
 
   /* 编辑器样式已移至 CardEditorContainer.svelte 组件 */
@@ -6615,7 +7714,7 @@
     width: max-content;   /* 随内容自适应宽度 */
     min-width: 140px;     /* 保底宽度避免过窄 */
     max-width: 60vw;      /* 视口保护 */
-    background: var(--background-primary);
+    background: var(--weave-study-page-bg);
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
@@ -6658,7 +7757,7 @@
   }
 
   .delete-confirm-modal {
-    background: var(--background-primary);
+    background: var(--weave-study-page-bg);
     border: 1px solid var(--background-modifier-border);
     border-radius: var(--weave-radius-lg, 0.75rem);
     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
@@ -6704,7 +7803,7 @@
     gap: 0.75rem;
     padding: 1rem 1.25rem;
     border-top: 1px solid var(--background-modifier-border);
-    background: var(--background-secondary);
+    background: var(--weave-study-panel-bg);
     border-radius: 0 0 var(--weave-radius-lg, 0.75rem) var(--weave-radius-lg, 0.75rem);
   }
 
@@ -6766,7 +7865,7 @@
   .stats-locked-hint {
     padding: 16px;
     margin-bottom: 16px;
-    background: var(--background-secondary);
+    background: var(--weave-study-panel-bg);
     border-radius: var(--weave-radius-md);
     border: 1px solid var(--background-modifier-border);
   }
@@ -6815,7 +7914,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--background-primary);
+    background: var(--weave-study-page-bg);
     color: var(--text-muted);
     border: 1px solid var(--background-modifier-border);
     border-radius: 0.5rem;
@@ -6847,7 +7946,7 @@
   }
 
   .compact-control-btn.disabled:hover {
-    background: var(--background-primary);
+    background: var(--weave-study-page-bg);
     border-color: var(--background-modifier-border);
     color: var(--text-muted);
     transform: none;
@@ -6858,7 +7957,7 @@
   
   /* 所有移动设备通用样式 */
   :global(body.is-mobile) .study-interface-overlay {
-    /*  修复：移动端不使用 fixed 定位，让 Obsidian 管理布局 */
+    /* 移动端不使用 fixed 定位，让 Obsidian 管理布局 */
     position: absolute;
     padding: 0;
     top: 0;
@@ -6867,12 +7966,12 @@
   }
 
   :global(body.is-mobile) .study-interface-content {
-    /*  修复：使用 100% 而非 100vh，让容器适应 Obsidian 的可用空间 */
+    /* 使用 100% 而非 100vh，让容器适应 Obsidian 的可用空间 */
     height: 100%;
     max-width: 100%;
     border-radius: 0;
     margin: 0;
-    /*  修复：移除边框和阴影 */
+    /* 移除边框和阴影 */
     border: none;
     box-shadow: none;
   }
@@ -6883,18 +7982,18 @@
 
   :global(body.is-mobile) .card-container {
     padding: var(--weave-mobile-spacing-sm, 0.5rem);
-    /*  修复：移除边框 */
+    /* 移除边框 */
     border: none;
     box-shadow: none;
   }
 
   :global(body.is-mobile) .study-footer {
-    /*  修复：使用与内容区一致的背景色，避免色差形成边框 */
-    background: var(--background-primary);
-    /*  修复：移除所有多余间距 */
+    /* 使用与内容区一致的背景色，避免色差形成边框 */
+    background: var(--weave-study-page-bg);
+    /* 移除所有多余间距 */
     padding: 0;
     margin: 0;
-    /*  修复：移除边框，避免视觉分割 */
+    /* 移除边框，避免视觉分割 */
     border: none;
   }
 
@@ -6902,18 +8001,18 @@
   :global(body.is-phone) .study-content {
     display: flex;
     flex-direction: column;
-    /*  修复：确保内容区域占满可用高度 */
+    /* 确保内容区域占满可用高度 */
     height: 100%;
   }
 
-  /*  修复：手机端学习界面容器高度 */
+  /* 手机端学习界面容器高度 */
   :global(body.is-phone) .study-interface-content {
     /* 使用 100% 高度，让 Obsidian 管理可用空间 */
     height: 100%;
     /* 移除 max-height 限制，避免与 Obsidian 布局冲突 */
   }
 
-  /*  修复：手机端完全隐藏侧边栏容器，不占用空间 */
+  /* 手机端完全隐藏侧边栏容器，不占用空间 */
   :global(body.is-phone) .sidebar-content {
     display: none !important;
   }
@@ -6921,13 +8020,13 @@
   :global(body.is-phone) .card-container {
     width: 100%;
     border-radius: 0;
-    /*  修复：移除两侧间距，让内容占满宽度 */
+    /* 移除两侧间距，让内容占满宽度 */
     padding: 0.25rem 0;
     margin: 0;
   }
 
   :global(body.is-phone) .card-study-container {
-    /*  修复：移除外层容器间距，最大化内容显示 */
+    /* 移除外层容器间距，最大化内容显示 */
     padding: 0;
     flex: 1;
     min-height: 0;
@@ -6940,10 +8039,34 @@
     height: var(--weave-mobile-touch-min, 44px);
   }
 
-  /* 🆕 手机端：底部功能按钮区域样式 */
+  /* 手机端：底部功能按钮区域样式 */
   :global(body.is-phone) .footer-top-controls {
     margin-bottom: 0.25rem;
     gap: 0.75rem;
+  }
+
+  :global(body.is-phone) .footer-cloze-mode-switch {
+    width: 100%;
+    gap: 0.4rem;
+    padding: 0.35rem 0.4rem 0.35rem 0.55rem;
+  }
+
+  :global(body.is-phone) .footer-cloze-mode-switch .cloze-mode-label {
+    font-size: 11px;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  :global(body.is-phone) .footer-cloze-mode-switch .cloze-mode-segmented {
+    flex: 1;
+    justify-content: stretch;
+  }
+
+  :global(body.is-phone) .footer-cloze-mode-switch .cloze-mode-btn {
+    flex: 1;
+    min-height: var(--weave-mobile-touch-min, 44px);
+    padding: 0 8px;
+    font-size: 11px;
   }
 
   /*  手机端：撤销/返回预览按钮仅图标，居中显示 */
@@ -6952,18 +8075,18 @@
     height: var(--weave-mobile-touch-min, 44px);
   }
 
-  /*  修复：手机端底部评分区域 - 紧贴 Obsidian 底部导航栏 */
+  /* 手机端底部评分区域，紧贴 Obsidian 底部导航栏 */
   :global(body.is-phone) .study-footer {
     /*  使用与内容区一致的背景色，避免色差形成边框 */
-    background: var(--background-primary);
-    /*  修复：移除所有多余间距 */
+    background: var(--weave-study-page-bg);
+    /* 移除所有多余间距 */
     padding: 0;
     margin: 0;
     /* 移除边框 */
     border: none;
   }
 
-  /*  修复：手机端主学习区域布局优化 */
+  /* 手机端主学习区域布局优化 */
   :global(body.is-phone) .main-study-area {
     flex: 1;
     display: flex;

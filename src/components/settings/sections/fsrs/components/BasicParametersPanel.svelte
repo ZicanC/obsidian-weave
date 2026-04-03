@@ -4,8 +4,6 @@
 -->
 <script lang="ts">
   import EnhancedIcon from '../../../../ui/EnhancedIcon.svelte';
-  import EnhancedButton from '../../../../ui/EnhancedButton.svelte';
-  import { FSRS6_DEFAULTS } from '../../../../../types/fsrs6-types';
   import { tr } from '../../../../../utils/i18n';
 
   // 响应式翻译函数
@@ -22,7 +20,7 @@
     onRetentionChange: (value: number) => void;
     onMaxIntervalChange: (value: number) => void;
     onFuzzToggle: () => void;
-    onReset: () => void;
+    onReset: () => void | Promise<void>;
   }
 
   let { 
@@ -118,14 +116,15 @@
 
   <!-- 操作按钮 -->
   <div class="action-row">
-    <EnhancedButton
-      variant="ghost"
-      size="sm"
+    <button
+      type="button"
+      class="icon-button reset-icon-button"
       onclick={onReset}
+      title={t('fsrs.advancedSettings.weights.reset')}
+      aria-label={t('fsrs.advancedSettings.weights.reset')}
     >
       <EnhancedIcon name="refresh-cw" size="16" />
-      {t('fsrs.advancedSettings.weights.reset')}
-    </EnhancedButton>
+    </button>
   </div>
 </div>
 
@@ -268,6 +267,40 @@
     display: flex;
     justify-content: flex-end;
     padding-top: 8px;
+  }
+
+  .icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: var(--text-muted);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: color 0.2s ease, background-color 0.2s ease;
+  }
+
+  .icon-button:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+  }
+
+  .icon-button:focus-visible {
+    box-shadow: 0 0 0 2px var(--background-modifier-border-focus);
+  }
+
+  .icon-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  :global(.weave-settings) .basic-parameters-panel .action-row {
+    border-top: none;
   }
 
   /* 响应式设计 */

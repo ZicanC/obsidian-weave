@@ -1,11 +1,11 @@
 <!--
   新建卡片模态窗组件
-  职责：提供独立的新建卡片界面，支持透明遮罩、窗口拖拽、外部交互
-  ✅ 重构后架构：接受预加载数据，无需异步加载，稳定可靠
-  ✅ 全局菜单修复：监听并修复 Obsidian 原生菜单的 z-index
+  职责：提供独立的新建卡片界面，支持透明遮罩、窗口拖拽和外部交互
+  使用预加载数据初始化，并处理 Obsidian 原生菜单的层级显示
 -->
 <script lang="ts">
   import { logger } from '../../utils/logger';
+  import { EpubLinkService } from '../../services/epub/EpubLinkService';
 
   import { onMount, onDestroy } from 'svelte';
   import type { WeavePlugin } from '../../main';
@@ -29,14 +29,7 @@
   }
 
   function findFirstEpubLinkFromBody(body: string): string | undefined {
-    if (!body) return undefined;
-
-    const normalized = body.replace(/\r\n/g, '\n');
-
-    // 使用 (?:(?!\]\]).)+ 代替 [^\]]+ 以正确处理文件名中包含 ] 的情况
-    const re = /(\[\[(?:(?!\]\]).)+\.epub(?:(?!\]\]).)*#weave-cfi=(?:(?!\]\]).)*\]\])/i;
-    const match = normalized.match(re);
-    return match?.[1];
+    return EpubLinkService.extractFirstEpubLinkMarkup(body);
   }
 
   interface Props {
@@ -80,7 +73,7 @@
     onCancel
   }: Props = $props();
 
-  // 🆕 InlineCardEditor 实例引用（用于调用其方法）
+  // InlineCardEditor 实例引用（用于调用其方法）
   let inlineCardEditorInstance: any = $state();
 
   //  使用预加载的数据（无需异步加载，数据已准备就绪）
@@ -93,11 +86,20 @@
   //  模板ID固定为official-qa（题型由MD格式自动识别，无需用户选择）
   let selectedTemplateId = $state('official-qa');
   
-  // 🆕 钉住状态（允许连续添加卡片）
+  // 钉住状态（允许连续添加卡片）
   let isPinned = $state(false);
 
   //  菜单层级修复器（仅修复菜单/建议框/弹出层，不影响正常模态窗）
   let menuObserver: MutationObserver | null = null;
+
+  function persistDeckSelection(deckId: string, deckNames: string[]) {
+    plugin.saveCreateCardPreferences({
+      lastSelectedDeckId: deckId,
+      lastSelectedDeckNames: [...deckNames]
+    }).catch((error) => {
+      logger.error('[CreateCardModal] 持久化最近牌组选择失败:', error);
+    });
+  }
   
   //  数据已预加载，无需异步等待
   onMount(() => {
@@ -134,12 +136,32 @@
       subtree: true
     });
 
-    const initialDeckName = decks.find(d => d.id === selectedDeckId)?.name;
-    if (initialDeckName) {
-      selectedDeckNames = [initialDeckName];
+    const createCardPreferences = plugin.getCreateCardPreferences();
+    const configuredNames = Array.isArray(createCardPreferences.lastSelectedDeckNames)
+      ? createCardPreferences.lastSelectedDeckNames.filter((name): name is string => !!name && typeof name === 'string')
+      : [];
+    const preferredDeckNames = configuredNames.length > 0
+      ? configuredNames.filter(name => decks.some(deck => deck.name === name))
+      : [];
+    const primaryDeckById = selectedDeckId
+      ? decks.find(d => d.id === selectedDeckId)
+      : undefined;
+    const primaryDeckByName = preferredDeckNames.length > 0
+      ? decks.find(d => d.name === preferredDeckNames[0])
+      : undefined;
+
+    if (preferredDeckNames.length > 0 && primaryDeckByName?.id) {
+      selectedDeckId = primaryDeckByName.id;
+      selectedDeckNames = preferredDeckNames;
+    } else if (primaryDeckById?.name) {
+      selectedDeckNames = [primaryDeckById.name];
     } else if (decks.length > 0) {
       selectedDeckId = decks[0].id;
       selectedDeckNames = [decks[0].name];
+    }
+
+    if (selectedDeckId && selectedDeckNames.length > 0) {
+      persistDeckSelection(selectedDeckId, selectedDeckNames);
     }
   });
 
@@ -179,7 +201,7 @@
     });
     
     try {
-      //  Content-Only 架构：只检查 content 字段
+      // 只检查 content 字段
       const hasContent = updatedCard.content && updatedCard.content.trim().length > 0;
 
       if (!hasContent) {
@@ -209,11 +231,11 @@
           willClose: false
         });
         
-        // 生成新卡片对象（Content-Only 架构）
-        const { generateUUID } = await import('../../utils/helpers');
+        // 生成新卡片对象
+        const { generateCardUUID } = await import('../../services/identifier/WeaveIDGenerator');
         const { createContentWithMetadata } = await import('../../utils/yaml-utils');
         
-        // 🆕 v2.1: 构建带 YAML frontmatter 的 content
+        // 构建带 YAML frontmatter 的 content
         const newDeckId = selectedDeckId || card.deckId;
         const nextDeckNames = Array.isArray(selectedDeckNames) && selectedDeckNames.length > 0
           ? selectedDeckNames
@@ -228,7 +250,7 @@
         const initialContent = createContentWithMetadata(yamlMetadata, '');
         
         const newCard: Card = {
-          uuid: generateUUID(),
+          uuid: generateCardUUID(),
           deckId: newDeckId,
           templateId: selectedTemplateId,
           type: CardType.Basic,
@@ -259,7 +281,7 @@
         // 更新card引用
         card = newCard;
         
-        //  修复：请求InlineCardEditor重置，传递新卡片对象
+        // 请求 InlineCardEditor 重置，并传递新卡片对象
         if (inlineCardEditorInstance && typeof inlineCardEditorInstance.resetForNewCard === 'function') {
           await inlineCardEditorInstance.resetForNewCard(newCard);
           logger.debug('[CreateCardModal] ✅ 编辑器已重置，新卡片对象已同步');
@@ -303,9 +325,13 @@
       selectedDeckId = primaryDeck.id;
     }
 
+    if (selectedDeckId) {
+      persistDeckSelection(selectedDeckId, selectedDeckNames);
+    }
+
     logger.debug('[CreateCardModal] 牌组变更:', { selectedDeckId, selectedDeckNames });
     
-    //  关键修复：同步更新编辑器内容中的 YAML we_decks
+    // 同步更新编辑器内容中的 YAML we_decks
     if (inlineCardEditorInstance) {
       try {
         const { parseYAMLFromContent, extractBodyContent, createContentWithMetadata } = await import('../../utils/yaml-utils');
@@ -332,7 +358,7 @@
     }
   }
 
-  // 🆕 更新卡片内容（供快捷键调用）
+  // 更新卡片内容（供快捷键调用）
   export async function updateContent(content: string, metadata: any): Promise<void> {
     try {
       logger.debug('[CreateCardModal] 📝 快捷键填充内容:', { 
@@ -341,11 +367,11 @@
         hasMetadata: !!metadata 
       });
       
-      //  修复：兼容两种字段名格式（sourceInfo: file/blockId 或 sourceFile/sourceBlock）
+      // 兼容两种字段名格式（sourceInfo: file/blockId 或 sourceFile/sourceBlock）
       const sourceFile = metadata?.sourceFile || metadata?.file;
       const sourceBlock = metadata?.sourceBlock || metadata?.blockId;
       
-      // 🆕 关键修复：将来源信息写入 YAML frontmatter
+      // 将来源信息写入 YAML frontmatter
       let finalContent = content;
       if (sourceFile) {
         const { parseYAMLFromContent, extractBodyContent, createContentWithMetadata } = await import('../../utils/yaml-utils');
@@ -402,7 +428,9 @@
 
       const { parseYAMLFromContent, extractBodyContent, setCardProperty } = await import('../../utils/yaml-utils');
       const yaml = parseYAMLFromContent(newContent) || {};
-      const currentWeSource = Array.isArray(yaml.we_source) ? yaml.we_source[0] : yaml.we_source;
+      const currentWeSource = Array.isArray(yaml.we_source)
+        ? yaml.we_source.find((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        : yaml.we_source;
 
       if (typeof currentWeSource === 'string' && currentWeSource.trim().length > 0) {
         return;
@@ -486,7 +514,7 @@
     }
   }
   
-  //  修复：移动端禁用透明遮罩，避免事件穿透导致需要点击两次
+  // 移动端禁用透明遮罩，避免事件穿透导致需要点击两次
   let shouldEnableTransparentMask = $derived(!Platform.isMobile);
 </script>
 
@@ -510,7 +538,6 @@
       onclick={(e) => {
         //  使用 onclick 统一处理，配合 CSS touch-action: manipulation 消除300ms延迟
         e.preventDefault();
-        e.stopPropagation();
         logger.debug('[CreateCardModal] 📱 钉住按钮 click 触发');
         togglePin();
       }}
@@ -530,12 +557,11 @@
     {#if decks && decks.length > 0}
       <button
         bind:this={deckButtonRef}
-        class="deck-selector-btn mobile"
-        onclick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          showDeckMenu(e);
-        }}
+      class="deck-selector-btn mobile"
+      onclick={(e) => {
+        e.preventDefault();
+        showDeckMenu(e);
+      }}
         onkeydown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();

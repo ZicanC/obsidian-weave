@@ -6,6 +6,28 @@ import { defineConfig, loadEnv } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import commonjs from "vite-plugin-commonjs";
 import path from "path";
+import fs from "fs";
+
+function sleep(ms: number) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function copyFileWithRetry(source: string, destination: string, retries = 8, delayMs = 120) {
+	for (let attempt = 0; attempt <= retries; attempt += 1) {
+		try {
+			fs.mkdirSync(path.dirname(destination), { recursive: true });
+			fs.copyFileSync(source, destination);
+			return;
+		} catch (error: any) {
+			const code = error?.code;
+			if ((code === "EBUSY" || code === "EPERM") && attempt < retries) {
+				await sleep(delayMs);
+				continue;
+			}
+			throw error;
+		}
+	}
+}
 
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), '');
@@ -91,12 +113,21 @@ export default defineConfig(({ mode }) => {
 					}
 				}
 			},
+			{
+				name: 'copy-manifest-with-retry',
+				async writeBundle() {
+					const manifestSource = path.resolve(process.cwd(), "manifest.json");
+					const manifestTarget = path.resolve(PLUGIN_DIR, "manifest.json");
+
+					try {
+						await copyFileWithRetry(manifestSource, manifestTarget);
+					} catch (error: any) {
+						console.warn(`[manifest-copy] Failed to copy manifest.json to ${manifestTarget}: ${error?.message || error}`);
+					}
+				}
+			},
 			viteStaticCopy({
 			targets: [
-				{
-					src: "manifest.json",
-					dest: ".",
-				},
 				{
 					src: "node_modules/sql.js/dist/sql-wasm.wasm",
 					dest: ".",
@@ -162,6 +193,9 @@ export default defineConfig(({ mode }) => {
 				external: [
 					"obsidian",
 					"electron",
+					"codemirror",
+					/^@codemirror\/.*/,
+					/^@lezer\/.*/,
 					...builtins,
 				],
 				treeshake: {
@@ -177,7 +211,7 @@ export default defineConfig(({ mode }) => {
 	copyPublicDir: false,
 		emptyOutDir: false, // 禁用vite清空，改用prebuild脚本手动清理
 		sourcemap: isDev ? "inline" : false,
-		target: ["es2018"],
+		target: ["es2020"],
 		minify: isDev ? false : "esbuild"
 	},
 	// ✅ 生产环境使用 esbuild 压缩

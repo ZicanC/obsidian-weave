@@ -1,6 +1,8 @@
 export interface EpubBook {
 	id: string;
 	filePath: string;
+	sourceMtime?: number;
+	sourceSize?: number;
 	metadata: BookMetadata;
 	currentPosition: ReadingPosition;
 	readingStats: ReadingStats;
@@ -36,6 +38,7 @@ export interface Bookmark {
 	chapterIndex: number;
 	cfi: string;
 	preview: string;
+	pageNumber?: number;
 	createdTime: number;
 }
 
@@ -49,7 +52,18 @@ export interface Highlight {
 	linkedNotePath?: string;
 }
 
-export type HighlightColor = 'yellow' | 'green' | 'blue' | 'pink' | 'purple';
+export type HighlightColor = "yellow" | "green" | "blue" | "red" | "purple";
+
+export type ConcealedTextMode = "mask";
+
+export interface ConcealedText {
+	id: string;
+	text: string;
+	mode: ConcealedTextMode;
+	chapterIndex: number;
+	cfiRange: string;
+	createdTime: number;
+}
 
 export interface Note {
 	id: string;
@@ -66,19 +80,25 @@ export interface TocItem {
 	label: string;
 	href: string;
 	level: number;
+	pageNumber?: number;
 	subitems?: TocItem[];
 }
 
-export type EpubTheme = 'default' | 'sepia';
-export type EpubFontFamily = 'serif' | 'sans';
-export type EpubWidthMode = 'standard' | 'full';
-export type EpubLayoutMode = 'scroll' | 'paginated' | 'double';
+export interface PaginationInfo {
+	currentPage: number;
+	totalPages: number;
+}
+
+export type EpubTheme = "default" | "sepia";
+export type EpubWidthMode = "standard" | "full";
+export type EpubLayoutMode = "paginated" | "double";
+export type EpubFlowMode = "paginated" | "scrolled";
 
 export interface EpubReaderSettings {
-	fontSize: number;
 	lineHeight: number;
 	theme: EpubTheme;
-	fontFamily: EpubFontFamily;
 	widthMode: EpubWidthMode;
 	layoutMode: EpubLayoutMode;
+	flowMode: EpubFlowMode;
+	showScrolledSideNav: boolean;
 }

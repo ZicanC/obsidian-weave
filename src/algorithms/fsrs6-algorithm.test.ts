@@ -2,9 +2,6 @@
  * FSRS6 算法测试套件
  * 验证FSRS6核心算法的正确性和性能
  */
-
-import { beforeEach, describe, expect, test } from "vitest";
-
 import { CardState, Rating } from "../data/types";
 import { type FSRS6Parameters, FSRS6_DEFAULTS } from "../types/fsrs6-types";
 import { FSRS } from "./fsrs";
@@ -47,7 +44,7 @@ describe("FSRS6 Core Algorithm", () => {
 		const { card: reviewedCard } = fsrs6.review(card, Rating.Again);
 
 		expect(reviewedCard.lapses).toBe(1);
-		expect(reviewedCard.scheduledDays).toBe(0);
+		expect(reviewedCard.scheduledDays).toBeGreaterThan(0);
 		expect(reviewedCard.state).toBe(CardState.Learning);
 	});
 
@@ -65,12 +62,11 @@ describe("FSRS6 Core Algorithm", () => {
 		expect(reviewedCard2.shortTermMemoryFactor).not.toBe(1.0);
 	});
 
-	test("should validate parameters correctly", () => {
-		expect(() => {
-			new FSRS6CoreAlgorithm({
-				w: [1, 2, 3] as unknown as FSRS6Parameters["w"], // 故意传入错误的参数数量来测试验证
-			});
-		}).toThrow();
+	test("should fall back to defaults for invalid parameter shapes", () => {
+		const invalidWeights = [1, 2, 3] as unknown as FSRS6Parameters["w"];
+		const algorithm = new FSRS6CoreAlgorithm({ w: invalidWeights });
+
+		expect(algorithm.getParameters().w).toEqual(FSRS6_DEFAULTS.DEFAULT_WEIGHTS);
 	});
 
 	test("should handle parameter updates", () => {

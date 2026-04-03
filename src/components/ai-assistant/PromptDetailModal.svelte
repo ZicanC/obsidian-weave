@@ -93,7 +93,7 @@
   <div class="modal-overlay" onclick={handleOverlayClick}>
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="prompt-detail-modal" onclick={(e) => { e.stopPropagation(); }}>
+    <div class="prompt-detail-modal">
       <!-- 头部 -->
       <div class="modal-header">
         <div class="header-left">

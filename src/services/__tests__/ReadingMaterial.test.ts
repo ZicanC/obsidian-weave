@@ -5,8 +5,6 @@
  * 
  * @module services/__tests__/ReadingMaterial.test
  */
-
-import { describe, it, expect, beforeEach } from 'vitest';
 import {
   ReadingCategory,
   DEFAULT_READING_MATERIAL,

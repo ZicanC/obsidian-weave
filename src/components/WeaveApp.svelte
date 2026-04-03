@@ -9,28 +9,19 @@
   import AIAssistantPage from "./pages/AIAssistantPage.svelte";
   import SidebarNavHeader from "./navigation/SidebarNavHeader.svelte";
   import ResponsiveContainer from "./ui/ResponsiveContainer.svelte";
-  import { isInSidebar, createSidebarObserver } from "../utils/responsive";
-  import { waitForServiceReady } from "../utils/service-ready-event";
-
-  //  错误边界组件
-  import ErrorBoundary from "./ui/ErrorBoundary.svelte";
+  import { getViewSurfaceTokens, isInSidebar as isLeafInSidebar } from "../utils/view-location-utils";
 
   import { Platform } from 'obsidian';
-
-  // 🌍 导入国际化
-  import { tr } from "../utils/i18n";
+  import type { WorkspaceLeaf } from 'obsidian';
   import { logger } from "../utils/logger";
-
-  // 导入主题管理器
-  import { addThemeClasses } from "../utils/theme-detection";
-
-  // 插件配置模态窗
+  import { addThemeClasses, createThemeListener } from "../utils/theme-detection";
   import AutoRulesConfigModal from "./modals/AutoRulesConfigModal.svelte";
 
   interface Props {
     plugin: WeavePlugin;
     dataStorage: WeaveDataStorage;
     fsrs: FSRS;
+    currentLeaf: WorkspaceLeaf;
   }
 
   interface ResponsiveState {
@@ -41,31 +32,30 @@
   }
 
 
-  let { plugin, dataStorage, fsrs }: Props = $props();
+  let { plugin, dataStorage, fsrs, currentLeaf }: Props = $props();
   let activePage = $state<string>("deck-study");
   let isMounted = $state(false);  // 🔥 添加挂载状态追踪
   
   // 📱 移动端检测状态
   let isMobileDevice = $state(false);
   
-  // 🆕 侧边栏模式检测状态
+  // 侧边栏模式检测状态
   let isInSidebarMode = $state(false);
-  let sidebarObserverCleanup: (() => void) | null = null;
   
-  // 🆕 侧边栏导航状态（用于与子页面同步）
+  // 侧边栏导航状态（用于与子页面同步）
   let sidebarDeckFilter = $state<'memory' | 'incremental-reading' | 'question-bank'>('memory');
   let sidebarCardView = $state<'table' | 'grid' | 'kanban'>('table');
   let sidebarDeckStudyView = $state<'grid' | 'kanban'>('grid');
-  // 🆕 卡片管理页面的数据源状态
+  // 卡片管理页面的数据源状态
   let cardDataSource = $state<'memory' | 'questionBank' | 'incremental-reading'>('memory');
 
   let appElement: HTMLElement;
-  let themeCleanup: (() => void) | null = null;
+  let themeClassCleanup: (() => void) | null = null;
+  let themeSurfaceCleanup: (() => void) | null = null;
+  let mobileViewportCleanup: (() => void) | null = null;
+  let nativeTooltipCleanup: (() => void) | null = null;
   
-  // 响应式翻译函数
-  let t = $derived($tr);
-
-  // 🆕 导航可见性本地响应式状态
+  // 导航可见性本地响应式状态
   let navigationVisibility = $state(plugin.settings.navigationVisibility || {
     deckStudy: true,
     cardManagement: true,
@@ -73,11 +63,79 @@
     aiAssistant: true
   });
 
-  // 牌组数据
-  let decks = $state<any[]>([]);
-
   // 插件配置模态窗状态
   let showPluginConfigModal = $state<string | null>(null);
+
+  function detectSidebarMode() {
+    if (!currentLeaf || !appElement) {
+      isInSidebarMode = false;
+      return;
+    }
+
+    try {
+      isInSidebarMode = isLeafInSidebar(currentLeaf);
+      const surfaceTokens = getViewSurfaceTokens(currentLeaf);
+      appElement.dataset.weaveSurfaceContext = surfaceTokens.context;
+      appElement.style.setProperty('--weave-surface-background', surfaceTokens.surfaceBackground);
+      appElement.style.setProperty('--weave-surface', surfaceTokens.surfaceBackground);
+      appElement.style.setProperty('--weave-elevated-background', surfaceTokens.elevatedBackground);
+      appElement.style.setProperty('--weave-secondary-bg', surfaceTokens.elevatedBackground);
+      appElement.style.setProperty('--weave-surface-secondary', surfaceTokens.elevatedBackground);
+      logger.debug('[WeaveApp] 侧边栏模式:', isInSidebarMode);
+    } catch (error) {
+      logger.error('[WeaveApp] 侧边栏检测失败:', error);
+      isInSidebarMode = false;
+      delete appElement.dataset.weaveSurfaceContext;
+      appElement.style.setProperty('--weave-surface-background', 'var(--background-primary)');
+      appElement.style.setProperty('--weave-surface', 'var(--background-primary)');
+      appElement.style.setProperty('--weave-elevated-background', 'var(--background-secondary)');
+      appElement.style.setProperty('--weave-secondary-bg', 'var(--background-secondary)');
+      appElement.style.setProperty('--weave-surface-secondary', 'var(--background-secondary)');
+    }
+  }
+
+  function stripNativeTitleTooltip(node: Element) {
+    if (!node.hasAttribute('title') || !node.hasAttribute('aria-label')) return;
+    const title = node.getAttribute('title');
+    if (!title || !title.trim()) return;
+    node.removeAttribute('title');
+  }
+
+  function setupNativeTooltipCleanup(root: HTMLElement): () => void {
+    const selector = '[title][aria-label]';
+    let cleanupRaf = 0;
+
+    const runCleanup = () => {
+      root.querySelectorAll(selector).forEach((el) => stripNativeTitleTooltip(el));
+      cleanupRaf = 0;
+    };
+
+    const scheduleCleanup = () => {
+      if (cleanupRaf) return;
+      cleanupRaf = window.requestAnimationFrame(runCleanup);
+    };
+
+    runCleanup();
+
+    const observer = new MutationObserver(() => {
+      scheduleCleanup();
+    });
+
+    observer.observe(root, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['title', 'aria-label'],
+    });
+
+    return () => {
+      observer.disconnect();
+      if (cleanupRaf) {
+        window.cancelAnimationFrame(cleanupRaf);
+        cleanupRaf = 0;
+      }
+    };
+  }
 
   onMount(() => {
     isMounted = true;  // 🔥 标记组件已挂载
@@ -90,7 +148,7 @@
       activePage = e.detail;
     };
 
-    // 🆕 监听导航可见性更新事件
+    // 监听导航可见性更新事件
     const handleNavigationVisibilityUpdate = (e: CustomEvent<any>) => {
       navigationVisibility = { ...e.detail };
       logger.debug('[WeaveApp] 导航可见性已更新:', navigationVisibility);
@@ -98,7 +156,7 @@
       // 🔧 智能页面切换：如果当前页面被隐藏，自动切换到第一个可见页面
       const pageVisibilityMap: Record<string, boolean> = {
         'deck-study': navigationVisibility.deckStudy !== false,
-        'card-management': navigationVisibility.cardManagement !== false,
+        'weave-card-management': navigationVisibility.cardManagement !== false,
         'incremental-reading': navigationVisibility.incrementalReading !== false,
         'ai-assistant': navigationVisibility.aiAssistant !== false,
       };
@@ -125,7 +183,7 @@
     };
     document.addEventListener('Weave:open-plugin-config', handleOpenPluginConfig);
     
-    // 🆕 监听子页面状态变化（用于侧边栏导航同步）
+    // 监听子页面状态变化（用于侧边栏导航同步）
     const handleDeckFilterChange = (e: CustomEvent<string>) => {
       sidebarDeckFilter = e.detail as 'memory' | 'question-bank' | 'incremental-reading';
       logger.debug('[WeaveApp] 牌组筛选变化:', sidebarDeckFilter);
@@ -145,34 +203,60 @@
     window.addEventListener("Weave:card-view-change", handleCardViewChange as EventListener);
     window.addEventListener("Weave:deck-view-change", handleDeckViewChange as EventListener);
 
-    // 加载牌组数据
-    (async () => {
-      try {
-        // 🔥 关键修复：等待所有核心服务就绪（包括 cardFileService）
-        // getCards() 依赖 cardFileService，必须等待 allCoreServices
-        await waitForServiceReady('allCoreServices', 15000);
-        decks = await dataStorage.getDecks();
-      } catch (error) {
-        logger.error('加载牌组数据失败:', error);
-        decks = [];
-      }
-    })();
-    
     // 应用主题类到应用容器
     if (appElement) {
-      themeCleanup = addThemeClasses(appElement);
+      themeClassCleanup = addThemeClasses(appElement);
+      themeSurfaceCleanup = createThemeListener(() => {
+        detectSidebarMode();
+      });
       logger.debug('[WeaveApp] 主题类已应用到应用容器');
       
-      // 🆕 初始化侧边栏检测
-      isInSidebarMode = isInSidebar(appElement);
-      logger.debug('[WeaveApp] 初始侧边栏模式:', isInSidebarMode);
-      
-      // 监听侧边栏状态变化
-      sidebarObserverCleanup = createSidebarObserver(appElement, (inSidebar) => {
-        isInSidebarMode = inSidebar;
-        logger.debug('[WeaveApp] 侧边栏模式变化:', inSidebar);
-      });
+      detectSidebarMode();
+      nativeTooltipCleanup = setupNativeTooltipCleanup(appElement);
     }
+
+    const setupMobileViewportSync = () => {
+      if (!appElement) return () => {};
+      const isMobileLayout = Platform.isMobile
+        || document.body.classList.contains('is-mobile')
+        || document.body.classList.contains('is-phone');
+
+      if (!isMobileLayout) {
+        appElement.style.removeProperty('--weave-mobile-viewport-height');
+        return () => {};
+      }
+
+      const viewport = window.visualViewport;
+      const updateViewportMetrics = () => {
+        const height = viewport?.height ?? window.innerHeight;
+
+        appElement.style.setProperty('--weave-mobile-viewport-height', `${Math.max(0, height)}px`);
+      };
+
+      updateViewportMetrics();
+      viewport?.addEventListener('resize', updateViewportMetrics);
+      viewport?.addEventListener('scroll', updateViewportMetrics);
+      window.addEventListener('resize', updateViewportMetrics);
+      window.addEventListener('orientationchange', updateViewportMetrics);
+
+      return () => {
+        viewport?.removeEventListener('resize', updateViewportMetrics);
+        viewport?.removeEventListener('scroll', updateViewportMetrics);
+        window.removeEventListener('resize', updateViewportMetrics);
+        window.removeEventListener('orientationchange', updateViewportMetrics);
+      };
+    };
+
+    mobileViewportCleanup = setupMobileViewportSync();
+
+    const layoutChangeRef = plugin.app.workspace.on('layout-change', () => {
+      detectSidebarMode();
+
+      if (mobileViewportCleanup) {
+        mobileViewportCleanup();
+      }
+      mobileViewportCleanup = setupMobileViewportSync();
+    });
 
     return () => {
       window.removeEventListener("Weave:navigate", handleNavigate as EventListener);
@@ -181,31 +265,50 @@
       window.removeEventListener("Weave:card-view-change", handleCardViewChange as EventListener);
       window.removeEventListener("Weave:deck-view-change", handleDeckViewChange as EventListener);
       document.removeEventListener('Weave:open-plugin-config', handleOpenPluginConfig);
+      plugin.app.workspace.offref(layoutChangeRef);
+      if (mobileViewportCleanup) {
+        mobileViewportCleanup();
+        mobileViewportCleanup = null;
+      }
 
-      // 清理主题监听器
-      if (themeCleanup) {
-        themeCleanup();
-        themeCleanup = null;
+      if (themeClassCleanup) {
+        themeClassCleanup();
+        themeClassCleanup = null;
+      }
+      if (themeSurfaceCleanup) {
+        themeSurfaceCleanup();
+        themeSurfaceCleanup = null;
+      }
+      if (nativeTooltipCleanup) {
+        nativeTooltipCleanup();
+        nativeTooltipCleanup = null;
       }
     };
   });
 
   onDestroy(() => {
-    // 🔥 标记组件已卸载
     isMounted = false;
-    
-    // 清理主题监听器
-    if (themeCleanup) {
-      themeCleanup();
-      themeCleanup = null;
+
+    if (themeClassCleanup) {
+      themeClassCleanup();
+      themeClassCleanup = null;
     }
-    
-    // 🆕 清理侧边栏观察器
-    if (sidebarObserverCleanup) {
-      sidebarObserverCleanup();
-      sidebarObserverCleanup = null;
+    if (themeSurfaceCleanup) {
+      themeSurfaceCleanup();
+      themeSurfaceCleanup = null;
     }
-    
+    if (mobileViewportCleanup) {
+      mobileViewportCleanup();
+      mobileViewportCleanup = null;
+    }
+    if (nativeTooltipCleanup) {
+      nativeTooltipCleanup();
+      nativeTooltipCleanup = null;
+    }
+  });
+
+  $effect(() => {
+    window.dispatchEvent(new CustomEvent('Weave:page-changed', { detail: activePage }));
   });
 
 </script>
@@ -216,10 +319,10 @@
     <div
       bind:this={appElement}
       class="weave-app weave-app-inner"
+      class:is-in-sidebar={isInSidebarMode}
+      class:is-in-main-area={!isInSidebarMode}
       role="application"
     >
-      <!-- 🆕 统一导航头部（侧边栏和主内容区都显示，移动端由各页面的 MobileHeader 处理） -->
-      <!-- 🔧 修复：移除 isInSidebarMode 条件，让菜单按钮在主内容区也显示 -->
       {#if !isMobileDevice}
         <SidebarNavHeader
           currentPage={activePage}
@@ -227,19 +330,18 @@
           deckStudyView={activePage === 'deck-study' ? sidebarDeckStudyView : 'grid'}
           currentView={sidebarCardView}
           cardDataSource={cardDataSource}
+          app={plugin.app}
+          {isInSidebarMode}
           onFilterSelect={(filter) => {
             sidebarDeckFilter = filter;
-            // 触发事件通知子页面
             window.dispatchEvent(new CustomEvent('Weave:sidebar-filter-select', { detail: filter }));
           }}
           onViewChange={(view) => {
             sidebarCardView = view;
-            // 触发事件通知子页面
             window.dispatchEvent(new CustomEvent('Weave:sidebar-view-change', { detail: view }));
           }}
           onCardDataSourceChange={(source) => {
             cardDataSource = source;
-            // 🆕 触发事件通知卡片管理页面
             window.dispatchEvent(new CustomEvent('Weave:card-data-source-change', { detail: source }));
           }}
           onNavigate={(pageId) => {
@@ -248,26 +350,34 @@
         />
       {/if}
       
-      <main class="weave-main-content" class:mobile={isMobileDevice}>
+      <main
+        class="weave-main-content"
+        class:mobile={isMobileDevice}
+        class:ai-assistant-active={isMobileDevice && activePage === 'ai-assistant'}
+      >
         {#if activePage === "deck-study"}
           <DeckStudyPage {dataStorage} {fsrs} {plugin} />
         {:else if activePage === "weave-card-management"}
-          <WeaveCardManagementPage {dataStorage} {fsrs} {plugin} />
+          <WeaveCardManagementPage {dataStorage} {fsrs} {plugin} {currentLeaf} />
         {:else if activePage === "incremental-reading"}
-          <!-- 增量阅读已移至全局侧边栏 -->
           <div class="removed-feature-notice">
             <div class="notice-icon">提示</div>
             <h3>增量阅读</h3>
-            <p>增量阅读功能已整合到左侧边栏中。<br/>点击左侧边栏的图标即可访问日历视图和材料列表。</p>
+            <p>增量阅读功能已整合到左侧边栏中。<br />点击左侧边栏图标即可访问日历视图和材料列表。</p>
           </div>
         {:else if activePage === "ai-assistant"}
-          <AIAssistantPage {plugin} {dataStorage} {fsrs} />
+          <AIAssistantPage
+            {plugin}
+            {dataStorage}
+            {fsrs}
+            onNavigate={(pageId) => {
+              activePage = pageId;
+            }}
+          />
         {:else if activePage === "settings"}
           <SettingsPage plugin={plugin as any} />
         {/if}
       </main>
-      
-      <!-- 插件配置模态窗 -->
       {#if showPluginConfigModal === 'auto-rules'}
         <AutoRulesConfigModal
           open={true}
@@ -280,16 +390,18 @@
   {/snippet}
 </ResponsiveContainer>
 
-<!-- ⚠️ 全局新建卡片模态窗已重构：不再使用 GlobalModalContainer，
-     现在直接在 main.ts 的 openCreateCardModal() 中挂载到 document.body -->
-
 <style>
   .weave-app {
+    --weave-surface-background: var(--background-primary);
+    --weave-surface: var(--weave-surface-background);
+    --weave-elevated-background: var(--background-secondary);
+    --weave-secondary-bg: var(--weave-elevated-background);
+    --weave-surface-secondary: var(--weave-elevated-background);
     height: 100%;
     width: 100%;
     display: flex;
     flex-direction: column;
-    background: var(--background-primary);
+    background: var(--weave-surface-background);
     color: var(--text-normal);
     font-family: var(--font-interface);
     overflow: hidden;
@@ -302,20 +414,41 @@
     overflow: hidden;
   }
 
+  :global(body.is-mobile) .weave-app,
+  :global(body.is-phone) .weave-app,
+  :global(body.is-mobile) .weave-app-inner,
+  :global(body.is-phone) .weave-app-inner {
+    height: var(--weave-mobile-viewport-height, 100%);
+    min-height: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
   .weave-main-content {
     flex: 1;
-    overflow-y: auto;  /* 🔧 修复：改为 auto 允许滚动 */
+    overflow-y: auto;
     display: flex;
     flex-direction: column;
-    /* 🔧 修复：移除固定的顶部间距，因为 SidebarNavHeader 现在在所有桌面端都显示 */
     padding-top: 0;
     margin-top: 0;
     transition: padding-top 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  /* 📱 移动端：始终不需要顶部间距（由各页面的 MobileHeader 处理） */
   .weave-main-content.mobile {
     padding-top: 0;
+    min-height: 0;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  .weave-main-content.mobile.ai-assistant-active {
+    overflow: hidden;
+    min-height: 0;
+  }
+
+  :global(body.is-mobile) :global(.workspace-leaf-content[data-type="weave-view"] .view-header-title-container),
+  :global(body.is-phone) :global(.workspace-leaf-content[data-type="weave-view"] .view-header-title-container) {
+    display: none !important;
   }
 
   /* 🗑️ 功能移除提示样式 */

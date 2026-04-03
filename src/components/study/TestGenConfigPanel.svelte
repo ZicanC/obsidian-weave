@@ -105,7 +105,7 @@
           checked={config.targetDeckStrategy === 'auto'}
           onchange={() => updateConfig({ targetDeckStrategy: 'auto', targetDeckId: undefined })}
         />
-        <span>自动创建对应的考试牌组</span>
+        <span>自动创建对应的考试题组</span>
       </label>
       
       <label class="radio-item">
@@ -136,7 +136,7 @@
   </div>
   
   <div class="config-hint">
-    自动模式会为当前牌组创建配套的考试牌组，手动模式可指定已存在的题库牌组
+    自动模式会为当前牌组创建配套的考试题组，手动模式可指定已存在的考试题组
   </div>
 </div>
 
@@ -266,22 +266,6 @@
     gap: 8px;
   }
   
-  .deck-select {
-    width: 100%;
-    padding: 8px 12px;
-    background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    color: var(--text-normal);
-    font-size: 13px;
-    margin-top: 8px;
-  }
-  
-  .deck-select:focus {
-    outline: none;
-    border-color: var(--interactive-accent);
-  }
-
   :global(.obsidian-dropdown-trigger.deck-select) {
     width: 100%;
     padding: 8px 12px;

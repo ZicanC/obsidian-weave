@@ -14,8 +14,10 @@
   import type { WeavePlugin } from "../../main";
   import type { Deck } from "../../data/types";
   import { Notice } from "obsidian";
+  import { get } from 'svelte/store';
   import { tr } from '../../utils/i18n';
   import { generateId } from '../../utils/helpers';
+  import { PremiumFeatureGuard, PREMIUM_FEATURES } from '../../services/premium/PremiumFeatureGuard';
 
   interface Props {
     open: boolean;
@@ -37,6 +39,9 @@
   let selectedTag = $state<string>("");
   let tagInput = $state("");
   let buildTarget = $state<'memory' | 'question-bank'>('memory');
+  const premiumGuard = PremiumFeatureGuard.getInstance();
+  let isPremium = $state(get(premiumGuard.isPremiumActive));
+  let showPremiumFeaturesPreview = $state(get(premiumGuard.premiumFeaturesPreviewEnabled));
   
   // 数据状态
   let availableDecks = $state<Deck[]>([]);
@@ -48,6 +53,31 @@
   let nameInputRef: HTMLInputElement | null = $state(null);
 
   let choiceQuestionUUIDs = $state<string[]>([]);
+
+  $effect(() => {
+    const unsubscribePremium = premiumGuard.isPremiumActive.subscribe(value => {
+      isPremium = value;
+    });
+    const unsubscribePreview = premiumGuard.premiumFeaturesPreviewEnabled.subscribe(value => {
+      showPremiumFeaturesPreview = value;
+    });
+
+    return () => {
+      unsubscribePremium();
+      unsubscribePreview();
+    };
+  });
+
+  const canShowQuestionBankBuildTarget = $derived(
+    premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.QUESTION_BANK, {
+      isPremium,
+      showPremiumPreview: showPremiumFeaturesPreview
+    })
+  );
+
+  const canUseQuestionBankBuildTarget = $derived(
+    premiumGuard.isPremiumFeature(PREMIUM_FEATURES.QUESTION_BANK) ? isPremium : true
+  );
 
   // 打开时初始化
   $effect(() => {
@@ -111,7 +141,35 @@
     })();
   });
 
+  $effect(() => {
+    if (buildTarget === 'question-bank' && !canShowQuestionBankBuildTarget) {
+      buildTarget = 'memory';
+    }
+  });
+
+  $effect(() => {
+    if (!open) return;
+
+    const toggleButton = document.querySelector('.modal-header .mode-dots') as HTMLButtonElement | null;
+    if (!toggleButton) return;
+
+    toggleButton.style.display = canShowQuestionBankBuildTarget ? '' : 'none';
+    toggleButton.title = buildTarget === 'memory'
+      ? (canUseQuestionBankBuildTarget ? '切换到组建考试题组' : '组建考试题组 (高级)')
+      : '切换到组建牌组';
+  });
+
   function toggleBuildTarget() {
+    if (!canShowQuestionBankBuildTarget) {
+      buildTarget = 'memory';
+      return;
+    }
+
+    if (buildTarget === 'memory' && !canUseQuestionBankBuildTarget) {
+      new Notice('组建考试题组是高级功能，请激活许可证后使用');
+      return;
+    }
+
     buildTarget = buildTarget === 'memory' ? 'question-bank' : 'memory';
   }
 
@@ -171,6 +229,12 @@
   // 提交创建
   async function handleSubmit() {
     if (!name.trim() || isSaving || selectedCardUUIDs.length === 0) return;
+
+    if (buildTarget === 'question-bank' && !canUseQuestionBankBuildTarget) {
+      errorMessage = '组建考试题组是高级功能，请激活许可证后使用';
+      new Notice(errorMessage);
+      return;
+    }
 
     if (buildTarget === 'question-bank' && choiceQuestionUUIDs.length === 0) return;
     
@@ -271,8 +335,8 @@
     <div class="modal" role="dialog" aria-modal="true" tabindex="0" 
 >
       <div class="modal-header">
-        <h3 class="header-title">{buildTarget === 'memory' ? '组建牌组' : '组建考试牌组'}</h3>
-        <button class="mode-dots" aria-label="切换组建目标" title={buildTarget === 'memory' ? '切换到组建考试牌组' : '切换到组建牌组'} onclick={toggleBuildTarget} type="button">
+        <h3 class="header-title">{buildTarget === 'memory' ? '组建牌组' : '组建考试题组'}</h3>
+        <button class="mode-dots" aria-label="切换组建目标" title={buildTarget === 'memory' ? '切换到组建考试题组' : '切换到组建牌组'} onclick={toggleBuildTarget} type="button">
           <span class="dot dot-red" class:active={buildTarget === 'memory'}></span>
           <span class="dot dot-blue" class:active={buildTarget === 'question-bank'}></span>
           <span class="dot dot-green"></span>
