@@ -4,9 +4,7 @@
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
   import BouncingBallsLoader from "../ui/BouncingBallsLoader.svelte";
 
-  import StudyInterface from "../study/StudyInterface.svelte";
   import type { WeaveDataStorage } from "../../data/storage";
-  import type { FSRS } from "../../algorithms/fsrs";
   import type { Card, Deck, DeckStats } from "../../data/types";
   import type { StudySession } from "../../data/study-types";
   import type { DataChangeEvent } from "../../services/DataSyncService";
@@ -26,7 +24,6 @@
   import { ClipboardImportModalObsidian } from "../modals/ClipboardImportModalObsidian";
   import CSVImportModal from "../modals/CSVImportModal.svelte";
   import { QuestionBankSelectorModal } from "../../modals/QuestionBankSelectorModal";
-  // MoveDeckModal 已移除 - 不再支持父子牌组层级结构
   import type { ImportResult } from "../../domain/apkg/types";
   import { Menu, Modal, Notice, Setting, TFile, normalizePath } from "obsidian";
   import type { DeckTreeNode } from "../../services/deck/DeckHierarchyService";
@@ -42,10 +39,6 @@
 // 导入视图组件
   import KanbanView from "../deck-views/KanbanView.svelte";
   import GridCardView from "../deck-views/GridCardView.svelte";
-  import CategoryFilter from "../deck-views/CategoryFilter.svelte";
-  
-// 导入题库组件
-  import QuestionBankListView from "../question-bank/QuestionBankListView.svelte";
   
   //  导入庆祝模态窗
   import CelebrationModal from "../modals/CelebrationModal.svelte";
@@ -66,7 +59,6 @@
   //  高级功能限制
   import { PremiumFeatureGuard, PREMIUM_FEATURES } from "../../services/premium/PremiumFeatureGuard";
   import ActivationPrompt from "../premium/ActivationPrompt.svelte";
-  import PremiumBadge from "../premium/PremiumBadge.svelte";
   import { get } from 'svelte/store';
   
   //  导入国际化
@@ -74,7 +66,6 @@
   
   //  导入移动端组件
   import MobileDeckStudyHeader from "../study/MobileDeckStudyHeader.svelte";
-  // MobileNavMenu 已移除 - 现在使用 Obsidian Menu API
   import { Platform } from 'obsidian';
 // 导入安全设置打开函数
   import { safeOpenSettings } from '../../utils/obsidian-api-safe';
@@ -87,7 +78,6 @@
 
   interface Props {
     dataStorage: WeaveDataStorage;
-    fsrs: FSRS;
     plugin: WeavePlugin;
   }
 
@@ -96,22 +86,15 @@
     deckId: string;
   }
 
-  let { dataStorage, fsrs, plugin }: Props = $props();
+  let { dataStorage, plugin }: Props = $props();
   let t = $derived($tr);
 
   // 核心状态
-  //  showStudyModal 已废弃 - 现在使用 plugin.openStudySession()
-  // let showStudyModal = $state(false);
-  let studyCards = $state<Card[]>([]);
   let showCSVImportModal = $state(false);
   
   //  加载状态
   let isLoading = $state(true);
 
-
-  // 创建子牌组和移动牌组功能已移除 - 不再支持父子牌组层级结构
-  
-  
   //  庆祝模态窗状态
   let showCelebrationModal = $state(false);
   let celebrationDeckName = $state<string>('');
@@ -140,7 +123,6 @@
 
   //  移动端状态
   let isMobile = $state(false);
-  // showMobileNavMenu 已移除 - 现在使用 Obsidian Menu API
   
   //  移动端彩色圆点配置（用于分类筛选）
   // 使用数据层的 Deck 类型
@@ -1514,9 +1496,7 @@
     
     try {
       isStartingStudy = true;
-      
-      // 先清空旧队列，避免误用上一次的学习卡片。
-      studyCards = [];
+      let cardsToStudy: Card[] = [];
       
       const deck = decks.find(d => d.id === deckId);
       const allDeckCardsRaw = await dataStorage.getDeckCards(deckId);
@@ -1553,12 +1533,11 @@
       
       if (isComplete) {
         logger.debug(`[DeckStudyPage] 牌组 ${deckId.slice(0, 8)} 今日学习已完成`);
-        // studyCards 已经在开头重置为 []
       } else {
         // 读取兄弟卡片过滤配置，并生成学习队列。
         const filterSiblings = plugin.settings.studyConfig?.siblingDispersion?.filterInQueue ?? true;
         
-        studyCards = await loadDeckCardsForStudy(
+        cardsToStudy = await loadDeckCardsForStudy(
           dataStorage,
           deckId,
           newCardsPerDay,
@@ -1567,18 +1546,18 @@
         );
         
         logger.debug(`[DeckStudyPage] 加载卡片完成:`, {
-          studyCardsLength: studyCards.length,
+          studyCardsLength: cardsToStudy.length,
           newCardsPerDay,
           learnedNewCardsToday,
-          cardIds: studyCards.slice(0, 3).map(c => c.uuid.slice(0, 8))
+          cardIds: cardsToStudy.slice(0, 3).map(c => c.uuid.slice(0, 8))
         });
       }
 
       // 只有拿到有效卡片时才继续打开学习会话。
-      const hasValidCards = studyCards && studyCards.length > 0;
+      const hasValidCards = cardsToStudy.length > 0;
       
       logger.debug(`[DeckStudyPage] 最终决策:`, {
-        studyCardsLength: studyCards?.length ?? 0,
+        studyCardsLength: cardsToStudy.length,
         hasValidCards,
         willOpenSession: hasValidCards
       });
@@ -1586,10 +1565,10 @@
       // 只有在确定有卡片可学时才打开学习界面
       if (hasValidCards) {
         // 传递卡片ID列表，避免 StudyView 重复加载。
-        const cardIds = studyCards.map(c => c.uuid);
+        const cardIds = cardsToStudy.map(c => c.uuid);
         logger.info(`[DeckStudyPage] 打开学习界面:`, {
           deckId: deckId.slice(0, 8),
-          cardCount: studyCards.length,
+          cardCount: cardsToStudy.length,
           cardIds: cardIds.slice(0, 3).map(id => id.slice(0, 8))
         });
         
@@ -1733,10 +1712,6 @@
       new Notice(t('deckStudyPage.studyActions.advanceStudyFailed'));
     }
   }
-
-  //  已移除：processProgressiveClozeCards 批量处理函数
-  // 原因：改为创建和编辑时自动处理（V2 架构：ProgressiveClozeGateway）
-  // 移除日期：2025-12-03
 
   async function pickQuestionBankForDeck(deckId: string): Promise<Deck | null> {
     const currentDeck = await dataStorage.getDeck(deckId);
@@ -1969,53 +1944,6 @@
       return t('deckStudyPage.time.minutesLater', { minutes: String(minutes) });
     }
   }
-
-  async function handleStudyComplete(session: StudySession) {
-    // 清理状态
-    studyCards = [];
-    
-// 刷新数据（学习完成后统计数据已变化）
-    await refreshData();
-
-    if (session.completionReason === 'paused-until-next-due') {
-      const nextDueTime = session.pendingNextDueAt ? formatNextDueTime(new Date(session.pendingNextDueAt)) : undefined;
-      new Notice(
-        nextDueTime
-          ? t('deckStudyPage.notices.shortTermResumeAt', { time: nextDueTime })
-          : t('deckStudyPage.notices.shortTermResumeSoon')
-      );
-      return;
-    }
-    
-    //  已移除旧的 CustomEvent 触发（Weave:refresh-decks）
-    // 现在通过 DataSyncService 在 saveStudySession 时自动通知
-    
-    //  显示庆祝界面
-    const deck = decks.find(d => d.id === session.deckId);
-    if (deck) {
-      const stats = deckStats[session.deckId];
-      
-      celebrationDeckName = deck.name;
-      celebrationDeckId = session.deckId;
-      celebrationStats = {
-        reviewed: session.cardsReviewed || 0,
-        studyTime: session.totalTime ? session.totalTime / 1000 : 0,
-        memoryRate: stats?.memoryRate ?? 0.9,
-        newCards: stats?.newCards ?? 0
-      };
-      showCelebrationModal = true;
-      
-      // 记录显示时间
-      const lastShownKey = `celebration-last-shown-${session.deckId}`;
-      vaultStorage.setItem(lastShownKey, Date.now().toString());
-    }
-  }
-
-  //  closeStudyModal 已废弃 - 学习界面现在由 plugin.openStudySession() 管理
-  // function closeStudyModal() {
-  //   showStudyModal = false;
-  //   studyCards = [];
-  // }
 
   // 编辑牌组（使用 Obsidian 原生 Modal API）
   async function editDeck(deckId: string) {
@@ -2557,9 +2485,6 @@
     }
   }
 
-
-  // 创建子牌组和移动牌组功能已移除 - 不再支持父子牌组层级结构
-
   //  打开牌组分析
   async function openDeckAnalytics(deckId: string) {
     try {
@@ -2755,9 +2680,6 @@
       }
     })();
   });
-
-  //  已移除旧的 CustomEvent 监听器（Weave:refresh-decks）
-  // 现在使用 DataSyncService 在 onMount 中统一订阅数据变更
 
   // 监听导航栏功能键事件
   $effect(() => {
@@ -3077,26 +2999,7 @@
     {/if}
   </div>
   {/if}
-
-  <!--  移动端导航菜单已改用 Obsidian Menu API，不再使用 MobileNavMenu 组件 -->
 </div>
-
-<!--  学习模态窗已移除 - 现在使用 plugin.openStudySession() -->
-<!-- 
-  学习界面现在通过 plugin.openStudySession() 打开（标签页模式）
--->
-<!-- 
-{#if showStudyModal}
-  <StudyInterface
-    cards={studyCards}
-    {fsrs}
-    {dataStorage}
-    {plugin}
-    onClose={closeStudyModal}
-    onComplete={handleStudyComplete}
-  />
-{/if}
--->
 
 
 <!-- CSV导入向导模态窗 -->
@@ -3196,14 +3099,8 @@
 
   /*  移动端内容区间距优化 */
   :global(body.is-mobile) .deck-study-content {
-    padding: 4px 2px; /* 🔧 减少内容区与标签页的间距 */
+    padding: 4px 2px; /* 减少内容区与标签页的间距 */
   }
-
-  /*  已移除未使用的CSS：.deck-list-container, .category-filter-wrapper, .deck-list-body */
-  /* 原因：这些类在HTML中未被使用，属于旧设计残留 */
-
-  /*  已移除未使用的CSS：.new-deck-header, .header-deck-name, .header-stat, .header-actions */
-  /* 原因：这些表头样式在HTML中未被使用，属于旧表格设计残留 */
 
 
   /* 卡片化数据行样式 - CSS Table布局 */
@@ -3518,8 +3415,4 @@
     font-weight: 600;
     font-size: 1.125rem;
   }
-
-  /*  已移除未使用的CSS：.mode-placeholder, .placeholder-icon, .placeholder-title, .placeholder-desc */
-  /* 原因：这些占位样式在HTML中未被使用 */ 
-
 </style>

@@ -63,10 +63,8 @@ let {
 let t = $derived($tr);
 
 // 状态管理
-//  移除暂停功能（影响使用体验）
 let isLoading = $state(true);
 let studyCards = $state<Card[]>([]);
-let showStudyContent = $state(false);
 
 //  庆祝模态窗状态
 let showCelebrationModal = $state(false);
@@ -75,7 +73,7 @@ let celebrationDeckId = $state<string>('');
 let celebrationStats = $state<CelebrationStats | null>(null);
 let shouldCloseAfterCelebration = $state(false); //  标记是否需要在庆祝后关闭
 
-// 状态监控（已移除调试日志）
+// 状态监控
 let currentDeckId = $state(untrack(() => deckId || ''));
 let currentDeckName = $state(untrack(() => deckName || ''));
 let currentMode = $state(untrack(() => mode));
@@ -160,8 +158,6 @@ onMount(async () => {
   await loadStudyCards();
 });
 
-//  移除暂停/恢复功能（影响使用体验）
-
 /**
  * 获取当前会话数据（用于持久化）
  */
@@ -234,17 +230,9 @@ export async function updateStudyParams(params: {
   initialCardIndex = 0;
   liveQueueProgress = null;
   isLoading = true;
-  showStudyContent = false;
   
   // 重新加载卡片
   await loadStudyCards();
-}
-
-/**
- *  向后兼容：保留旧的 updateDeckId 方法
- */
-export async function updateDeckId(newDeckId: string | undefined): Promise<void> {
-  await updateStudyParams({ deckId: newDeckId });
 }
 
 /**
@@ -412,9 +400,7 @@ async function loadStudyCards() {
       }
     }
     
-    if (studyCards.length > 0) {
-      showStudyContent = true;
-    } else {
+    if (studyCards.length === 0) {
       // 没有卡片时，立即显示友好提示并关闭
       logger.warn('[StudyViewWrapper] ⚠️ 无可学卡片，关闭学习界面');
       
@@ -766,7 +752,7 @@ async function handleStartPractice() {
 </script>
 
 <div class="weave-study-view-wrapper">
-  {#if !isLoading && showStudyContent && studyCards.length > 0}
+  {#if !isLoading && studyCards.length > 0}
     <!-- 学习内容区域 -->
     <div class="study-view-content">
       <div class="study-interface-embedded">
@@ -821,9 +807,6 @@ async function handleStartPractice() {
     overflow: hidden;
     position: relative;
   }
-
-  /*  移除暂停功能相关样式（影响使用体验） */
-
   @keyframes spin {
     to { transform: rotate(360deg); }
   }

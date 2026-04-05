@@ -1583,7 +1583,6 @@
   const viewPrefs = untrack(() => plugin.getStudyInterfaceViewPreferences());
   const hasStoredStudyInterfaceViewPreferences = untrack(() => Boolean(plugin.settings.studyInterfaceViewPreferences));
   
-  //  卡片关联相关状态 - 功能已移除
   let loadBalanceManager = $state<LoadBalanceManager | null>(null);
   
   // 向后兼容：如果settings中没有，尝试从localStorage读取
@@ -2795,10 +2794,6 @@
 
     return null;
   }
-
-  // 选择题状态管理函数已移除（选择题功能暂不支持）
-
-  // 热重载测试注释
 
   // 响应式刷新机制 - 确保界面状态与数据同步
   // --- 刷新触发器 ---
@@ -4582,9 +4577,6 @@
     }
   }
 
-  // 旧的编辑模态窗相关函数已移除，现在使用行内编辑
-
-
   async function handleDeleteCard(skipConfirm = false) {
     if (!currentCard) return;
 
@@ -5410,8 +5402,6 @@
     }
   }
 
-  //  saveAIActions已移除，Store自动处理保存
-
   function openAIActionManagerWithObsidianAPI() {
     if (aiActionManagerModalInstance) {
       aiActionManagerModalInstance.close();
@@ -6059,13 +6049,6 @@
     }
   }
   
-  //  初始化关联服务 - 功能已移除
-  // $effect(() => {
-  //   if (!relationService && dataStorage) {
-  //     relationService = new CardRelationshipService(dataStorage);
-  //   }
-  // });
-  
   //  初始化智能推荐服务
   $effect(() => {
     if (!loadBalanceManager && dataStorage && fsrs) {
@@ -6103,7 +6086,7 @@
   function handleOpenSourceNote() {
     if (!currentCard?.sourceFile) return;
     
-    // TODO: 打开源笔记
+    // 当前先提供提示，避免点击后无反馈。
     new Notice(t('studyInterface.notices.openingNote', { path: currentCard.sourceFile }));
   }
   
@@ -6161,7 +6144,7 @@
   }
 
   function handleOpenGraphLeaf() {
-    // TODO: 实现图谱打开逻辑
+    // 当前先提供提示，等图谱入口合并后再接入实际跳转。
     new Notice(t('studyInterface.notices.graphInDevelopment'));
   }
   
@@ -6295,8 +6278,7 @@
     }
   });
 
-  // setupBlockLinkHandlers已提取到utils/study/studyInterfaceUtils.ts
-  // 传统renderMarkdown渲染系统已完全移除 - 现在使用PreviewContainer统一处理所有题型渲染
+  // setupBlockLinkHandlers 已提取到 utils/study/studyInterfaceUtils.ts
 </script>
 
 <!--  全局键盘监听 - 修复 Obsidian 快捷键阻塞问题 -->
@@ -6501,8 +6483,6 @@
             </div><!-- 关闭 card-container -->
           </div><!-- 关闭 card-study-container -->
         {/if}
-
-      <!-- 右侧信息面板已移除 -->
 
       <!-- 子卡片浮层 -->
       {#if currentCard && !showEditModal && showChildCardsOverlay}
@@ -7738,7 +7718,7 @@
     inset: 0;
     z-index: var(--weave-z-menu);
     background: transparent;
-    pointer-events: none; /* 🔧 让遮罩层透明且不捕获鼠标事件 */
+    pointer-events: none; /* 让遮罩层透明且不捕获鼠标事件 */
   }
 
   .template-menu {
@@ -7753,7 +7733,7 @@
     transform: none;      /* 移除垂直居中，改用精确定位 */
     padding: 0;
     z-index: calc(var(--weave-z-menu) + 1);
-    pointer-events: auto; /* 🔧 恢复菜单内容的交互能力 */
+    pointer-events: auto; /* 恢复菜单内容的交互能力 */
   }
 
   .current-marker {
@@ -7940,8 +7920,6 @@
     transform: translateY(0);
   }
 
-  /*  已移除：左下角功能按钮区域（现在移到 footer-top-controls） */
-
   .compact-control-btn {
     display: flex;
     align-items: center;
@@ -8065,8 +8043,6 @@
     flex: 1;
     min-height: 0;
   }
-
-  /*  已移除：手机端 bottom-left-controls 样式（现在使用 footer-top-controls） */
 
   :global(body.is-phone) .compact-control-btn {
     width: var(--weave-mobile-touch-min, 44px);

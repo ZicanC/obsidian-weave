@@ -285,7 +285,7 @@ describe('SidebarNavHeader', () => {
     expect(menu.findItemByTitle('切换视图')).toBeUndefined();
     expect(menu.findItemByTitle('新建牌组')).toBeUndefined();
     expect(menu.findItemByTitle('数据源切换')).toBeUndefined();
-    expect(menu.findItemByTitle('旧版APKG格式导入')).toBeUndefined();
+    expect(menu.findItemByTitle('APKG导入')).toBeUndefined();
     expect(menu.findItemByTitle('导入CSV文件')).toBeUndefined();
     expect(menu.findItemByTitle('粘贴卡片批量导入')).toBeUndefined();
     expect(menu.findItemByTitle('操作管理')).toBeUndefined();
@@ -308,7 +308,7 @@ describe('SidebarNavHeader', () => {
 
     const menu = menuInstances[0];
     expect(menu.findItemByTitle('数据源切换')).toBeTruthy();
-    expect(menu.findItemByTitle('旧版APKG格式导入')).toBeUndefined();
+    expect(menu.findItemByTitle('APKG导入')).toBeUndefined();
     expect(menu.findItemByTitle('导入CSV文件')).toBeUndefined();
     expect(menu.findItemByTitle('粘贴卡片批量导入')).toBeUndefined();
     expect(menu.findItemByTitle('操作管理')).toBeUndefined();
@@ -433,7 +433,7 @@ describe('SidebarNavHeader', () => {
     await fireEvent.click(container.querySelector('.sidebar-menu-trigger')!);
 
     const menu = menuInstances[0];
-    expect(menu.findItemByTitle('旧版APKG格式导入')).toBeUndefined();
+    expect(menu.findItemByTitle('APKG导入')).toBeUndefined();
     expect(menu.findItemByTitle('导入CSV文件 (高级)')).toBeUndefined();
     expect(menu.findItemByTitle('粘贴卡片批量导入 (高级)')).toBeUndefined();
     expect(menu.findItemByTitle('设置')).toBeUndefined();

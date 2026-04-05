@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   import type { WeavePlugin } from "../main";
   import type { WeaveDataStorage } from "../data/storage";
   import type { FSRS } from "../algorithms/fsrs";
@@ -34,9 +34,8 @@
 
   let { plugin, dataStorage, fsrs, currentLeaf }: Props = $props();
   let activePage = $state<string>("deck-study");
-  let isMounted = $state(false);  // 🔥 添加挂载状态追踪
-  
-  // 📱 移动端检测状态
+
+  // 移动端检测状态
   let isMobileDevice = $state(false);
   
   // 侧边栏模式检测状态
@@ -143,9 +142,7 @@
   }
 
   onMount(() => {
-    isMounted = true;  // 🔥 标记组件已挂载
-    
-    // 📱 检测移动端设备
+    // 检测移动端设备
     isMobileDevice = Platform.isMobile || document.body.classList.contains('is-mobile');
     logger.debug('[WeaveApp] 移动端检测结果:', isMobileDevice);
     
@@ -158,7 +155,7 @@
       navigationVisibility = { ...e.detail };
       logger.debug('[WeaveApp] 导航可见性已更新:', navigationVisibility);
       
-      // 🔧 智能页面切换：如果当前页面被隐藏，自动切换到第一个可见页面
+      // 如果当前页面被隐藏，自动切换到第一个可见页面
       const pageVisibilityMap: Record<string, boolean> = {
         'deck-study': navigationVisibility.deckStudy !== false,
         'weave-card-management': navigationVisibility.cardManagement !== false,
@@ -291,27 +288,6 @@
     };
   });
 
-  onDestroy(() => {
-    isMounted = false;
-
-    if (themeClassCleanup) {
-      themeClassCleanup();
-      themeClassCleanup = null;
-    }
-    if (themeSurfaceCleanup) {
-      themeSurfaceCleanup();
-      themeSurfaceCleanup = null;
-    }
-    if (mobileViewportCleanup) {
-      mobileViewportCleanup();
-      mobileViewportCleanup = null;
-    }
-    if (nativeTooltipCleanup) {
-      nativeTooltipCleanup();
-      nativeTooltipCleanup = null;
-    }
-  });
-
   $effect(() => {
     window.dispatchEvent(new CustomEvent('Weave:page-changed', { detail: activePage }));
   });
@@ -361,7 +337,7 @@
         class:ai-assistant-active={isMobileDevice && activePage === 'ai-assistant'}
       >
         {#if activePage === "deck-study"}
-          <DeckStudyPage {dataStorage} {fsrs} {plugin} />
+          <DeckStudyPage {dataStorage} {plugin} />
         {:else if activePage === "weave-card-management"}
           <WeaveCardManagementPage {dataStorage} {fsrs} {plugin} {currentLeaf} />
         {:else if activePage === "incremental-reading"}
@@ -476,7 +452,7 @@
     margin-top: 0 !important;
   }
 
-  /* 🗑️ 功能移除提示样式 */
+  /* 功能移除提示样式 */
   .removed-feature-notice {
     display: flex;
     flex-direction: column;

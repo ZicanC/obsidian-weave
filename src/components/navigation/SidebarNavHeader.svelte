@@ -137,7 +137,7 @@
     { id: 'question-bank' as DeckFilter, name: '考试题组', colorStart: '#10b981', colorEnd: '#059669' }
   ];
 
-  // 🆕 卡片管理页面的彩色圆点配置（视图切换）
+  // 卡片管理页面的彩色圆点配置（视图切换）
   const cardViewTypes = [
     { id: 'table' as CardViewType, name: '表格视图', colorStart: '#ef4444', colorEnd: '#dc2626' },
     { id: 'grid' as CardViewType, name: '网格视图', colorStart: '#3b82f6', colorEnd: '#2563eb' },
@@ -340,7 +340,7 @@
 
     menu.addSeparator();
 
-    // 🆕 牌组学习页面专属功能（仅在牌组学习页面显示）
+    // 牌组学习页面专属功能（仅在牌组学习页面显示）
     if (currentPage === 'deck-study') {
       menu.addItem((item) => {
         item
@@ -472,7 +472,7 @@
       if (isAPKGImportMenuVisible()) {
         menu.addItem((item) => {
           item
-            .setTitle('旧版APKG格式导入')
+            .setTitle('APKG导入')
             .setIcon('package')
             .onClick(() => {
               const event = new CustomEvent('apkg-import', { detail: { event: evt } });
