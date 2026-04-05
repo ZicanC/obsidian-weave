@@ -3,7 +3,7 @@
 </script>
 
 <script lang="ts">
-        import { onDestroy, onMount } from 'svelte';
+        import { onDestroy, onMount, untrack } from 'svelte';
         import { setIcon, TFile, TAbstractFile, Menu, Notice, normalizePath } from 'obsidian';
         import type { App } from 'obsidian';
         import { VIEW_TYPE_EPUB } from '../../views/EpubView';
@@ -62,7 +62,7 @@
         let pendingBookshelfRefresh = false;
         let pendingBookshelfRefreshNotice = false;
         let coverLoadTimer: ReturnType<typeof setTimeout> | null = null;
-        const storageService = new EpubStorageService(app);
+        const storageService = untrack(() => new EpubStorageService(app));
         const MAX_VISIBLE_COVER_LOADS = 18;
         const BOOKSHELF_SETTINGS_CHANGED_EVENT = 'Weave:epub-bookshelf-settings-changed';
         const BOOKSHELF_REFRESH_REQUEST_EVENT = 'Weave:epub-bookshelf-refresh-request';
@@ -590,7 +590,7 @@
                         : displayBooks
         );
 
-        let lastHandledRefreshToken = refreshToken;
+        let lastHandledRefreshToken = untrack(() => refreshToken);
         let emptyStateMessage = $derived.by(() => {
                 const bookshelfSettings = getBookshelfSettings();
                 if (epubFiles.length > 0) {

@@ -58,37 +58,8 @@
     return ((Math.abs(hash) % 4) + 1) as 1 | 2 | 3 | 4;
   });
 
-  // 触摸追踪变量（用于区分点击和滑动）
-  let touchStartX = 0;
-  let touchStartY = 0;
-  const SWIPE_THRESHOLD = 10; // 移动超过10px视为滑动
-
   // 处理点击事件
   function handleClick() {
-    onStudy();
-  }
-
-  // 处理触摸开始（记录起始位置）
-  function handleTouchStart(event: TouchEvent) {
-    const touch = event.touches[0];
-    touchStartX = touch.clientX;
-    touchStartY = touch.clientY;
-  }
-
-  // 处理触摸事件（移动端优化）
-  function handleTouchEnd(event: TouchEvent) {
-    // 检测是否为滑动操作
-    const touch = event.changedTouches[0];
-    const deltaX = Math.abs(touch.clientX - touchStartX);
-    const deltaY = Math.abs(touch.clientY - touchStartY);
-    
-    // 如果移动距离超过阈值，视为滑动，不触发学习
-    if (deltaX > SWIPE_THRESHOLD || deltaY > SWIPE_THRESHOLD) {
-      return;
-    }
-    
-    // 防止触发 onclick 导致双重调用
-    event.preventDefault();
     onStudy();
   }
 
@@ -101,20 +72,8 @@
   // 处理菜单按钮点击
   function handleMenuClick(event: MouseEvent) {
     event.preventDefault();
+    event.stopPropagation();
     onMenu(event);
-  }
-
-  // 处理菜单按钮触摸（移动端）
-  function handleMenuTouchEnd(event: TouchEvent) {
-    event.preventDefault();
-    // 创建一个模拟的 MouseEvent 传递给 onMenu
-    const touch = event.changedTouches[0];
-    const mouseEvent = new MouseEvent('click', {
-      clientX: touch.clientX,
-      clientY: touch.clientY,
-      bubbles: false
-    });
-    onMenu(mouseEvent);
   }
 
   // 处理键盘事件
@@ -133,8 +92,6 @@
     if (event.defaultPrevented) return;
     handleClick();
   }}
-  ontouchstart={handleTouchStart}
-  ontouchend={handleTouchEnd}
   onkeydown={handleKeyDown}
   oncontextmenu={handleContextMenu}
   role="button"
@@ -151,7 +108,6 @@
   <button 
     class="menu-btn"
     onclick={handleMenuClick}
-    ontouchend={handleMenuTouchEnd}
     aria-label={t('decks.card.moreActions')}
     title={t('decks.card.moreActions')}
   >
@@ -191,6 +147,8 @@
 
   .chinese-elegant-card {
     position: relative;
+    width: 100%;
+    min-width: 0;
     height: 220px;
     border-radius: 16px;
     overflow: hidden;
@@ -199,6 +157,7 @@
     cursor: pointer;
     display: flex;
     flex-direction: column;
+    touch-action: manipulation;
   }
 
   .chinese-elegant-card:hover {
@@ -274,6 +233,7 @@
     backdrop-filter: blur(8px);
     transition: all 0.2s;
     opacity: 0;
+    touch-action: manipulation;
   }
 
   .chinese-elegant-card:hover .menu-btn {
@@ -324,6 +284,8 @@
   .stats-bar {
     display: flex;
     gap: 20px;
+    row-gap: 8px;
+    flex-wrap: wrap;
     color: rgba(255, 255, 255, 0.9);
     font-size: 13px;
   }
@@ -420,6 +382,71 @@
 
     .stat-value {
       font-size: 18px;
+    }
+  }
+
+  @container deck-card (max-width: 360px) {
+    .chinese-elegant-card {
+      height: 180px;
+      border-radius: 14px;
+    }
+
+    .card-content {
+      padding: 18px 18px;
+    }
+
+    .card-title {
+      font-size: 21px;
+    }
+
+    .stats-bar {
+      gap: 12px 16px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+    }
+
+    .stat-value {
+      font-size: 14px;
+    }
+
+    .menu-btn {
+      opacity: 1;
+    }
+  }
+
+  @container deck-card (max-width: 280px) {
+    .chinese-elegant-card {
+      height: 162px;
+      border-radius: 12px;
+    }
+
+    .card-content {
+      padding: 14px 14px;
+    }
+
+    .card-title {
+      font-size: 18px;
+    }
+
+    .stats-bar {
+      gap: 10px 12px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+    }
+
+    .stat-value {
+      font-size: 13px;
+    }
+
+    .menu-btn {
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
     }
   }
 </style>

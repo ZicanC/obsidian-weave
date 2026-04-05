@@ -18,6 +18,8 @@
   import { tr } from '../../utils/i18n';
   import { generateId } from '../../utils/helpers';
   import { PremiumFeatureGuard, PREMIUM_FEATURES } from '../../services/premium/PremiumFeatureGuard';
+  import { parseChoiceQuestion } from '../../parsing/choice-question-parser';
+  import { isInputClozeQuestionContent } from '../../utils/question-bank/input-cloze-utils';
 
   interface Props {
     open: boolean;
@@ -52,7 +54,7 @@
   // DOM引用
   let nameInputRef: HTMLInputElement | null = $state(null);
 
-  let choiceQuestionUUIDs = $state<string[]>([]);
+  let questionBankEligibleUUIDs = $state<string[]>([]);
 
   $effect(() => {
     const unsubscribePremium = premiumGuard.isPremiumActive.subscribe(value => {
@@ -79,6 +81,12 @@
     premiumGuard.isPremiumFeature(PREMIUM_FEATURES.QUESTION_BANK) ? isPremium : true
   );
 
+  const questionBankSkippedCount = $derived.by(() =>
+    buildTarget === 'question-bank'
+      ? Math.max(0, selectedCardUUIDs.length - questionBankEligibleUUIDs.length)
+      : 0
+  );
+
   // 打开时初始化
   $effect(() => {
     if (open) {
@@ -95,7 +103,7 @@
           tagInput = '';
           errorMessage = '';
           buildTarget = 'memory';
-          choiceQuestionUUIDs = [];
+          questionBankEligibleUUIDs = [];
           
           // 聚焦到名称输入框
           setTimeout(() => {
@@ -126,17 +134,13 @@
         const selectedCards = selectedCardUUIDs
           .map((uuid) => cardByUuid.get(uuid))
           .filter((c): c is (typeof allCards)[number] => c !== undefined);
-        const { parseChoiceQuestion } = await import('../../parsing/choice-question-parser');
         const uuids = selectedCards
-          .filter((c) => {
-            const parsed = parseChoiceQuestion(c.content);
-            return !!parsed;
-          })
+          .filter((c) => !!parseChoiceQuestion(c.content) || isInputClozeQuestionContent(c.content))
           .map((c) => c.uuid);
-        choiceQuestionUUIDs = uuids;
+        questionBankEligibleUUIDs = uuids;
       } catch (error) {
-        logger.error('[BuildDeckModal] 选择题筛选失败:', error);
-        choiceQuestionUUIDs = [];
+        logger.error('[BuildDeckModal] 题库题目筛选失败:', error);
+        questionBankEligibleUUIDs = [];
       }
     })();
   });
@@ -236,7 +240,7 @@
       return;
     }
 
-    if (buildTarget === 'question-bank' && choiceQuestionUUIDs.length === 0) return;
+    if (buildTarget === 'question-bank' && questionBankEligibleUUIDs.length === 0) return;
     
     errorMessage = '';
     isSaving = true;
@@ -292,9 +296,9 @@
 
         const createdBank = await plugin.questionBankService.createBank(bank);
 
-        const uuidsToAdd = choiceQuestionUUIDs.length > 0 ? choiceQuestionUUIDs : [];
+        const uuidsToAdd = questionBankEligibleUUIDs.length > 0 ? questionBankEligibleUUIDs : [];
         if (uuidsToAdd.length === 0) {
-          throw new Error('所选卡片中没有可加入题库的选择题');
+          throw new Error('所选卡片中没有可加入题库的选择题或带 #input 标签的挖空题');
         }
 
         await plugin.questionBankService.addQuestionRefs(createdBank.id, uuidsToAdd);
@@ -318,7 +322,7 @@
     tagInput = "";
     errorMessage = "";
     buildTarget = 'memory';
-    choiceQuestionUUIDs = [];
+    questionBankEligibleUUIDs = [];
     
     focusManager.restoreFocus();
     
@@ -413,9 +417,20 @@
           {#if buildTarget === 'memory'}
             <span>将引用 <strong>{selectedCardUUIDs.length}</strong> 张卡片</span>
           {:else}
-            <span>将引用 <strong>{choiceQuestionUUIDs.length}</strong> 题</span>
+            <span>将引用 <strong>{questionBankEligibleUUIDs.length}</strong> 题</span>
           {/if}
         </div>
+
+        {#if buildTarget === 'question-bank'}
+          <div class="build-target-hint">
+            <div class="build-target-hint-title">考试题组收录规则</div>
+            <div class="build-target-hint-text">仅收录选择题，以及内容中带 <code>#input</code> 标签的挖空题。</div>
+            <div class="build-target-hint-text">如果你希望某张挖空题进入考试题组，请先在卡片内容中加入 <code>#input</code> 标签。</div>
+            {#if questionBankSkippedCount > 0}
+              <div class="build-target-hint-warning">当前选中的卡片里有 <strong>{questionBankSkippedCount}</strong> 张不会加入考试题组。</div>
+            {/if}
+          </div>
+        {/if}
 
         <!-- 错误提示 -->
         {#if errorMessage}
@@ -429,7 +444,7 @@
         <button class="btn" onclick={closeModal}>取消</button>
         <button 
           class="btn primary" 
-          disabled={!name.trim() || isSaving || (buildTarget === 'memory' ? selectedCardUUIDs.length === 0 : choiceQuestionUUIDs.length === 0)} 
+          disabled={!name.trim() || isSaving || (buildTarget === 'memory' ? selectedCardUUIDs.length === 0 : questionBankEligibleUUIDs.length === 0)} 
           onclick={handleSubmit}
         >
           {isSaving ? '创建中...' : '创建'}
@@ -596,6 +611,38 @@
   .card-count-info strong {
     color: var(--interactive-accent);
     font-weight: 600;
+  }
+
+  .build-target-hint {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--background-secondary) 88%, var(--interactive-accent) 12%);
+    border: 1px solid color-mix(in srgb, var(--interactive-accent) 18%, var(--background-modifier-border));
+  }
+
+  .build-target-hint-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-normal);
+  }
+
+  .build-target-hint-text,
+  .build-target-hint-warning {
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+
+  .build-target-hint-warning {
+    color: var(--text-warning);
+  }
+
+  .build-target-hint code {
+    font-family: var(--font-monospace);
+    font-size: 0.8rem;
   }
   
   /* 错误提示 */

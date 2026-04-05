@@ -674,8 +674,8 @@ body.is-mobile .test-result-backdrop,
 body.is-mobile .resizable-modal-overlay,
 body.is-mobile .receipt-modal {
   position: fixed;
-  top: var(--weave-modal-top, 50px);
-  bottom: var(--weave-modal-bottom, 56px);
+  top: var(--weave-modal-top, env(safe-area-inset-top, 0px));
+  bottom: var(--weave-modal-bottom, env(safe-area-inset-bottom, 0px));
   left: 0;
   right: 0;
   background: transparent;
@@ -691,7 +691,10 @@ body.is-mobile .resizable-modal-overlay {
 body.is-mobile .weave-modal,
 body.is-mobile .test-result-card,
 body.is-mobile .receipt-modal .modal-content {
-  max-height: var(--weave-modal-max-height, calc(100vh - 130px));
+  max-height: var(
+    --weave-modal-max-height,
+    calc(100vh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px))
+  );
   overflow-y: auto;
   margin: 0 auto;
   border-radius: 16px;

@@ -15,7 +15,7 @@
   import { OFFICIAL_FORMAT_ACTIONS } from '../../constants/official-format-actions';
   import { DEFAULT_SPLIT_ACTIONS } from '../../data/default-split-actions';
   import { showObsidianConfirm } from '../../utils/obsidian-confirm';
-  import { Notice } from 'obsidian';
+  import { Menu, Notice } from 'obsidian';
   
   interface Props {
     show: boolean;
@@ -338,6 +338,62 @@
     }
   }
 
+  function showActionOperationsMenu(event: MouseEvent) {
+    const menu = new Menu();
+
+    menu.addItem((item) => {
+      item
+        .setTitle('新建')
+        .setIcon('plus')
+        .onClick(() => {
+          createNewAction();
+        });
+    });
+
+    if (selectedAction?.category === 'official') {
+      menu.addItem((item) => {
+        item
+          .setTitle('复制为自定义')
+          .setIcon('copy')
+          .onClick(() => {
+            duplicateAsCustom();
+          });
+      });
+    } else if (selectedAction?.category === 'custom') {
+      menu.addItem((item) => {
+        item
+          .setTitle('删除当前')
+          .setIcon('trash')
+          .onClick(() => {
+            deleteAction(selectedAction.id);
+          });
+      });
+    }
+
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item
+        .setTitle('恢复官方模板')
+        .setIcon('refresh-cw')
+        .onClick(() => {
+          void restoreOfficialTemplates();
+        });
+    });
+
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item
+        .setTitle(saveState === 'saving' ? '正在保存...' : saveState === 'saved' && !hasUnsavedChanges ? '已保存' : '保存')
+        .setIcon(saveState === 'saved' && !hasUnsavedChanges ? 'check' : 'save')
+        .setDisabled(!hasUnsavedChanges || saveState === 'saving')
+        .onClick(() => {
+          void saveChanges();
+        });
+    });
+
+    menu.showAtMouseEvent(event);
+  }
+
   async function saveChanges() {
     if (!hasUnsavedChanges || saveState === 'saving') return;
 
@@ -452,97 +508,29 @@
       <div class="action-toolbar-card">
         <div class="action-toolbar">
           <div class="action-toolbar-actions setting-item-control">
-            <div class="action-selector-control">
-              <ObsidianDropdown
-                options={actionSelectorOptions}
-                value={selectedActionValue}
-                placeholder={`选择${activeTypeDisplayName}功能`}
-                className="action-selector-dropdown"
-                disabled={actionSelectorOptions.length === 0}
-                onchange={handleActionSelect}
-              />
-            </div>
-
-            <button
-              type="button"
-              class="toolbar-btn obsidian-action-btn"
-              onclick={createNewAction}
-              title={`新建${activeTypeDisplayName}功能`}
-            >
-              <EnhancedIcon name="plus" size="14" />
-              <span>新建</span>
-            </button>
-
-            {#if selectedAction?.category === 'official'}
-              <button
-                type="button"
-                class="toolbar-btn obsidian-action-btn"
-                onclick={duplicateAsCustom}
-                title="复制为自定义功能"
-              >
-                <EnhancedIcon name="copy" size="14" />
-                <span>复制为自定义</span>
-              </button>
-            {:else if selectedAction?.category === 'custom'}
-              <button
-                type="button"
-                class="toolbar-btn obsidian-action-btn mod-warning"
-                onclick={() => deleteAction(selectedAction.id)}
-                title="删除当前功能"
-              >
-                <EnhancedIcon name="trash" size="14" />
-                <span>删除</span>
-              </button>
-            {/if}
-
-            <div class="toolbar-trailing-actions">
-              <button
-                type="button"
-                class="toolbar-btn obsidian-action-btn"
-                onclick={restoreOfficialTemplates}
-                title="恢复官方默认模板"
-              >
-                <EnhancedIcon name="refresh-cw" size="14" />
-                <span>恢复官方模板</span>
-              </button>
-
-              <div
-                class="toolbar-save-status"
-                class:dirty={hasUnsavedChanges}
-                class:saved={saveState === 'saved' && !hasUnsavedChanges}
-              >
-                <span>
-                  {#if saveState === 'saving'}
-                    正在保存...
-                  {:else if hasUnsavedChanges}
-                    有未保存更改
-                  {:else if saveState === 'saved'}
-                    保存成功
-                  {:else}
-                    当前已保存
-                  {/if}
-                </span>
+            <div class="action-primary-row">
+              <div class="action-selector-control">
+                <ObsidianDropdown
+                  options={actionSelectorOptions}
+                  value={selectedActionValue}
+                  placeholder={`选择${activeTypeDisplayName}功能`}
+                  className="action-selector-dropdown"
+                  disabled={actionSelectorOptions.length === 0}
+                  onchange={handleActionSelect}
+                />
               </div>
 
               <button
                 type="button"
-                class="toolbar-btn obsidian-action-btn mod-primary"
-                onclick={saveChanges}
-                disabled={!hasUnsavedChanges || saveState === 'saving'}
-                title="保存当前AI功能配置"
+                class="toolbar-btn obsidian-action-btn action-menu-btn"
+                onclick={(event) => showActionOperationsMenu(event)}
+                title="模板操作菜单"
               >
-                <EnhancedIcon name={saveState === 'saved' ? 'check' : 'save'} size="14" />
-                <span>
-                  {#if saveState === 'saving'}
-                    保存中...
-                  {:else if saveState === 'saved' && !hasUnsavedChanges}
-                    已保存
-                  {:else}
-                    保存
-                  {/if}
-                </span>
+                <EnhancedIcon name="more-horizontal" size="14" />
+                <span>操作</span>
               </button>
             </div>
+
           </div>
         </div>
 
@@ -821,6 +809,9 @@
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
     align-items: center;
     gap: var(--weave-space-lg);
+    padding: 12px 16px 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 76%, transparent);
+    background: var(--background-primary);
     min-width: 0;
   }
 
@@ -866,38 +857,6 @@
     justify-self: end;
   }
 
-  .toolbar-save-status {
-    flex-shrink: 0;
-    min-height: 40px;
-    padding: 0 14px;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
-    background: color-mix(in srgb, var(--background-secondary) 84%, transparent);
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-    font-size: 0.84rem;
-    display: flex;
-    align-items: center;
-    color: var(--text-muted, var(--weave-text-secondary));
-  }
-
-  .toolbar-save-status span {
-    display: flex;
-    align-items: center;
-    font-weight: 600;
-  }
-
-  .toolbar-save-status.dirty {
-    color: var(--text-warning, #f59e0b);
-    border-color: color-mix(in srgb, var(--text-warning, #f59e0b) 35%, var(--background-modifier-border));
-    background: color-mix(in srgb, var(--text-warning, #f59e0b) 12%, var(--background-secondary));
-  }
-
-  .toolbar-save-status.saved {
-    color: var(--text-success, #4caf50);
-    border-color: color-mix(in srgb, var(--text-success, #4caf50) 30%, var(--background-modifier-border));
-    background: color-mix(in srgb, var(--text-success, #4caf50) 12%, var(--background-secondary));
-  }
-
   .manager-layout {
     flex: 1;
     min-height: 0;
@@ -927,8 +886,8 @@
   }
 
   .action-selector-control {
-    flex: 1 1 360px;
-    min-width: 260px;
+    flex: 1 1 auto;
+    min-width: 0;
     max-width: 640px;
   }
 
@@ -961,10 +920,18 @@
   .action-toolbar-actions {
     width: 100%;
     display: flex;
-    align-items: center;
+    align-items: stretch;
+    flex-direction: column;
     justify-content: flex-start;
     gap: 10px;
-    flex-wrap: wrap;
+  }
+
+  .action-primary-row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
   }
 
   .toolbar-btn.obsidian-action-btn {
@@ -1004,33 +971,10 @@
     transform: none;
   }
 
-  .toolbar-btn.obsidian-action-btn.mod-warning {
-    color: var(--text-error, #ef4444);
-  }
-
-  .toolbar-btn.obsidian-action-btn.mod-warning:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--text-error, #ef4444) 45%, transparent);
-    background: color-mix(in srgb, var(--text-error, #ef4444) 10%, transparent);
-  }
-
-  .toolbar-btn.obsidian-action-btn.mod-primary {
-    color: var(--text-on-accent, #ffffff);
-    background: var(--interactive-accent, #2563eb);
-    border-color: color-mix(in srgb, var(--interactive-accent, #2563eb) 88%, black 12%);
-  }
-
-  .toolbar-btn.obsidian-action-btn.mod-primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--interactive-accent, #2563eb) 88%, white 12%);
-    border-color: color-mix(in srgb, var(--interactive-accent, #2563eb) 78%, black 22%);
-    color: var(--text-on-accent, #ffffff);
-  }
-
-  .toolbar-trailing-actions {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+  .action-menu-btn.toolbar-btn.obsidian-action-btn {
+    flex: 0 0 auto;
+    min-width: 84px;
+    padding-inline: 12px;
   }
 
   .ai-config-backdrop {
@@ -1316,6 +1260,7 @@
   
   @media (max-width: 768px) {
     .modal-toolbar {
+      padding: max(12px, env(safe-area-inset-top, 0)) 12px 10px;
       gap: 10px;
     }
 
@@ -1327,11 +1272,16 @@
 
     .modal-toolbar-title {
       font-size: 1rem;
+      line-height: 1.3;
     }
 
     .top-navigation-shell {
       max-width: 100%;
       overflow-x: auto;
+      padding: 0;
+      border: none;
+      background: transparent;
+      box-shadow: none;
     }
 
     .top-actions {
@@ -1354,14 +1304,60 @@
       justify-content: flex-start;
     }
 
-    .toolbar-trailing-actions {
-      width: 100%;
-      margin-left: 0;
-      justify-content: flex-start;
+    .action-primary-row {
+      gap: 8px;
+      grid-template-columns: minmax(0, 1fr) auto;
     }
 
     .toolbar-btn.obsidian-action-btn {
       flex: 1 1 140px;
+      border: none;
+      box-shadow: none;
+      background: var(--background-primary);
+      transition: background 0.18s ease, color 0.18s ease;
+    }
+
+    .toolbar-btn.obsidian-action-btn:hover:not(:disabled) {
+      transform: none;
+      border: none;
+      box-shadow: none;
+      background: var(--background-modifier-hover);
+    }
+
+    .toolbar-btn.obsidian-action-btn:focus-visible {
+      border: none;
+      box-shadow: none;
+      outline: 2px solid var(--background-modifier-border-focus);
+      outline-offset: 1px;
+    }
+
+    .action-menu-btn.toolbar-btn.obsidian-action-btn {
+      flex: 0 0 auto;
+      min-width: 76px;
+      padding: 10px 12px;
+    }
+
+    :global(.action-selector-dropdown.obsidian-dropdown-trigger) {
+      border: none;
+      box-shadow: none;
+      background: var(--background-primary);
+    }
+
+    :global(.action-selector-dropdown.obsidian-dropdown-trigger:hover:not(.disabled)) {
+      border: none;
+      background: var(--background-modifier-hover);
+    }
+
+    :global(.action-selector-dropdown.obsidian-dropdown-trigger:focus-visible) {
+      border: none;
+      box-shadow: none;
+      outline: 2px solid var(--background-modifier-border-focus);
+      outline-offset: 1px;
+    }
+
+    .top-actions :global(.weave-btn) {
+      border: none;
+      box-shadow: none;
     }
 
     .config-editor {

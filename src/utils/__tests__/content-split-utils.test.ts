@@ -1,5 +1,4 @@
 import { DEFAULT_RULE_SPLIT_CONFIG, type RuleSplitConfig } from '../../types/content-split-types';
-import { describe, expect, it } from 'vitest';
 import { deriveFileTitleFromContent, splitByRules } from '../content-split-utils';
 
 function createConfig(overrides: Partial<RuleSplitConfig> = {}): RuleSplitConfig {

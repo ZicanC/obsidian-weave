@@ -1,11 +1,12 @@
 ﻿<script lang="ts">
   import type { GenerationConfig, CustomSystemPrompt, PromptTemplate } from '../../types/ai-types';
   import type { WeavePlugin } from '../../main';
+  import { untrack } from 'svelte';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
   import ObsidianDropdown from '../ui/ObsidianDropdown.svelte';
   import { PromptBuilderService } from '../../services/ai/PromptBuilderService';
   import { OFFICIAL_SYSTEM_PROMPTS, getOfficialSystemPromptById } from '../../constants/official-system-prompts';
-  import { Notice } from 'obsidian';
+  import { Menu, Notice } from 'obsidian';
   import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   import { focusManager } from '../../utils/focus-manager';
 
@@ -62,7 +63,7 @@
     return initialized;
   }
   
-  let localConfig = $state<GenerationConfig>(initializeConfig(config));
+  let localConfig = $state<GenerationConfig>(untrack(() => initializeConfig(config)));
   
   let validationErrors = $state<string[]>([]);
 
@@ -259,19 +260,6 @@
     return resolveSystemPromptName(selectedSystemPromptId);
   });
 
-  const currentSystemPromptMeta = $derived(() => {
-    if (selectedSystemPromptId === null) {
-      return { label: '内置', tone: 'builtin' as const, description: '插件内置默认系统提示词' };
-    }
-
-    const official = getOfficialSystemPromptById(selectedSystemPromptId);
-    if (official) {
-      return { label: '官方', tone: 'official' as const, description: official.description || '官方系统提示词模板' };
-    }
-
-    return { label: '自定义', tone: 'custom' as const, description: '你创建的自定义系统提示词' };
-  });
-
   const activeCustomSystemPrompt = $derived(() => {
     if (!selectedSystemPromptId) return null;
     return customSystemPrompts.find((prompt) => prompt.id === selectedSystemPromptId) || null;
@@ -428,6 +416,52 @@
     }).catch(() => {
       new Notice('复制失败');
     });
+  }
+
+  function openSystemPromptActionsMenu(event: MouseEvent) {
+    const menu = new Menu();
+
+    menu.addItem((item) => {
+      item
+        .setTitle('复制')
+        .setIcon('copy')
+        .onClick(() => {
+          copySystemPromptToClipboard(selectedSystemPromptId);
+        });
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle('新建')
+        .setIcon('plus')
+        .setDisabled(customSystemPrompts.length >= 5)
+        .onClick(() => {
+          createSystemPrompt();
+        });
+    });
+
+    const activePrompt = activeCustomSystemPrompt();
+    if (activePrompt) {
+      menu.addItem((item) => {
+        item
+          .setTitle('编辑')
+          .setIcon('edit')
+          .onClick(() => {
+            editSystemPrompt(activePrompt.id);
+          });
+      });
+
+      menu.addItem((item) => {
+        item
+          .setTitle('删除')
+          .setIcon('trash')
+          .onClick(() => {
+            void deleteSystemPrompt(activePrompt.id);
+          });
+      });
+    }
+
+    menu.showAtMouseEvent(event);
   }
 
   const allUserPrompts = $derived([...officialPrompts, ...customUserPrompts]);
@@ -667,7 +701,7 @@
         >
           <div class="prompt-workspace">
             <div class="prompt-toolbar">
-              <div class="prompt-toolbar-main">
+              <div class="prompt-toolbar-main prompt-toolbar-main-inline">
                 <div class="prompt-selector-control">
                   <ObsidianDropdown
                     options={systemPromptOptions()}
@@ -677,51 +711,16 @@
                     onchange={handleSystemPromptDropdownChange}
                   />
                 </div>
-                <span class={`prompt-meta-badge ${currentSystemPromptMeta().tone}`}>
-                  {currentSystemPromptMeta().label}
-                </span>
-              </div>
-
-              <div class="prompt-toolbar-actions setting-item-control">
                 <button
                   type="button"
                   class="toolbar-btn obsidian-action-btn"
-                  onclick={() => copySystemPromptToClipboard(selectedSystemPromptId)}
-                  title="复制当前系统提示词"
+                  onclick={openSystemPromptActionsMenu}
+                  title="提示词操作菜单"
+                  aria-label="提示词操作菜单"
                 >
-                  <ObsidianIcon name="copy" size={14} />
-                  <span>复制</span>
+                  <ObsidianIcon name="more-horizontal" size={14} />
+                  <span>操作</span>
                 </button>
-                <button
-                  type="button"
-                  class="toolbar-btn obsidian-action-btn"
-                  onclick={createSystemPrompt}
-                  disabled={customSystemPrompts.length >= 5}
-                  title={customSystemPrompts.length >= 5 ? '最多创建5个自定义系统提示词' : '新建系统提示词'}
-                >
-                  <ObsidianIcon name="plus" size={14} />
-                  <span>新建</span>
-                </button>
-                {#if activeCustomSystemPrompt()}
-                  <button
-                    type="button"
-                    class="toolbar-btn obsidian-action-btn"
-                    onclick={() => editSystemPrompt(activeCustomSystemPrompt()!.id)}
-                    title="编辑当前系统提示词"
-                  >
-                    <ObsidianIcon name="edit" size={14} />
-                    <span>编辑</span>
-                  </button>
-                  <button
-                    type="button"
-                    class="toolbar-btn obsidian-action-btn mod-warning"
-                    onclick={() => deleteSystemPrompt(activeCustomSystemPrompt()!.id)}
-                    title="删除当前系统提示词"
-                  >
-                    <ObsidianIcon name="trash" size={14} />
-                    <span>删除</span>
-                  </button>
-                {/if}
               </div>
             </div>
 
@@ -770,12 +769,6 @@
                   <div class="preview-header prompt-preview-header">
                     <div class="preview-title-block">
                       <h4>{currentSystemPromptName()}</h4>
-                      <div class="preview-meta-line">
-                        <span class={`prompt-meta-badge ${currentSystemPromptMeta().tone}`}>
-                          {currentSystemPromptMeta().label}
-                        </span>
-                        <span class="preview-description">{currentSystemPromptMeta().description}</span>
-                      </div>
                     </div>
                   </div>
                   <pre class="preview-content">{currentSystemPrompt()}</pre>
@@ -1397,6 +1390,19 @@
     flex: 1;
   }
 
+  .prompt-toolbar-main-inline {
+    flex-wrap: nowrap;
+  }
+
+  .prompt-toolbar-main-inline .prompt-selector-control {
+    flex: 1 1 auto;
+    width: auto;
+  }
+
+  .prompt-toolbar-main-inline .obsidian-action-btn {
+    flex-shrink: 0;
+  }
+
   .prompt-selector-control {
     min-width: 0;
     width: min(420px, 100%);
@@ -1922,8 +1928,16 @@
       flex-wrap: wrap;
     }
 
+    .prompt-toolbar-main-inline {
+      flex-wrap: nowrap;
+    }
+
     .prompt-selector-control {
       width: 100%;
+    }
+
+    .prompt-toolbar-main-inline .prompt-selector-control {
+      width: auto;
     }
 
     .prompt-toolbar-actions {
@@ -2357,6 +2371,3 @@
   }
 
 </style>
-
-
-

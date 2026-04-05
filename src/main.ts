@@ -1018,6 +1018,7 @@ export class WeavePlugin extends Plugin {
 	public dataConsistencyService?: import("./services/reference-deck").DataConsistencyService;
 	public referenceMigrationService?: import("./services/reference-deck").ReferenceMigrationService;
 	public cardFileService?: import("./services/reference-deck").CardFileService;
+	private workspaceViewsRegistered = false;
 	private pluginLocalStateService?: PluginLocalStateService;
 	private deckViewPreferenceCache: string | null = null;
 	private studyInterfaceViewPreferencesCache: StudyInterfaceViewPreferences | null = null;
@@ -3287,8 +3288,34 @@ export class WeavePlugin extends Plugin {
 		}
 	}
 
+	private registerWorkspaceViews(): void {
+		if (this.workspaceViewsRegistered) {
+			return;
+		}
+
+		// 关键：必须在 onload 的首次 await 之前完成视图注册。
+		// 移动端重启时 workspace 恢复更早、更慢，若这里晚于恢复，Obsidian 会把旧 leaf 卡在 loading。
+		logger.debug("注册视图...");
+		this.registerView(VIEW_TYPE_WEAVE, (leaf) => new WeaveView(leaf, this));
+		this.registerView(VIEW_TYPE_STUDY, (leaf) => new StudyView(leaf, this));
+		this.registerView(VIEW_TYPE_QUESTION_BANK, (leaf) => new QuestionBankView(leaf, this));
+		this.registerView(VIEW_TYPE_IR_FOCUS, (leaf) => new IRFocusView(leaf, this));
+		this.registerView(VIEW_TYPE_IR_CALENDAR, (leaf) => new IRCalendarView(leaf, this));
+		this.registerView(VIEW_TYPE_EPUB, (leaf) => new EpubView(leaf, this));
+		this.registerView(VIEW_TYPE_EPUB_SIDEBAR, (leaf) => new EpubSidebarView(leaf, this));
+		this.registerExtensions(["epub"], VIEW_TYPE_EPUB);
+
+		this.workspaceViewsRegistered = true;
+		logger.info("✅ 视图已注册（在 workspace 恢复前）");
+	}
+
 	async onload() {
 		try {
+			this.registerWorkspaceViews();
+
+			// 依赖路径解析的能力也尽量提前准备，避免 layout-ready 即时触发时再碰到资源竞态。
+			this.wasmUrl = this.app.vault.adapter.getResourcePath(`${this.manifest.dir}/sql-wasm.wasm`);
+
 			// 🔥 热重载开发环境已启动 - 代码变更将自动构建
 			logger.info("🚀 Weave plugin loading with Hot Reload");
 			vaultStorage.setApp(this.app);
@@ -3340,18 +3367,6 @@ export class WeavePlugin extends Plugin {
 			initMobileModalAdaptation();
 			logger.info("✅ 移动端模态窗适配已初始化");
 
-			// 🔥 关键修复：在 workspace 恢复前注册视图
-			// 原因：Obsidian 会在 onLayoutReady 之前尝试恢复上次的 workspace 布局
-			// 如果此时视图还没注册，会显示"插件不再活动"错误
-			logger.debug("注册视图...");
-			this.registerView(VIEW_TYPE_WEAVE, (leaf) => new WeaveView(leaf, this));
-			this.registerView(VIEW_TYPE_STUDY, (leaf) => new StudyView(leaf, this));
-			this.registerView(VIEW_TYPE_QUESTION_BANK, (leaf) => new QuestionBankView(leaf, this)); // 🆕 考试学习视图
-			this.registerView(VIEW_TYPE_IR_FOCUS, (leaf) => new IRFocusView(leaf, this)); // 📖 增量阅读聚焦视图
-			this.registerView(VIEW_TYPE_IR_CALENDAR, (leaf) => new IRCalendarView(leaf, this)); // 📅 增量阅读日历视图
-			this.registerView(VIEW_TYPE_EPUB, (leaf) => new EpubView(leaf, this));
-			this.registerView(VIEW_TYPE_EPUB_SIDEBAR, (leaf) => new EpubSidebarView(leaf, this));
-			this.registerExtensions(["epub"], VIEW_TYPE_EPUB);
 			registerMobileCanvasPaneMenuPatch(this);
 
 			// EPUB link post-processor
@@ -3377,8 +3392,6 @@ export class WeavePlugin extends Plugin {
 				const linkService = new EpubLinkService(this.app);
 				await linkService.navigateToEpubLocation(parsed.filePath, parsed.cfi, parsed.text);
 			});
-
-			logger.info("✅ 视图已注册（在 workspace 恢复前）");
 
 			// 🔥 关键修复：等待 layout-ready 事件后再初始化数据存储
 			// 原因：Obsidian 文件系统在 layout-ready 之前可能尚未完全就绪
@@ -3498,9 +3511,6 @@ export class WeavePlugin extends Plugin {
 					logger.error("[UNHANDLED_REJECTION]", message, stack || e);
 				});
 			} catch {}
-
-			// wasmUrl设置（如果需要）
-			this.wasmUrl = this.app.vault.adapter.getResourcePath(`${this.manifest.dir}/sql-wasm.wasm`);
 
 			// 🎨 注册Ribbon图标（不依赖dataStorage）
 			this.addRibbonIcon("brain", "打开主界面", () => {
@@ -3954,49 +3964,7 @@ export class WeavePlugin extends Plugin {
 				name: i18n.t("commands.createIrReadingPointFromSelection.name"),
 				icon: "book-plus",
 				callback: async () => {
-					if (
-						!this.ensurePremiumFeatureAccess(
-							PREMIUM_FEATURES.INCREMENTAL_READING,
-							"增量阅读是高级功能，请激活许可证后使用"
-						)
-					) {
-						return;
-					}
-
-					try {
-						const context = this.getSelectionContextForIRQuickCreate();
-						if (!context) {
-							new Notice("请先在 Markdown 编辑界面中选中文本，或将光标放在有内容的行上", 3000);
-							return;
-						}
-
-						const draft = this.deriveIRReadingPointDraftFromSelection(context.selectedText);
-						const irSettings = this.getIncrementalReadingSettings();
-						const folderConfig = this.getSelectionQuickCreateFolderConfig();
-						const { SelectionToIRModal } = await import("./modals/SelectionToIRModal");
-
-						new SelectionToIRModal(this.app, {
-							sourceFileBasename: context.file.basename,
-							initialTitle: draft.title,
-							initialBody: draft.body,
-							initialFolder: folderConfig.initialFolder,
-							titleDetected: draft.titleDetected,
-							folderOptions: folderConfig.folderOptions,
-							deleteSourceSelection: irSettings.selectionQuickCreateDeleteSource,
-							backlinkPosition: irSettings.selectionQuickCreateBacklinkPosition,
-							sourceDocumentBacklinkPosition:
-								irSettings.selectionQuickCreateSourceDocumentBacklinkPosition,
-							onPreferenceChange: async (update) => {
-								await this.saveSelectionQuickCreatePreferences(update);
-							},
-							onSubmit: async (payload) => {
-								await this.createIRReadingPointFromSelection(context, payload);
-							},
-						}).open();
-					} catch (error) {
-						logger.error("[SelectionToIR] 打开从选区创建增量阅读点模态窗失败:", error);
-						new Notice("打开增量阅读点创建窗口失败，请重试", 3000);
-					}
+					await this.runSelectionToIRQuickCreate(this.getSelectionContextForIRQuickCreate());
 				},
 			});
 
@@ -6591,7 +6559,7 @@ export class WeavePlugin extends Plugin {
 
 		this.addCommand({
 			id: "ir-slim-markdown-frontmatter",
-			// eslint-disable-next-line obsidianmd/ui/sentence-case
+			// eslint-disable-next-line obsidianmd/ui/sentence-case -- Command label intentionally includes technical identifiers.
 			name: "清理增量阅读YAML冗余字段（ir-chunk/ir-index）",
 			icon: "eraser",
 			callback: async () => {
@@ -6718,6 +6686,7 @@ export class WeavePlugin extends Plugin {
 					if (!(view instanceof MarkdownView)) return;
 					const file = view.file;
 					if (!file) return;
+					const selection = editor.getSelection()?.trim() || "";
 
 					const weaveSubmenu = getWeaveOperationsSubmenu(menu);
 
@@ -6729,6 +6698,25 @@ export class WeavePlugin extends Plugin {
 								this.insertWeaveDeckViewCodeBlock(editor);
 							});
 					});
+
+					if (selection && this.shouldShowPremiumEntry(PREMIUM_FEATURES.INCREMENTAL_READING)) {
+						weaveSubmenu.addItem((item) => {
+							item
+								.setTitle(i18n.t("commands.createIrReadingPointFromSelection.name"))
+								.setIcon("book-plus")
+								.onClick(() => {
+									void this.runSelectionToIRQuickCreate({
+										file,
+										editor,
+										selectedText: selection,
+										selectionRange: {
+											from: editor.getCursor("from"),
+											to: editor.getCursor("to"),
+										},
+									});
+								});
+						});
+					}
 
 					// AI制卡工具栏
 					weaveSubmenu.addItem((item) => {
@@ -7102,6 +7090,61 @@ export class WeavePlugin extends Plugin {
 		}
 
 		await this.saveSettings();
+	}
+
+	private async runSelectionToIRQuickCreate(
+		context: {
+			file: TFile;
+			editor: Editor | null;
+			selectedText: string;
+			selectionRange: {
+				from: { line: number; ch: number };
+				to: { line: number; ch: number };
+			} | null;
+		} | null
+	): Promise<void> {
+		if (
+			!this.ensurePremiumFeatureAccess(
+				PREMIUM_FEATURES.INCREMENTAL_READING,
+				"增量阅读是高级功能，请激活许可证后使用"
+			)
+		) {
+			return;
+		}
+
+		if (!context) {
+			new Notice("请先在 Markdown 编辑界面中选中文本，或将光标放在有内容的行上", 3000);
+			return;
+		}
+
+		try {
+			const draft = this.deriveIRReadingPointDraftFromSelection(context.selectedText);
+			const irSettings = this.getIncrementalReadingSettings();
+			const folderConfig = this.getSelectionQuickCreateFolderConfig();
+			const { SelectionToIRModal } = await import("./modals/SelectionToIRModal");
+
+			new SelectionToIRModal(this.app, {
+				sourceFileBasename: context.file.basename,
+				initialTitle: draft.title,
+				initialBody: draft.body,
+				initialFolder: folderConfig.initialFolder,
+				titleDetected: draft.titleDetected,
+				folderOptions: folderConfig.folderOptions,
+				deleteSourceSelection: irSettings.selectionQuickCreateDeleteSource,
+				backlinkPosition: irSettings.selectionQuickCreateBacklinkPosition,
+				sourceDocumentBacklinkPosition:
+					irSettings.selectionQuickCreateSourceDocumentBacklinkPosition,
+				onPreferenceChange: async (update) => {
+					await this.saveSelectionQuickCreatePreferences(update);
+				},
+				onSubmit: async (payload) => {
+					await this.createIRReadingPointFromSelection(context, payload);
+				},
+			}).open();
+		} catch (error) {
+			logger.error("[SelectionToIR] 打开从选区创建增量阅读点模态窗失败:", error);
+			new Notice("打开增量阅读点创建窗口失败，请重试", 3000);
+		}
 	}
 
 	private getSelectionContextForIRQuickCreate(): {

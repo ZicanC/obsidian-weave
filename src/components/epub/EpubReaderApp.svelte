@@ -1,7 +1,7 @@
 <script lang="ts">
         import type { App, WorkspaceLeaf, TAbstractFile, EventRef } from 'obsidian';
         import { setIcon, MarkdownView, Notice, Menu, TFile, Platform, SuggestModal, TFolder } from 'obsidian';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import EpubReaderView from './EpubReaderView.svelte';
 	import BottomNav from './BottomNav.svelte';
 	import SelectionToolbar from './SelectionToolbar.svelte';
@@ -66,14 +66,22 @@
 		return 'paginated';
 	}
 
-	let readerService: EpubReaderEngine = new ReadiumReaderService(app);
-	let storageService = new EpubStorageService(app);
-	let annotationService = new EpubAnnotationService(storageService);
-	let locationMigrationService = new EpubLocationMigrationService(app, storageService, readerService);
-	let linkService = new EpubLinkService(app);
-	let screenshotService = new EpubScreenshotService(app);
-	let canvasService = new EpubCanvasService(app);
-	let backlinkService = new EpubBacklinkHighlightService(app);
+	function getReaderRootStyle(): string {
+		const effectiveLineHeight = typeof settings.lineHeight === 'number' && settings.lineHeight > 0
+			? settings.lineHeight
+			: getDefaultReaderLineHeight();
+		const pagedSafeInset = `${(effectiveLineHeight * 0.5).toFixed(3)}em`;
+		return `--epub-line-height: ${effectiveLineHeight}; --epub-paged-safe-top: ${pagedSafeInset}; --epub-paged-safe-bottom: ${pagedSafeInset};`;
+	}
+
+	let readerService: EpubReaderEngine = untrack(() => new ReadiumReaderService(app));
+	let storageService = untrack(() => new EpubStorageService(app));
+	let annotationService = untrack(() => new EpubAnnotationService(storageService));
+	let locationMigrationService = untrack(() => new EpubLocationMigrationService(app, storageService, readerService));
+	let linkService = untrack(() => new EpubLinkService(app));
+	let screenshotService = untrack(() => new EpubScreenshotService(app));
+	let canvasService = untrack(() => new EpubCanvasService(app));
+	let backlinkService = untrack(() => new EpubBacklinkHighlightService(app));
 
 	let book = $state<EpubBook | null>(null);
 	let loading = $state(true);
@@ -81,7 +89,7 @@
 	let readingProgress = $state(0);
 	let paginationInfo = $state<PaginationInfo>({ currentPage: 0, totalPages: 0 });
 	let readerVersion = $state(0);
-	let autoInsert = $state(initialAutoInsert);
+	let autoInsert = $state(untrack(() => initialAutoInsert));
 	let screenshotMode = $state(false);
 	let screenshotSaveAsImage = $state(true);
 	let tutorialVisible = $state(false);
@@ -102,7 +110,7 @@
 	let migratedLocationBookIds = new Set<string>();
 	let migratingLocationBookId: string | null = null;
 	const sourceLocateOverlay = getSourceLocateOverlayService();
-	const sourceNavigationService = new SourceNavigationService(app);
+	const sourceNavigationService = untrack(() => new SourceNavigationService(app));
 
 	type ReaderNavigationIntent = {
 		cfi?: string;
@@ -1556,6 +1564,7 @@
 	data-theme={settings.theme}
 	data-flow={settings.flowMode}
 	data-layout={settings.layoutMode}
+	style={getReaderRootStyle()}
 	bind:this={rootEl}
 >
 	{#if loading}

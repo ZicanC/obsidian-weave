@@ -2,7 +2,6 @@ import { LEGACY_PATHS } from '../../config/paths';
 import type { Deck } from '../../data/types';
 import { ReferenceMigrationService } from '../reference-deck/ReferenceMigrationService';
 import { getCardMetadata } from '../../utils/yaml-utils';
-import { afterEach, describe, expect, it, vi } from 'vitest';
 
 function normalizeTestPath(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/$/, '');
@@ -109,10 +108,6 @@ function createMemoryPlugin(initialFiles: Record<string, string> = {}) {
     files,
   };
 }
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
 
 describe('ReferenceMigrationService', () => {
   it('migrates legacy deck cards into YAML we_decks and removes legacy deckId', async () => {

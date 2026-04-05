@@ -2,15 +2,14 @@
   import { logger } from '../../utils/logger';
   import { vaultStorage } from '../../utils/vault-local-storage';
 
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { get } from 'svelte/store';
-  import { Menu, Notice } from 'obsidian';
+  import { Menu, Notice, type MenuPositionDef } from 'obsidian';
   import type { Deck, Card } from '../../data/types';
   import type { DeckTreeNode } from '../../services/deck/DeckHierarchyService';
   import type { WeaveDataStorage } from '../../data/storage';
   import type AnkiObsidianPlugin from '../../main';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
-  import ObsidianDropdown from '../ui/ObsidianDropdown.svelte';
   import DeckGridCard from './DeckGridCard.svelte';
   import ChineseElegantDeckCard from './ChineseElegantDeckCard.svelte';
   import type { DeckCardStyle } from '../../types/plugin-settings.d';
@@ -75,7 +74,7 @@
   }: Props = $props();
   
   // 状态管理
-  let groupBy = $state<DeckGroupByType>(initialGroupBy);
+  let groupBy = $state<DeckGroupByType>(untrack(() => initialGroupBy));
   let groupedDecks = $state<Record<string, Deck[]>>({});
   let isLoading = $state(false);
   let aggregationService: DeckAggregationService;
@@ -87,11 +86,8 @@
   let editingTagGroup = $state<DeckTagGroup | undefined>(undefined); // 编辑中的标签组
   
   // 看板配置状态
-  let showKanbanMenu = $state(false);
-  let menuView = $state<'main' | 'groupby'>('main');
-  let menuButtonRef = $state<HTMLElement | null>(null);
-  let menuRef = $state<HTMLElement | null>(null);
-  let menuPosition = $state({ top: 0, right: 0 });
+  let activeKanbanMenu: Menu | null = null;
+  let lastKanbanMenuPosition: MenuPositionDef | null = null;
   
   // 列可见性配置
   interface ColumnConfig {
@@ -109,9 +105,6 @@
   });
   
   // 拖拽状态
-  let dragSource = $state<string | null>(null);
-  let dragTarget = $state<string | null>(null);
-  
   // 拖拽状态管理
   let draggedDeck = $state<Deck | null>(null);
   let dragOverColumn = $state<string | null>(null);
@@ -122,7 +115,7 @@
   );
 
   //  初始化聚合服务，传入实时统计数据
-  aggregationService = new DeckAggregationService(dataStorage, deckStats);
+  aggregationService = untrack(() => new DeckAggregationService(dataStorage, deckStats));
   
   //  监听 deckStats 变化，动态更新服务
   $effect(() => {
@@ -300,12 +293,13 @@
     const handleOpenKanbanMenu = (e: Event) => {
       const detail = (e as CustomEvent<{ x: number; y: number }>).detail;
       if (detail) {
-        openKanbanMenuAtPosition(detail.x, detail.y);
+        openKanbanNativeMenuAtPosition(detail.x, detail.y);
       }
     };
     window.addEventListener('Weave:open-deck-kanban-menu', handleOpenKanbanMenu);
     
     return () => {
+      closeActiveKanbanMenu();
       window.removeEventListener('Weave:open-deck-kanban-menu', handleOpenKanbanMenu);
     };
   });
@@ -315,149 +309,400 @@
     // 直接保存，无需转换
     vaultStorage.setItem('weave-deck-kanban-columns', JSON.stringify(columnConfig));
   }
-  
-  // 菜单管理功能
-  function openKanbanMenu(event: MouseEvent) {
-    event.preventDefault();
-    
-    // 如果菜单已经显示，关闭它
-    if (showKanbanMenu) {
-      closeKanbanMenu();
+
+  function setSelectedTagGroupId(tagGroupId: string | null) {
+    selectedTagGroupId = tagGroupId;
+    if (tagGroupId) {
+      vaultStorage.setItem('weave-selected-tag-group', tagGroupId);
+    } else {
+      vaultStorage.removeItem('weave-selected-tag-group');
+    }
+  }
+
+  function getConfiguredGroups(): Array<{ key: string; label: string; color?: string; icon?: string }> {
+    const groups = currentGroupConfig.groups as Array<{ key: string; label: string; color?: string; icon?: string }>;
+    if (groups.length === 0) {
+      return [];
+    }
+
+    const groupMap = new Map(groups.map((group) => [group.key, group]));
+    const orderedKeys = columnConfig.order.filter((key) => groupMap.has(key));
+    const missingKeys = groups.map((group) => group.key).filter((key) => !orderedKeys.includes(key));
+
+    return [...orderedKeys, ...missingKeys]
+      .map((key) => groupMap.get(key))
+      .filter((group): group is { key: string; label: string; color?: string; icon?: string } => Boolean(group));
+  }
+
+  function ensureColumnOrderInitialized() {
+    const groups = getConfiguredGroups();
+    if (columnConfig.order.length === 0 && groups.length > 0) {
+      columnConfig.order = groups.map((group) => group.key);
+      saveColumnConfig();
+    }
+    return groups;
+  }
+
+  function moveConfiguredGroup(groupKey: string, direction: 'up' | 'down' | 'start' | 'end') {
+    const orderedKeys = ensureColumnOrderInitialized().map((group) => group.key);
+    const currentIndex = orderedKeys.indexOf(groupKey);
+    if (currentIndex === -1) {
       return;
     }
-    
-    // 计算菜单位置
-    if (menuButtonRef) {
-      const rect = menuButtonRef.getBoundingClientRect();
-      const viewportHeight = window.innerHeight;
-      const viewportWidth = window.innerWidth;
-      
-      // 计算位置（相对于视口）
-      let top = rect.bottom + 4;
-      let right = viewportWidth - rect.right;
-      
-      // 防止菜单超出视口
-      if (top + 400 > viewportHeight) {
-        top = rect.top - 400 - 4;
-      }
-      if (right + 280 > viewportWidth) {
-        right = viewportWidth - rect.left - 280;
-      }
-      
-      menuPosition = { top, right };
-    }
-    
-    // 初始化列顺序（如果没有配置）
-    if (columnConfig.order.length === 0) {
-      const columnKeys = Object.keys(groupedDecks);
-      if (columnKeys.length > 0) {
-        columnConfig.order = columnKeys;
-        saveColumnConfig();
-      }
-    }
-    
-    showKanbanMenu = true;
+
+    const nextOrder = [...orderedKeys];
+    const [movedKey] = nextOrder.splice(currentIndex, 1);
+
+    let targetIndex = currentIndex;
+    if (direction === 'up') targetIndex = Math.max(0, currentIndex - 1);
+    if (direction === 'down') targetIndex = Math.min(nextOrder.length, currentIndex + 1);
+    if (direction === 'start') targetIndex = 0;
+    if (direction === 'end') targetIndex = nextOrder.length;
+
+    nextOrder.splice(targetIndex, 0, movedKey);
+    columnConfig.order = nextOrder;
+    saveColumnConfig();
   }
-  
-  // 通过事件打开菜单（由移动端头部按钮触发）
-  function openKanbanMenuAtPosition(x: number, y: number) {
-    if (showKanbanMenu) {
-      closeKanbanMenu();
+
+  function buildKanbanMenuPosition(x: number, y: number): MenuPositionDef {
+    const padding = 12;
+    return {
+      x: Math.round(Math.min(Math.max(x, padding), window.innerWidth - padding)),
+      y: Math.round(Math.min(Math.max(y, padding), window.innerHeight - padding)),
+      overlap: false
+    };
+  }
+
+  function withSubmenu(item: unknown, builder: (submenu: Menu) => void) {
+    const submenuFactory = (item as { setSubmenu?: () => Menu }).setSubmenu;
+    if (typeof submenuFactory !== 'function') {
       return;
     }
-    
-    const viewportHeight = window.innerHeight;
-    const viewportWidth = window.innerWidth;
-    
-    let top = y + 4;
-    let right = viewportWidth - x;
-    
-    if (top + 400 > viewportHeight) {
-      top = y - 400 - 4;
+
+    const submenu = submenuFactory.call(item as { setSubmenu: () => Menu });
+    submenu.setUseNativeMenu(false);
+    builder(submenu);
+  }
+
+  function closeActiveKanbanMenu() {
+    if (!activeKanbanMenu) {
+      return;
     }
-    if (right + 280 > viewportWidth) {
-      right = 10;
-    }
-    
-    menuPosition = { top, right };
-    
-    if (columnConfig.order.length === 0) {
-      const columnKeys = Object.keys(groupedDecks);
-      if (columnKeys.length > 0) {
-        columnConfig.order = columnKeys;
-        saveColumnConfig();
+
+    const menu = activeKanbanMenu;
+    activeKanbanMenu = null;
+    menu.hide();
+  }
+
+  function registerKanbanMenu(menu: Menu) {
+    closeActiveKanbanMenu();
+    menu.setUseNativeMenu(false);
+    activeKanbanMenu = menu;
+    menu.onHide(() => {
+      if (activeKanbanMenu === menu) {
+        activeKanbanMenu = null;
       }
+    });
+    return menu;
+  }
+
+  function showKanbanNativeMenuAtPosition(position: MenuPositionDef) {
+    ensureColumnOrderInitialized();
+    lastKanbanMenuPosition = position;
+
+    const menu = registerKanbanMenu(new Menu());
+    buildKanbanNativeSettingsMenu(menu);
+    menu.showAtPosition(position);
+  }
+
+  function reopenKanbanNativeMenu() {
+    const position = lastKanbanMenuPosition;
+    if (!position) {
+      return;
     }
-    
-    showKanbanMenu = true;
+
+    closeActiveKanbanMenu();
+    window.setTimeout(() => {
+      showKanbanNativeMenuAtPosition(position);
+    }, 0);
   }
   
-  // 处理overlay点击：仅当点击的是overlay自身时才关闭
-  function handleOverlayClick(e: MouseEvent) {
-    // 只有点击的是overlay自身（不是子元素）时才关闭
-    if (e.target === e.currentTarget) {
-      closeKanbanMenu();
+  
+  // 保存标签组（创建或更新）
+  function openKanbanNativeMenuAtPosition(x: number, y: number) {
+    const position = buildKanbanMenuPosition(x, y + 4);
+
+    if (activeKanbanMenu) {
+      closeActiveKanbanMenu();
+      return;
     }
+
+    showKanbanNativeMenuAtPosition(position);
   }
-  
-  function closeKanbanMenu() {
-    showKanbanMenu = false;
-    menuView = 'main';
+
+  function buildKanbanNativeSettingsMenu(menu: Menu) {
+    menu.addItem((item) => {
+      item.setTitle(t('decks.kanban.viewOptions')).setIsLabel(true);
+    });
+
+    menu.addItem((item) => {
+      item
+        .setTitle(`${t('decks.kanban.groupByLabel')}: ${currentGroupLabel}`)
+        .setIcon(currentGroupConfig.icon || DECK_GROUP_CONFIGS[groupBy].icon);
+      withSubmenu(item, buildKanbanNativeGroupBySubmenu);
+    });
+
+    if (plugin) {
+      menu.addItem((item) => {
+        item
+          .setTitle(
+            selectedTagGroup
+              ? t('decks.kanban.tagGroupPrefix', { name: selectedTagGroup.name })
+              : t('decks.kanban.tagGroup')
+          )
+          .setIcon(selectedTagGroup?.icon || 'tags');
+        withSubmenu(item, buildKanbanNativeTagGroupSubmenu);
+      });
+    }
+
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.hideEmptyGroups'))
+        .setIcon(columnConfig.hideEmptyGroups ? 'check-square' : 'square')
+        .setChecked(columnConfig.hideEmptyGroups)
+        .onClick(() => {
+          handleToggleHideEmpty();
+          reopenKanbanNativeMenu();
+        });
+    });
+
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item.setTitle(t('decks.kanban.groups')).setIsLabel(true);
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(isAllHidden ? t('decks.kanban.showAllBtn') : t('decks.kanban.hideAllBtn'))
+        .setIcon(isAllHidden ? 'eye' : 'eye-off')
+        .onClick(() => {
+          handleToggleAllVisibility();
+          reopenKanbanNativeMenu();
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.reset'))
+        .setIcon('rotate-ccw')
+        .onClick(() => {
+          handleReset();
+          reopenKanbanNativeMenu();
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(t('cardManagement.tools.columnSettings'))
+        .setIcon('list');
+      withSubmenu(item, buildKanbanNativeColumnSubmenu);
+    });
   }
-  
-  function navigateBack() {
-    menuView = 'main';
-  }
-  
-  // 使用 Obsidian Menu API 打开分组方式选择菜单
-  function openGroupByMenu(event: MouseEvent) {
-    const menu = new Menu();
-    
+
+  function buildKanbanNativeGroupBySubmenu(menu: Menu) {
     const groupTypes: DeckGroupByType[] = deckMode === 'memory'
       ? ['completion', 'timeRange', 'priority', 'tag', 'tagGroup']
       : ['tag', 'tagGroup'];
-    
+    const tagGroupUnavailable = !plugin?.settings.deckTagGroups || plugin.settings.deckTagGroups.length === 0;
+
+    menu.addItem((item) => {
+      item.setTitle(t('decks.kanban.groupByLabel')).setIsLabel(true);
+    });
+
     for (const type of groupTypes) {
       const config = DECK_GROUP_CONFIGS[type];
+      const disabled = type === 'tagGroup' && tagGroupUnavailable;
+
       menu.addItem((item) => {
         item
           .setTitle(config.title)
           .setIcon(config.icon)
           .setChecked(groupBy === type)
+          .setDisabled(disabled)
           .onClick(() => {
-            handleGroupByChange(type);
+            void applyKanbanNativeGroupByChange(type);
           });
       });
     }
-    
-    menu.showAtMouseEvent(event);
   }
-  
-  // 分组方式切换
-  async function handleGroupByChange(newGroupBy: string) {
-    if (!['completion', 'timeRange', 'priority', 'tag', 'tagGroup'].includes(newGroupBy)) {
+
+  function buildKanbanNativeTagGroupSubmenu(menu: Menu) {
+    const tagGroups = plugin?.settings.deckTagGroups || [];
+
+    menu.addItem((item) => {
+      item.setTitle(t('decks.kanban.tagGroup')).setIsLabel(true);
+    });
+
+    if (tagGroups.length === 0) {
+      menu.addItem((item) => {
+        item
+          .setTitle(t('decks.kanban.createNew'))
+          .setIcon('plus')
+          .onClick(() => {
+            closeActiveKanbanMenu();
+            editingTagGroup = undefined;
+            showQuickCreator = true;
+          });
+      });
       return;
     }
-    
-    groupBy = newGroupBy as DeckGroupByType;
+
+    for (const tagGroup of tagGroups) {
+      menu.addItem((item) => {
+        item
+          .setTitle(`${tagGroup.icon ? `${tagGroup.icon} ` : ''}${tagGroup.name}`)
+          .setChecked(selectedTagGroupId === tagGroup.id)
+          .onClick(() => {
+            setSelectedTagGroupId(tagGroup.id);
+            void applyKanbanNativeGroupByChange('tagGroup');
+          });
+      });
+    }
+
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.newTagGroup'))
+        .setIcon('plus')
+        .onClick(() => {
+          closeActiveKanbanMenu();
+          editingTagGroup = undefined;
+          showQuickCreator = true;
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.editTagGroup'))
+        .setIcon('edit')
+        .setDisabled(!selectedTagGroupId)
+        .onClick(() => {
+          closeActiveKanbanMenu();
+          handleEditTagGroup();
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.deleteTagGroup'))
+        .setIcon('trash-2')
+        .setWarning(true)
+        .setDisabled(!selectedTagGroupId)
+        .onClick(() => {
+          closeActiveKanbanMenu();
+          void handleDeleteTagGroup();
+        });
+    });
+  }
+
+  function buildKanbanNativeColumnSubmenu(menu: Menu) {
+    const groups = getConfiguredGroups();
+
+    if (groups.length === 0) {
+      menu.addItem((item) => {
+        item.setTitle(t('decks.kanban.emptyColumn')).setDisabled(true);
+      });
+      return;
+    }
+
+    for (const [index, group] of groups.entries()) {
+      const hidden = columnConfig.hidden.includes(group.key);
+      const count = groupedDecks[group.key]?.length || 0;
+
+      menu.addItem((item) => {
+        item
+          .setTitle(`${group.label} (${count})`)
+          .setIcon(hidden ? 'eye-off' : 'eye')
+          .setChecked(!hidden);
+        withSubmenu(item, (submenu) => {
+          buildKanbanNativeSingleColumnSubmenu(submenu, group, index, groups.length);
+        });
+      });
+    }
+  }
+
+  function buildKanbanNativeSingleColumnSubmenu(
+    menu: Menu,
+    group: { key: string; label: string },
+    index: number,
+    total: number
+  ) {
+    const hidden = columnConfig.hidden.includes(group.key);
+
+    menu.addItem((item) => {
+      item.setTitle(group.label).setIsLabel(true);
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(hidden ? t('decks.kanban.showColumn') : t('decks.kanban.hideColumn'))
+        .setIcon(hidden ? 'eye' : 'eye-off')
+        .onClick(() => {
+          handleToggleVisibility(group.key);
+          reopenKanbanNativeMenu();
+        });
+    });
+    menu.addSeparator();
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.moveUp'))
+        .setIcon('arrow-up')
+        .setDisabled(index === 0)
+        .onClick(() => {
+          moveConfiguredGroup(group.key, 'up');
+          reopenKanbanNativeMenu();
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.moveDown'))
+        .setIcon('arrow-down')
+        .setDisabled(index === total - 1)
+        .onClick(() => {
+          moveConfiguredGroup(group.key, 'down');
+          reopenKanbanNativeMenu();
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.moveToFirst'))
+        .setIcon('chevrons-up')
+        .setDisabled(index === 0)
+        .onClick(() => {
+          moveConfiguredGroup(group.key, 'start');
+          reopenKanbanNativeMenu();
+        });
+    });
+    menu.addItem((item) => {
+      item
+        .setTitle(t('decks.kanban.moveToLast'))
+        .setIcon('chevrons-down')
+        .setDisabled(index === total - 1)
+        .onClick(() => {
+          moveConfiguredGroup(group.key, 'end');
+          reopenKanbanNativeMenu();
+        });
+    });
+  }
+
+  async function applyKanbanNativeGroupByChange(newGroupBy: DeckGroupByType) {
+    groupBy = newGroupBy;
     vaultStorage.setItem('weave-deck-kanban-groupby', newGroupBy);
-    
-    // 等待分组更新完成
+
     await tick();
-    
-    // 现在可以安全地访问 groupedDecks
+
     const newKeys = Object.keys(groupedDecks);
     columnConfig.order = newKeys;
     columnConfig.hidden = [];
     saveColumnConfig();
-    
-    //  短暂延迟后返回主菜单，让用户看到选择效果
-    setTimeout(() => {
-      navigateBack();
-    }, 200);
+
+    reopenKanbanNativeMenu();
   }
-  
-  // 保存标签组（创建或更新）
+
   async function handleSaveTagGroup(tagGroup: DeckTagGroup) {
     if (!plugin) return;
     
@@ -478,8 +723,7 @@
     await plugin.saveSettings();
     
     // 自动选择标签组
-    selectedTagGroupId = tagGroup.id;
-    vaultStorage.setItem('weave-selected-tag-group', tagGroup.id);
+    setSelectedTagGroupId(tagGroup.id);
     
     // 关闭创建器并清除编辑状态
     showQuickCreator = false;
@@ -516,8 +760,15 @@
     await plugin.saveSettings();
     
     // 清除选择
-    selectedTagGroupId = null;
-    vaultStorage.removeItem('weave-selected-tag-group');
+    const remainingTagGroups = plugin.settings.deckTagGroups || [];
+    if (remainingTagGroups.length > 0) {
+      setSelectedTagGroupId(remainingTagGroups[0].id);
+    } else {
+      setSelectedTagGroupId(null);
+      if (groupBy === 'tagGroup') {
+        await applyKanbanNativeGroupByChange('tag');
+      }
+    }
     
     new Notice(t('decks.kanban.tagGroupDeleted', { name: tagGroup.name }));
   }
@@ -532,15 +783,6 @@
     saveColumnConfig();
   }
   
-  // 列固定切换
-  function handleTogglePin(key: string) {
-    if (columnConfig.pinned.includes(key)) {
-      columnConfig.pinned = columnConfig.pinned.filter(k => k !== key);
-    } else {
-      columnConfig.pinned = [...columnConfig.pinned, key];
-    }
-    saveColumnConfig();
-  }
   
   // 隐藏空白分组切换
   function handleToggleHideEmpty() {
@@ -578,10 +820,6 @@
     return hiddenGroups >= totalGroups;
   });
 
-  // 计算属性：判断是否所有列都显示
-  const isAllVisible = $derived.by(() => {
-    return columnConfig.hidden.length === 0;
-  });
   
   // 重置配置
   function handleReset() {
@@ -594,54 +832,6 @@
     saveColumnConfig();
   }
   
-  // 拖拽功能
-  function handleColumnDragStart(groupKey: string) {
-    dragSource = groupKey;
-  }
-  
-  function handleColumnDragOver(e: DragEvent, groupKey: string) {
-    e.preventDefault();
-    if (dragSource && dragSource !== groupKey) {
-      dragTarget = groupKey;
-    }
-  }
-  
-  function handleColumnDrop(e: DragEvent, groupKey: string) {
-    e.preventDefault();
-    
-    if (dragSource && dragSource !== groupKey) {
-      // 获取当前显示的列顺序
-      const visibleGroups = orderedGroups.map((g: any) => g.key);
-      const sourceIndex = visibleGroups.indexOf(dragSource);
-      const targetIndex = visibleGroups.indexOf(groupKey);
-      
-      if (sourceIndex !== -1 && targetIndex !== -1) {
-        // 更新columnConfig.order中的顺序
-        const newOrder = [...columnConfig.order];
-        const sourcePos = newOrder.indexOf(dragSource);
-        const targetPos = newOrder.indexOf(groupKey);
-        
-        if (sourcePos !== -1 && targetPos !== -1) {
-          // 移除源项目
-          newOrder.splice(sourcePos, 1);
-          // 插入到目标位置
-          const adjustedTargetPos = sourcePos < targetPos ? targetPos - 1 : targetPos;
-          newOrder.splice(adjustedTargetPos, 0, dragSource);
-          
-          columnConfig.order = newOrder;
-          saveColumnConfig();
-        }
-      }
-    }
-    
-    dragSource = null;
-    dragTarget = null;
-  }
-  
-  function handleColumnDragEnd() {
-    dragSource = null;
-    dragTarget = null;
-  }
   
   // 获取牌组统计数据（用于显示）
   function getDeckStats(deck: Deck): any {
@@ -983,203 +1173,6 @@
   {/if}
 </div>
 
-<!-- 看板设置菜单 -->
-{#if showKanbanMenu}
-  <div 
-    class="weave-column-menu-overlay"
-    role="presentation"
-    onclick={handleOverlayClick}
-    onkeydown={(e) => {
-    }}
-  >
-    <div 
-      bind:this={menuRef}
-      class="weave-column-menu kanban-dropdown-menu" 
-      style="position: fixed; top: {menuPosition.top}px; right: {menuPosition.right}px;"
-      role="dialog"
-      aria-label={t('decks.kanban.kanbanSettings')}
-      tabindex="-1"
-    >
-      {#if menuView === 'main'}
-        <!-- 主菜单 -->
-        <div class="notion-menu-header">
-          <div class="notion-menu-title">
-            <EnhancedIcon name="sliders" size={14} />
-            <span>{t('decks.kanban.viewOptions')}</span>
-          </div>
-          <button class="notion-close-btn" onclick={closeKanbanMenu}>
-            <EnhancedIcon name="x" size={14} />
-          </button>
-        </div>
-        
-        <!-- 分组方式选择器（使用 Obsidian Menu API） -->
-        <div 
-          class="notion-menu-row notion-menu-row--clickable" 
-          role="button"
-          tabindex="0"
-          onclick={openGroupByMenu}
-          onkeydown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              openGroupByMenu(e as unknown as MouseEvent);
-            }
-          }}
-        >
-          <span class="notion-menu-label">{t('decks.kanban.groupByLabel')}</span>
-          <div class="notion-menu-value">
-            <span>{DECK_GROUP_BY_LABELS[groupBy]}</span>
-            <EnhancedIcon name="chevron-right" size={12} />
-          </div>
-        </div>
-        
-        <!-- 标签组选择器（仅在标签组分组模式下显示） -->
-        {#if groupBy === 'tagGroup' && plugin}
-          <div class="tag-group-selector-inline">
-            {#if plugin.settings.deckTagGroups && plugin.settings.deckTagGroups.length > 0}
-              <div class="notion-menu-row">
-                <span class="notion-menu-label">{t('decks.kanban.tagGroup')}</span>
-                <div>
-                  <ObsidianDropdown
-                    className="tag-group-select-mini"
-                    options={[
-                      { id: '', label: t('decks.kanban.selectPlaceholder') },
-                      ...plugin.settings.deckTagGroups.map((tg) => ({
-                        id: tg.id,
-                        label: `${tg.icon || '📦'} ${tg.name}`
-                      }))
-                    ]}
-                    value={selectedTagGroupId || ''}
-                    onchange={(value) => {
-                      selectedTagGroupId = value ? value : null;
-                      if (selectedTagGroupId) {
-                        vaultStorage.setItem('weave-selected-tag-group', selectedTagGroupId);
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-              <div class="tag-group-actions-mini">
-                <button class="notion-icon-btn" onclick={() => { editingTagGroup = undefined; showQuickCreator = true; }} title={t('decks.kanban.newTagGroup')}>
-                  <EnhancedIcon name="plus" size={12} />
-                </button>
-                {#if selectedTagGroupId}
-                  <button class="notion-icon-btn" onclick={handleEditTagGroup} title={t('decks.kanban.editTagGroup')}>
-                    <EnhancedIcon name="edit" size={12} />
-                  </button>
-                  <button class="notion-icon-btn danger" onclick={handleDeleteTagGroup} title={t('decks.kanban.deleteTagGroup')}>
-                    <EnhancedIcon name="trash-2" size={12} />
-                  </button>
-                {/if}
-              </div>
-            {:else}
-              <div class="notion-menu-row">
-                <span class="notion-menu-label">{t('decks.kanban.tagGroup')}</span>
-                <button class="notion-text-btn" onclick={() => showQuickCreator = true}>
-                  <EnhancedIcon name="plus" size={12} />
-                  <span>{t('decks.kanban.createNew')}</span>
-                </button>
-              </div>
-            {/if}
-          </div>
-        {/if}
-        
-        <div class="notion-divider"></div>
-        
-        <!-- 配置选项 -->
-        <div class="notion-menu-row">
-          <span class="notion-menu-label">{t('decks.kanban.hideEmptyGroups')}</span>
-          <div 
-            class="notion-toggle-mini {columnConfig.hideEmptyGroups ? 'active' : ''}"
-            role="switch"
-            tabindex="0"
-            aria-checked={columnConfig.hideEmptyGroups}
-            onclick={handleToggleHideEmpty}
-            onkeydown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                handleToggleHideEmpty();
-              }
-            }}
-          >
-            <div class="notion-toggle-thumb"></div>
-          </div>
-        </div>
-        
-        
-        <!-- 群组标题 -->
-        <div class="notion-section-header">
-          <span class="notion-section-title">{t('decks.kanban.groups')}</span>
-          <div class="notion-action-group">
-            <span 
-              class="notion-section-action" 
-              role="button"
-              tabindex="0"
-              onclick={handleReset}
-              onkeydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleReset();
-                }
-              }}
-            >{t('decks.kanban.reset')}</span>
-            <span class="notion-separator">·</span>
-            <span 
-              class="notion-section-action" 
-              role="button"
-              tabindex="0"
-              onclick={handleToggleAllVisibility}
-              onkeydown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleToggleAllVisibility();
-                }
-              }}
-              title={isAllHidden ? t('decks.kanban.showAll') : t('decks.kanban.hideAll')}
-            >{isAllHidden ? t('decks.kanban.showAllBtn') : t('decks.kanban.hideAllBtn')}</span>
-          </div>
-        </div>
-        
-        <!-- 群组列表 -->
-        <div class="notion-menu-content">
-          {#each currentGroupConfig.groups as group (group.key)}
-            {@const isHidden = columnConfig.hidden.includes(group.key)}
-            {@const isPinned = columnConfig.pinned.includes(group.key)}
-            
-            <div class="notion-group-item"
-                 class:dragging={dragSource === group.key}
-                 class:drag-over={dragTarget === group.key}
-                 draggable="true"
-                 role="button"
-                 tabindex="0"
-                 ondragstart={() => handleColumnDragStart(group.key)}
-                 ondragover={(e) => handleColumnDragOver(e, group.key)}
-                 ondrop={(e) => handleColumnDrop(e, group.key)}
-                 ondragend={handleColumnDragEnd}
-                 onkeydown={(e) => {
-                   if (e.key === 'Enter' || e.key === ' ') {
-                     e.preventDefault();
-                     // 拖拽功能的键盘替代方案可以后续实现
-                   }
-                 }}>
-              <div class="notion-drag-handle" role="presentation" aria-hidden="true">⋮⋮</div>
-              <div class="notion-group-name">{group.label}</div>
-              <div class="notion-group-actions">
-                <button class="notion-icon-btn {isHidden ? '' : 'active'}"
-                        onclick={(e) => {
-                          e.preventDefault();
-                          handleToggleVisibility(group.key);
-                        }}>
-                  <EnhancedIcon name={isHidden ? "eye-off" : "eye"} size={12} />
-                </button>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
-  </div>
-{/if}
-
 <!-- 快速创建/编辑标签组对话框 -->
 {#if showQuickCreator && plugin}
   <QuickTagGroupCreator
@@ -1197,6 +1190,8 @@
       --weave-card-panel-bg,
       var(--weave-elevated-background, var(--background-secondary))
     );
+    container-type: inline-size;
+    container-name: kanban-layout;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -1320,6 +1315,9 @@
   /* 牌组卡片包装器（用于拖拽） */
   .kanban-card-wrapper {
     margin-bottom: 12px;
+    min-width: 0;
+    container-type: inline-size;
+    container-name: deck-card;
     transition: all 0.2s;
   }
   
@@ -1351,13 +1349,13 @@
   }
   
   /* 响应式 */
-  @media (max-width: 1200px) {
+  @container kanban-layout (max-width: 1100px) {
     .kanban-columns {
       grid-template-columns: repeat(2, 1fr);
     }
   }
   
-  @media (max-width: 768px) {
+  @container kanban-layout (max-width: 760px) {
     .kanban-view {
       padding: 12px;
     }
@@ -1367,8 +1365,37 @@
     }
     
   }
+
+  @container kanban-layout (max-width: 420px) {
+    .kanban-view {
+      padding: 8px;
+      gap: 12px;
+    }
+
+    .kanban-columns {
+      gap: 10px;
+    }
+
+    .kanban-column {
+      padding: 12px;
+      border-radius: 10px;
+    }
+
+    .column-header {
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+    }
+
+    .header-title {
+      font-size: 14px;
+    }
+
+    .column-content {
+      gap: 10px;
+    }
+  }
   
-  /*  移动端专属样式 */
+  /* 移动端专属样式 */
   :global(body.is-mobile) .kanban-view {
     padding: 8px;
     padding-bottom: 60px; /* 为 Obsidian 底部栏留出空间 */
@@ -1419,335 +1446,5 @@
     padding: 20px 10px;
     font-size: 11px;
   }
-  
-  /* 下拉菜单样式 */
-  
-  .kanban-dropdown-menu {
-    width: 280px;
-    max-height: 400px;
-    background: var(--weave-kanban-panel-bg);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-    overflow: hidden;
-    z-index: var(--weave-z-overlay);
-    animation: dropdownSlideIn 0.15s ease;
-  }
-  
-  @keyframes dropdownSlideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-  
-  /* 菜单组件 */
-  .notion-menu-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid var(--background-modifier-border);
-  }
-  
-  .notion-menu-title {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--text-normal);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  
-  .notion-close-btn {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 6px;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    font-size: 12px;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: background-color 0.15s;
-  }
-  
-  .notion-close-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-  }
-  
-  .notion-menu-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 6px 12px;
-    font-size: 13px;
-    margin: 1px 6px;
-    border-radius: 4px;
-    transition: background-color 0.15s;
-  }
-  
-  .notion-menu-row--clickable {
-    cursor: pointer;
-  }
-  
-  .notion-menu-row--clickable:hover {
-    background: var(--background-modifier-hover);
-  }
-  
-  .notion-menu-label {
-    color: var(--text-normal);
-  }
-  
-  .notion-menu-value {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--text-muted);
-    font-size: 12px;
-  }
-  
-  /* 切换开关 */
-  .notion-toggle-mini {
-    width: 32px;
-    height: 18px;
-    border-radius: 10px;
-    background: var(--background-modifier-border);
-    position: relative;
-    cursor: pointer;
-    transition: background-color 0.2s;
-    flex-shrink: 0;
-    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, transparent);
-  }
-  
-  .notion-toggle-mini.active {
-    background: var(--interactive-accent);
-  }
-  
-  .notion-toggle-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--background-primary) 78%, white 22%);
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    transition: transform 0.2s;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 62%, transparent);
-  }
-  
-  .notion-toggle-mini.active .notion-toggle-thumb {
-    transform: translateX(14px);
-  }
-  
-  .notion-divider {
-    height: 1px;
-    background: var(--background-modifier-border);
-    margin: 4px 12px;
-  }
-  
-  .notion-section-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px 4px;
-  }
-  
-  .notion-section-title {
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-  
-  .notion-section-action {
-    font-size: 11px;
-    color: var(--text-accent);
-    cursor: pointer;
-  }
-  
-  .notion-section-action:hover {
-    text-decoration: underline;
-  }
-  
-  .notion-menu-content {
-    max-height: 250px;
-    overflow-y: auto;
-    padding: 4px 0;
-  }
-  
-  /* 群组项目 */
-  .notion-group-item {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    margin: 1px 6px;
-    border-radius: 4px;
-    cursor: grab;
-    transition: background-color 0.15s;
-    user-select: none;
-  }
-  
-  .notion-group-item:hover {
-    background: var(--background-modifier-hover);
-  }
-  
-  .notion-group-item.dragging {
-    opacity: 0.6;
-    cursor: grabbing;
-  }
-  
-  .notion-group-item.drag-over {
-    background: var(--weave-kanban-panel-bg);
-    border: 1px dashed var(--interactive-accent);
-  }
-  
-  .notion-drag-handle {
-    font-size: 12px;
-    color: var(--text-faint);
-    cursor: grab;
-  }
-  
-  .notion-group-name {
-    flex: 1;
-    font-size: 13px;
-    color: var(--text-normal);
-  }
-  
-  .notion-group-actions {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-  
-  .notion-icon-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 3px;
-    color: var(--text-faint);
-    cursor: pointer;
-    transition: all 0.15s;
-  }
-  
-  .notion-icon-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-muted);
-  }
-  
-  .notion-icon-btn.active {
-    color: var(--interactive-accent);
-    background: var(--interactive-accent-hover);
-  }
-  
-  .notion-separator {
-    font-size: 12px;
-    color: var(--text-faint);
-    margin: 0 2px;
-  }
-
-  .notion-action-group {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  /* Overlay 模式样式 */
-  .weave-column-menu-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: transparent;
-    z-index: var(--weave-z-overlay);
-    pointer-events: auto;
-  }
-
-  .weave-column-menu {
-    pointer-events: auto;
-    animation: slideIn 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  @keyframes slideIn {
-    from {
-      opacity: 0;
-      transform: translateY(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  /* 标签组选择器样式（内联版本） */
-  .tag-group-selector-inline {
-    padding: 4px 0;
-  }
-  
-  :global(.obsidian-dropdown-trigger.tag-group-select-mini) {
-    padding: 4px 8px;
-    font-size: 12px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-    background: var(--weave-kanban-panel-bg);
-    color: var(--text-normal);
-    cursor: pointer;
-    max-width: 140px;
-    min-height: 0;
-  }
-  
-  :global(.obsidian-dropdown-trigger.tag-group-select-mini:hover:not(.disabled)) {
-    border-color: var(--interactive-accent);
-  }
-  
-  .tag-group-actions-mini {
-    display: flex;
-    gap: 4px;
-    padding: 4px 12px;
-    justify-content: flex-end;
-  }
-  
-  .notion-text-btn {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    font-size: 12px;
-    color: var(--interactive-accent);
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  
-  .notion-text-btn:hover {
-    background: var(--background-modifier-hover);
-  }
-  
-  .notion-icon-btn.danger {
-    color: var(--text-error);
-  }
-  
-  .notion-icon-btn.danger:hover {
-    background: rgba(255, 0, 0, 0.1);
-  }
 
 </style>
-

@@ -175,11 +175,15 @@ $effect(() => {
 <style>
 /* =============== 贴纸模式样式 - 完全复用优先级贴纸设计 =============== */
 .difficulty-sticky-note {
+  --weave-sticker-slot: 3;
   position: absolute;
-  top: 16px;
-  right: 200px;  /* 在Learning Steps贴纸左侧 (110px + 75px + 15px间距) */
-  width: 75px;
-  height: 75px;
+  top: var(--weave-sticker-top, 20px);
+  right: calc(
+    var(--weave-sticker-right-start, 24px) +
+    (var(--weave-sticker-slot) * (var(--weave-sticker-size, 68px) + var(--weave-sticker-gap, 12px)))
+  );
+  width: var(--weave-sticker-size, 68px);
+  height: var(--weave-sticker-size, 68px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -215,8 +219,8 @@ $effect(() => {
   top: -7px;
   left: 50%;
   transform: translateX(-50%);
-  width: 48px;
-  height: 16px;
+  width: calc(var(--weave-sticker-size, 68px) * 0.7);
+  height: calc(var(--weave-sticker-size, 68px) * 0.235);
   background: rgba(255, 255, 255, 0.2);
   border-radius: 2px;
   backdrop-filter: blur(4px);
@@ -245,7 +249,7 @@ $effect(() => {
 
 /* 数字显示 - 方案13：纯数字 */
 .sticky-number {
-  font-size: 2.8rem;
+  font-size: clamp(1.9rem, calc(var(--weave-sticker-size, 68px) * 0.47), 2.8rem);
   line-height: 1;
   font-weight: 900;
   margin-bottom: 0.1rem;
@@ -253,7 +257,7 @@ $effect(() => {
 }
 
 .sticky-label {
-  font-size: 0.65rem;
+  font-size: clamp(0.54rem, calc(var(--weave-sticker-size, 68px) * 0.16), 0.65rem);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -328,25 +332,10 @@ $effect(() => {
 
 /* 移动端响应式 */
 @media (max-width: 768px) {
-  .difficulty-sticky-note {
-    width: 65px;
-    height: 65px;
-    top: 14px;
-    right: 170px;
-  }
-  
-  .sticky-number {
-    font-size: 2rem;
-  }
-  
-  .sticky-emoji {
-    font-size: 1.5rem;
-  }
-  
-  .sticky-label {
-    font-size: 0.6rem;
-  }
-  
+  .difficulty-sticky-note::before { top: -6px; }
+
+  .sticky-emoji { font-size: 1.5rem; }
+
   .sticky-tooltip {
     font-size: 10px;
   }

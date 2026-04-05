@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
 
   interface Props {
     initialDate: string;
@@ -12,8 +12,8 @@
 
   let { initialDate, initialTime, position, useObsidianModal = false, onCancel, onConfirm }: Props = $props();
 
-  let reviewDate = $state(initialDate);
-  let reviewTime = $state(initialTime);
+  let reviewDate = $state(untrack(() => initialDate));
+  let reviewTime = $state(untrack(() => initialTime));
 
   let modalEl: HTMLDivElement | null = $state(null);
   let left = $state(-9999);
@@ -109,7 +109,7 @@
     border: 1px solid var(--background-modifier-border);
     border-radius: 12px;
     box-shadow: var(--shadow-s);
-    z-index: var(--weave-z-modal);
+    z-index: var(--weave-z-popup, 2000);
     max-width: 450px;
     min-width: 350px;
     max-height: 80vh;

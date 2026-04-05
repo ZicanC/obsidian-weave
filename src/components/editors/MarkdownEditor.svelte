@@ -84,7 +84,7 @@
   let cleanup: (() => void)[] = [];
 
   // 默认扩展配置
-  const defaultExtensionConfig: Partial<ExtensionConfig> = {
+  let defaultExtensionConfig = $derived.by((): Partial<ExtensionConfig> => ({
     enableMarkdownSyntax: true,
     enableMarkdownShortcuts: true,
     enableObsidianLinks: true,
@@ -97,7 +97,7 @@
     enableSearch: true,
     enableFolding: true,
     ...extensionConfig
-  };
+  }));
 
   /**
    * 处理内容变更

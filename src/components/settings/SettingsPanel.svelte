@@ -34,7 +34,7 @@
   import { SETTINGS_TABS, DEFAULT_ACTIVE_TAB } from "./constants/settings-constants";
   import { showNotification } from "./utils/settings-utils";
 
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   
   //  导入国际化系统
   import { tr } from "../../utils/i18n";
@@ -54,7 +54,7 @@
   let isPremium = $state(false);
   
   // 本地响应式状态，用于实时跟踪高级功能预览设置
-  let showPremiumFeaturesPreview = $state(plugin.settings.showPremiumFeaturesPreview ?? false);
+  let showPremiumFeaturesPreview = $state(untrack(() => plugin.settings.showPremiumFeaturesPreview ?? false));
 
   // 订阅高级版状态
   $effect(() => {

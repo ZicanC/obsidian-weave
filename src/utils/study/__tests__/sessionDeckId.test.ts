@@ -1,5 +1,4 @@
 import { CardType, type Card, type Deck } from '../../../data/types';
-import { describe, expect, it } from 'vitest';
 import { resolveStudySessionDeckId } from '../sessionDeckId';
 
 function createDeck(overrides: Partial<Deck> = {}): Deck {
@@ -44,7 +43,7 @@ function createCard(overrides: Partial<Card> = {}): Card {
 }
 
 describe('resolveStudySessionDeckId', () => {
-  it('prefers the current study deck over the card source deck', () => {
+  it('优先使用当前学习牌组', () => {
     const resolved = resolveStudySessionDeckId({
       currentDeckId: 'memory-deck',
       firstCard: createCard(),
@@ -54,7 +53,7 @@ describe('resolveStudySessionDeckId', () => {
     expect(resolved).toBe('memory-deck');
   });
 
-  it('falls back to the card yaml deck when current deck is absent', () => {
+  it('当前牌组缺失时回退到 YAML 牌组', () => {
     const resolved = resolveStudySessionDeckId({
       firstCard: createCard(),
       decks: [createDeck()]
@@ -63,7 +62,7 @@ describe('resolveStudySessionDeckId', () => {
     expect(resolved).toBe('deck-target');
   });
 
-  it('falls back to card.deckId when yaml deck cannot be resolved', () => {
+  it('无法解析 YAML 牌组时回退到 card.deckId', () => {
     const resolved = resolveStudySessionDeckId({
       firstCard: createCard({ content: '没有 YAML 牌组', deckId: 'legacy-deck' }),
       decks: []

@@ -11,7 +11,7 @@
   import type { App } from 'obsidian';
   import type { IRBlock } from '../../types/ir-types';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { IRStorageService } from '../../services/incremental-reading/IRStorageService';
   import {
     calculatePsi,
@@ -41,7 +41,7 @@
   type ViewMode = 'info' | 'json' | 'calc';
   let currentView = $state<ViewMode>('info');
 
-  let totalReadingTimeSeconds = $state<number>((block as any).totalReadingTime ?? 0);
+  let totalReadingTimeSeconds = $state<number>(untrack(() => (block as any).totalReadingTime ?? 0));
 
   const formattedJson = $derived(JSON.stringify({
     ...block,
@@ -679,7 +679,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: var(--weave-z-top);
+    z-index: var(--weave-z-top, 10000);
     animation: fadeIn 0.2s ease-out;
   }
 

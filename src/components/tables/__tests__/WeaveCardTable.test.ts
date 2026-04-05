@@ -3,7 +3,7 @@ import WeaveCardTable from '../WeaveCardTable.svelte';
 import type { Card } from '../../../data/types';
 import { CardState } from '../../../data/types';
 import { vaultStorage } from '../../../utils/vault-local-storage';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DEFAULT_COLUMN_ORDER, type ColumnVisibility } from '../types/table-types';
 
 vi.mock('../../../utils/vault-local-storage', () => ({
   vaultStorage: {
@@ -78,10 +78,23 @@ const mockCards: Card[] = [
   }
 ];
 
+function createColumnVisibility(overrides: Partial<ColumnVisibility> = {}): ColumnVisibility {
+  const baseVisibility = {} as ColumnVisibility;
+
+  for (const key of DEFAULT_COLUMN_ORDER) {
+    baseVisibility[key] = false;
+  }
+
+  return {
+    ...baseVisibility,
+    ...overrides
+  };
+}
+
 const defaultProps = {
   cards: mockCards,
   selectedCards: new Set<string>(),
-  columnVisibility: {
+  columnVisibility: createColumnVisibility({
     front: true,
     back: true,
     status: true,
@@ -92,9 +105,9 @@ const defaultProps = {
     uuid: false,
     obsidian_block_link: false,
     source_document: false,
-    field_template: true, // 新增：字段模板列
-  },
-  columnOrder: ['front', 'back', 'status', 'tags', 'priority', 'created', 'actions'],
+    field_template: true
+  }),
+  columnOrder: [...DEFAULT_COLUMN_ORDER],
   onCardSelect: vi.fn(),
   onSelectAll: vi.fn(),
   onSort: vi.fn(),

@@ -1,10 +1,11 @@
 <!--
-  AnkiConnect高级设置组件
-  职责：媒体同步等高级功能配置
+  AnkiConnect 媒体同步设置组件
+  职责：控制卡片内容中的图片、音频等媒体文件是否上传到 Anki
 -->
 <script lang="ts">
-  import PremiumBadge from '../../../premium/PremiumBadge.svelte';
-  import { PREMIUM_FEATURES } from '../../../../services/premium/PremiumFeatureGuard';
+  import { tr } from '../../../../utils/i18n';
+
+  let t = $derived($tr);
 
   interface MediaSyncSettings {
     enabled: boolean;
@@ -12,26 +13,21 @@
 
   interface Props {
     mediaSync: MediaSyncSettings;
-    isPremium: boolean;
     onMediaSyncChange: () => void;
-    onShowActivationPrompt: (featureId: string) => void;
   }
 
   let { 
     mediaSync, 
-    isPremium,
-    onMediaSyncChange,
-    onShowActivationPrompt
+    onMediaSyncChange
   }: Props = $props();
 </script>
 
 <div class="advanced-settings">
-  <!-- 启用媒体同步 -->
   <div class="setting-item">
     <div class="setting-info">
-      <div class="setting-label">启用媒体同步</div>
+      <div class="setting-label">{t('ankiConnect.advanced.mediaSyncLabel')}</div>
       <div class="setting-description">
-        同步图片、音频等媒体文件到 Anki
+        {t('ankiConnect.advanced.mediaSyncDesc')}
       </div>
     </div>
     <div class="setting-control">
@@ -54,4 +50,3 @@
     gap: 16px;
   }
 </style>
-

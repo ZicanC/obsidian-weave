@@ -3,6 +3,7 @@
   职责：纯展示型模态窗，使用Tab方式展示卡片完整信息
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { logger } from '../../utils/logger';
 
   import { Platform } from 'obsidian';
@@ -42,16 +43,16 @@
   }: Props = $props();
 
   // 内部卡片状态，用于动态刷新
-  let currentCard = $state<Card>(card);
+  let currentCard = $state<Card>(untrack(() => card));
 
   // 当前激活的Tab
   let activeTab = $state<TabId>('info');
 
-  // Tab定义 -  移动端仅显示图标
+  // Tab定义 - 移动端显示文本功能键（不显示图标）
   let tabs = $derived([
-    { id: 'info' as TabId, label: isMobile ? '' : t('modals.viewCard.tabInfo'), icon: 'file-text' },
-    { id: 'stats' as TabId, label: isMobile ? '' : t('modals.viewCard.tabStats'), icon: 'bar-chart-2' },
-    { id: 'curve' as TabId, label: isMobile ? '' : t('modals.viewCard.tabCurve'), icon: 'activity' }
+    { id: 'info' as TabId, label: t('modals.viewCard.tabInfo'), icon: isMobile ? '' : 'file-text' },
+    { id: 'stats' as TabId, label: t('modals.viewCard.tabStats'), icon: isMobile ? '' : 'bar-chart-2' },
+    { id: 'curve' as TabId, label: t('modals.viewCard.tabCurve'), icon: isMobile ? '' : 'activity' }
   ]);
 
   // 牌组名称和模板名称 - 使用$derived确保响应式更新

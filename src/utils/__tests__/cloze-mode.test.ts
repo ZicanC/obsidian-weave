@@ -16,12 +16,14 @@ describe('cloze-mode', () => {
     expect(detectClozeModeFromContent(content)).toBe('input');
   });
 
-  it('detects input mode from yaml tag or content tag', () => {
-    const yamlTagContent = ['---', 'tags:', '  - we_input', '---', '', 'France capital is ==Paris==.'].join('\n');
-    const contentTagContent = 'France capital is ==Paris==. #we_input';
+  it('detects input mode from yaml tag or content tag aliases', () => {
+    const yamlTagContent = ['---', 'tags:', '  - input', '---', '', 'France capital is ==Paris==.'].join('\n');
+    const contentTagContent = 'France capital is ==Paris==. #input';
+    const legacyContentTagContent = 'France capital is ==Paris==. #we_input';
 
     expect(detectClozeModeFromContent(yamlTagContent)).toBe('input');
     expect(detectClozeModeFromContent(contentTagContent)).toBe('input');
+    expect(detectClozeModeFromContent(legacyContentTagContent)).toBe('input');
   });
 
   it('keeps compatibility with legacy directive', () => {
@@ -44,12 +46,13 @@ describe('cloze-mode', () => {
   });
 
   it('removes yaml field and legacy markers when switching back to reveal mode', () => {
-    const content = ['---', 'we_type: cloze', 'we_cloze_mode: input', '---', '', '%%weave-cloze-mode: input%%', '', '#we_input', '', 'France capital is ==Paris==. #we_input'].join('\n');
+    const content = ['---', 'we_type: cloze', 'we_cloze_mode: input', '---', '', '%%weave-cloze-mode: input%%', '', '#input', '', 'France capital is ==Paris==. #we_input #input'].join('\n');
     const output = setClozeModeInContent(content, 'reveal');
 
     expect(output).not.toContain('we_cloze_mode');
     expect(output).not.toContain('%%weave-cloze-mode');
     expect(output).not.toContain('#we_input');
+    expect(output).not.toContain('#input');
     expect(output).toBe(['---', 'we_type: cloze', '---', '', 'France capital is ==Paris==.'].join('\n'));
   });
 

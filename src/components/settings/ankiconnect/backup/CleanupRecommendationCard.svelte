@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { CleanupRecommendation } from '../../../../types/backup-types';
   import { tr } from '../../../../utils/i18n';
 
@@ -12,7 +13,7 @@
   let { recommendation, onCleanup }: Props = $props();
 
   let selectedIds = $state<Set<string>>(
-    new Set(recommendation.recommendedDeletions.map(item => item.backupId))
+    untrack(() => new Set(recommendation.recommendedDeletions.map(item => item.backupId)))
   );
 
   function toggleItem(id: string) {

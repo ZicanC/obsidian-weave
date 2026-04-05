@@ -4,7 +4,7 @@
    * 提供用户友好的错误信息和操作指导
    */
   
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, untrack } from 'svelte';
   import EnhancedIcon from './EnhancedIcon.svelte';
   import EnhancedButton from './EnhancedButton.svelte';
 
@@ -57,7 +57,7 @@
     toggleDetails: { expanded: boolean };
   }>();
 
-  let isExpanded = $state(showDetails);
+  let isExpanded = $state(untrack(() => showDetails));
   let isDismissed = $state(false);
 
   // 获取图标

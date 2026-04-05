@@ -3,10 +3,11 @@ export type ClozeMode = "reveal" | "input";
 const CLOZE_MODE_DIRECTIVE_REGEX = /%%\s*weave-cloze-mode\s*:\s*(input|reveal)\s*%%/i;
 const YAML_FRONTMATTER_CAPTURE_REGEX = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)?/;
 const CLOZE_MODE_YAML_FIELD_REGEX = /^\s*we_cloze_mode\s*:\s*(input|reveal)\s*$/im;
-const CLOZE_MODE_TAG_LINE_REGEX = /^[ \t]*#we_input[ \t]*$/gim;
-const CLOZE_MODE_TAG_TOKEN_REGEX = /(^|\s)#we_input\b/gim;
-const CLOZE_MODE_YAML_TAG_ITEM_REGEX = /^\s*-\s*["']?we_input["']?\s*$/im;
-const CLOZE_MODE_YAML_INLINE_TAG_REGEX = /^\s*tags\s*:\s*\[[^\]]*\bwe_input\b[^\]]*\]\s*$/im;
+const CLOZE_MODE_TAG_LINE_REGEX = /^[ \t]*#(?:we_)?input[ \t]*$/gim;
+const CLOZE_MODE_TAG_TOKEN_REGEX = /(^|\s)#(?:we_)?input\b/gim;
+const CLOZE_MODE_YAML_TAG_ITEM_REGEX = /^\s*-\s*["']?(?:we_input|input)["']?\s*$/im;
+const CLOZE_MODE_YAML_INLINE_TAG_REGEX =
+	/^\s*tags\s*:\s*\[[^\]]*\b(?:we_input|input)\b[^\]]*\]\s*$/im;
 const CLOZE_MODE_KEY_LINE_REGEX = /^\s*we_cloze_mode\s*:\s*(input|reveal)\s*$/i;
 const INLINE_CLOZE_REGEX = /==.+?==/s;
 const ANKI_CLOZE_REGEX = /\{\{c\d*::/;
@@ -29,7 +30,7 @@ export function detectClozeModeFromContent(content: string): ClozeMode {
 		}
 	}
 
-	if (/(^|\s)#we_input\b/i.test(content)) {
+	if (/(^|\s)#(?:we_)?input\b/i.test(content)) {
 		return "input";
 	}
 

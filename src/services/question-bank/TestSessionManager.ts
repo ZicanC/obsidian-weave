@@ -18,6 +18,11 @@ import type {
 	TestSession,
 } from "../../types/question-bank-types";
 import { generateId } from "../../utils/helpers";
+import {
+	checkInputClozeAnswers,
+	extractInputClozeAnswers,
+	isInputClozeQuestionContent,
+} from "../../utils/question-bank/input-cloze-utils";
 import { accuracyCalculator } from "./AccuracyCalculator";
 import type { QuestionBankStorage } from "./QuestionBankStorage";
 
@@ -32,7 +37,7 @@ export interface SessionConfig {
 
 export interface AnswerSubmission {
 	questionId: string;
-	answer: string | string[]; // 单选为string，多选为string[]
+	answer: string | string[]; // 单选为string，多选/输入式挖空为string[]
 	timeSpent: number; // 答题用时（秒）
 }
 
@@ -188,7 +193,11 @@ export class TestSessionManager {
 		const timeSpent = submission.timeSpent || (Date.now() - this.questionStartTime) / 1000;
 
 		// 判断答案是否正确
-		const isCorrect = this.checkAnswer(submission.answer, questionRecord.correctAnswer);
+		const isCorrect = this.checkAnswer(
+			submission.answer,
+			questionRecord.correctAnswer,
+			questionRecord.question
+		);
 
 		// 更新题目记录
 		questionRecord.userAnswer = submission.answer;
@@ -683,12 +692,20 @@ export class TestSessionManager {
 
 	/**
 	 * 从卡片中提取正确答案
-	 *  严格策略：只认选项中的 {} 标记，不信任metadata，不从---div---后解析
+	 *  输入式挖空题按空位顺序提取答案，选择题仍然只认选项中的 {} 标记
 	 *  设为public：允许外部在编辑卡片后重新提取正确答案
 	 */
 	public extractCorrectAnswer(card: Card): string | string[] {
-		// 提取所有可用选项
 		const availableOptions = this.extractAvailableOptions(card.content);
+
+		if (availableOptions.length === 0 && isInputClozeQuestionContent(card.content)) {
+			const answers = extractInputClozeAnswers(card.content);
+			if (answers.length === 0) {
+				throw new Error("输入式挖空题未找到可判定的答案");
+			}
+
+			return answers;
+		}
 
 		if (availableOptions.length === 0) {
 			throw new Error("无法识别选项格式。请确保选项格式为：A) 选项内容\\nB) 选项内容\\n...");
@@ -821,16 +838,32 @@ export class TestSessionManager {
 	 */
 	private checkAnswer(
 		userAnswer: string | string[] | null,
-		correctAnswer: string | string[] | null
+		correctAnswer: string | string[] | null,
+		question: Card
 	): boolean {
 		// 如果没有用户答案，肯定错误
-		if (!userAnswer) {
+		if (
+			!userAnswer ||
+			(Array.isArray(userAnswer) && userAnswer.length === 0)
+		) {
 			return false;
 		}
 
 		//  如果正确答案为null（格式错误），无法判断对错
 		if (!correctAnswer) {
 			return false;
+		}
+
+		if (
+			isInputClozeQuestionContent(question.content) &&
+			this.extractAvailableOptions(question.content).length === 0
+		) {
+			const normalizedUserAnswer = Array.isArray(userAnswer) ? userAnswer : [userAnswer];
+			const normalizedCorrectAnswer = Array.isArray(correctAnswer)
+				? correctAnswer
+				: [correctAnswer];
+
+			return checkInputClozeAnswers(normalizedUserAnswer, normalizedCorrectAnswer);
 		}
 
 		// 单选题

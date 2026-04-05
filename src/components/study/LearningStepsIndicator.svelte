@@ -100,11 +100,15 @@ $effect(() => {
 <style>
 /* 完全复用优先级贴纸设计，只改颜色为浅绿色 */
 .learning-sticky-note {
+  --weave-sticker-slot: 2;
   position: absolute;
-  top: 16px;
-  right: 110px;  /* 在优先级贴纸左侧 (75px宽 + 35px间距) */
-  width: 75px;
-  height: 75px;
+  top: var(--weave-sticker-top, 20px);
+  right: calc(
+    var(--weave-sticker-right-start, 24px) +
+    (var(--weave-sticker-slot) * (var(--weave-sticker-size, 68px) + var(--weave-sticker-gap, 12px)))
+  );
+  width: var(--weave-sticker-size, 68px);
+  height: var(--weave-sticker-size, 68px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -144,8 +148,8 @@ $effect(() => {
   top: -7px;
   left: 50%;
   transform: translateX(-50%);
-  width: 48px;
-  height: 16px;
+  width: calc(var(--weave-sticker-size, 68px) * 0.7);
+  height: calc(var(--weave-sticker-size, 68px) * 0.235);
   background: rgba(255, 255, 255, 0.2);
   border-radius: 2px;
   backdrop-filter: blur(4px);
@@ -154,7 +158,7 @@ $effect(() => {
 
 /* 上方大号数字 - 完全一致 */
 .sticky-number {
-  font-size: 2rem;
+  font-size: clamp(1.35rem, calc(var(--weave-sticker-size, 68px) * 0.47), 2rem);
   font-weight: 900;
   line-height: 1;
   margin-bottom: 0.2rem;
@@ -162,7 +166,7 @@ $effect(() => {
 
 /* 下方小号文字 - 完全一致 */
 .sticky-label {
-  font-size: 0.7rem;
+  font-size: clamp(0.56rem, calc(var(--weave-sticker-size, 68px) * 0.16), 0.7rem);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -245,21 +249,8 @@ $effect(() => {
 
 /* 移动端响应式 */
 @media (max-width: 768px) {
-  .learning-sticky-note {
-    width: 65px;
-    height: 65px;
-    top: 14px;
-    right: 95px;
-  }
-  
-  .sticky-number {
-    font-size: 1.5rem;
-  }
-  
-  .sticky-label {
-    font-size: 0.6rem;
-  }
-  
+  .learning-sticky-note::before { top: -6px; }
+
   .badge-tooltip {
     font-size: 10px;
   }

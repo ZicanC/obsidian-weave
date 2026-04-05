@@ -954,7 +954,10 @@ body.is-tablet .weave-app .study-btn {
 :global(body.is-phone:not(.weave-study-active)) .weave-app .study-footer,
 :global(body.is-phone:not(.weave-study-active)) .weave-app .rating-footer {
   /* 底部间距：Obsidian 底部工具栏高度（动态） + 8px 缓冲 + iOS 安全区域 */
-  padding-bottom: calc(var(--weave-workspace-bottom-offset, var(--weave-modal-bottom, 56px)) + 4px);
+  padding-bottom: calc(
+    var(--weave-workspace-bottom-offset, var(--weave-modal-bottom, env(safe-area-inset-bottom, 0px)))
+    + 4px
+  );
 }
 
 /* ==================== 移动端动画优化 ==================== */
@@ -1888,14 +1891,14 @@ body.is-mobile.weave-edit-active .study-interface-overlay {
   align-items: stretch;
   justify-content: flex-start;
   padding: 0 !important;
-  /* 🔑 关键：使用 position: fixed 脱离文档流，避免被父容器影响 */
-  position: fixed !important;
-  /* 🔧 修复：从 Obsidian 顶部栏下方开始，保留顶部栏可见 */
-  /* Obsidian 移动端顶部栏高度约为 44px */
+  /* 关键：保持在 view-content 内，避免默认态正文跑进 Obsidian 顶部栏 */
+  position: absolute !important;
+  /* 继续从当前 view-content 顶部开始，由 JavaScript 计算真实可见高度 */
   top: 0 !important;
   left: 0 !important;
   right: 0 !important;
-  /* 不使用 bottom，使用明确的 height */
+  bottom: auto !important;
+  /* height 使用前面定义的 --weave-viewport-height */
 }
 
 body.is-phone.weave-edit-active .study-interface-content,

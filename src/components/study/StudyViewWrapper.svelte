@@ -13,7 +13,7 @@ import type { Card, Deck } from '../../data/types';
 import type { StudySession } from '../../data/study-types';
 import { CardState } from '../../data/types';
 import StudyInterface from './StudyInterface.svelte';
-import { onMount } from 'svelte';
+import { onMount, untrack } from 'svelte';
 import { Notice } from 'obsidian';
 import CelebrationModal from '../modals/CelebrationModal.svelte';
 import { QuestionBankSelectorModal } from '../../modals/QuestionBankSelectorModal';
@@ -76,13 +76,13 @@ let celebrationStats = $state<CelebrationStats | null>(null);
 let shouldCloseAfterCelebration = $state(false); //  标记是否需要在庆祝后关闭
 
 // 状态监控（已移除调试日志）
-let currentDeckId = $state(deckId || '');
-let currentDeckName = $state(deckName || '');
-let currentMode = $state(mode);
-let currentCardIds = $state(cardIds);
-let currentCards = $state(cards);  //  添加cards状态
-let activeResumeData = $state<PersistedStudySession | null>(resumeData ?? null);
-let activeQueueState = $state<Props['queueState']>(queueState);
+let currentDeckId = $state(untrack(() => deckId || ''));
+let currentDeckName = $state(untrack(() => deckName || ''));
+let currentMode = $state(untrack(() => mode));
+let currentCardIds = $state(untrack(() => cardIds));
+let currentCards = $state(untrack(() => cards));  //  添加cards状态
+let activeResumeData = $state<PersistedStudySession | null>(untrack(() => resumeData ?? null));
+let activeQueueState = $state<Props['queueState']>(untrack(() => queueState));
 let sessionStats = $state({
   completed: 0,
   correct: 0,
@@ -867,4 +867,3 @@ async function handleStartPractice() {
   }
 
 </style>
-

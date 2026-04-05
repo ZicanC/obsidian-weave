@@ -5,7 +5,7 @@ import { logger } from "../utils/logger";
  * 参考 StudyView.ts 的架构实现
  */
 
-import { ItemView, Notice, Platform, WorkspaceLeaf } from "obsidian";
+import { ItemView, Menu, Notice, Platform, WorkspaceLeaf } from "obsidian";
 import type { unmount } from "svelte";
 import type { Card } from "../data/types";
 import type { WeavePlugin } from "../main";
@@ -14,7 +14,12 @@ import type {
 	QuestionBankResumeBehavior,
 	TestMode,
 } from "../types/question-bank-types";
-import { addLocationToggleAction } from "../utils/view-location-utils";
+import {
+	addLocationToggleAction,
+	getLocationToggleIcon,
+	getLocationToggleTooltip,
+	toggleViewLocation,
+} from "../utils/view-location-utils";
 
 export const VIEW_TYPE_QUESTION_BANK = "weave-question-bank-view";
 
@@ -63,6 +68,22 @@ export class QuestionBankView extends ItemView {
 		this.plugin = plugin;
 		this.instanceId = `question-bank-view-${Date.now()}`;
 		logger.debug("[QuestionBankView] 视图实例已创建:", this.instanceId);
+	}
+
+	onPaneMenu(menu: Menu, source: string): void {
+		super.onPaneMenu?.(menu, source);
+
+		if (!Platform.isMobile) return;
+
+		menu.addSeparator();
+		menu.addItem((item) => {
+			item
+				.setTitle(getLocationToggleTooltip(this.leaf))
+				.setIcon(getLocationToggleIcon(this.leaf))
+				.onClick(async () => {
+					await toggleViewLocation(this, "right");
+				});
+		});
 	}
 
 	// ==================== 📱 移动端回调设置方法 ====================
@@ -478,8 +499,10 @@ export class QuestionBankView extends ItemView {
 		this.contentEl.addClass("weave-question-bank-view-content");
 		this.contentEl.addClass("weave-main-editor-mode");
 
-		// 📱 添加位置切换按钮（支持在内容区和侧边栏之间移动）
-		this.addLocationToggleButton();
+		// 📱 移动端：位置切换入口放到 Obsidian 官方更多菜单（onPaneMenu）
+		if (!Platform.isMobile) {
+			this.addLocationToggleButton();
+		}
 
 		// 📱 初始化移动端顶部栏按钮
 		this.initMobileActions();

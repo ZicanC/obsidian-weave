@@ -1,6 +1,6 @@
 ﻿<script lang="ts">
   import { logger } from '../../utils/logger';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
 
   import type { WeavePlugin } from '../../main';
   import type { WeaveDataStorage } from '../../data/storage';
@@ -21,6 +21,7 @@
   import { Menu, Notice, Platform, TFile } from 'obsidian';
   import { AI_PROVIDER_LABELS, AI_MODEL_OPTIONS } from '../settings/constants/settings-constants';
   import { fileToInfo } from '../../utils/file-utils';
+  import { findWeaveViewLeafContent, hasWeaveMobileNativeHeader } from '../../utils/mobile-native-header';
 
   interface Props {
     plugin: WeavePlugin;
@@ -87,6 +88,7 @@
   let historyPanelAnchor = $state<ToolbarAnchorRect | null>(null);
   let historyPanelEl = $state<HTMLDivElement | null>(null);
   let promptTemplatesRefreshKey = $state(0);
+  let showInlinePluginMenuButton = $state(false);
 
   function getPromptTemplateOptions(): PromptTemplate[] {
     const promptTemplates = plugin.settings.aiConfig?.promptTemplates ?? { official: [], custom: [] };
@@ -109,32 +111,37 @@
     return getPromptTemplateOptions();
   });
 
-  const aiAssistantPreferences = plugin.getAIAssistantPreferences();
-  const saved = aiAssistantPreferences.savedGenerationConfig;
-  let generationConfig = $state<GenerationConfig>({
-    templateId: '',
-    promptTemplate: '',
-    cardCount: saved?.cardCount ?? 10,
-    difficulty: saved?.difficulty ?? 'medium',
-    typeDistribution: saved?.typeDistribution ?? { qa: 50, cloze: 30, choice: 20 },
-    provider: (aiAssistantPreferences.lastUsedProvider || plugin.settings.aiConfig?.defaultProvider || 'openai') as AIProvider,
-    model: aiAssistantPreferences.lastUsedModel || '',
-    temperature: saved?.temperature ?? 0.7,
-    maxTokens: saved?.maxTokens ?? 2000,
-    imageGeneration: {
-      enabled: false,
-      strategy: 'none',
-      imagesPerCard: 0,
-      placement: 'question'
-    },
-    templates: {
-      qa: 'official-qa',
-      choice: 'official-choice',
-      cloze: 'official-cloze'
-    },
-    autoTags: saved?.autoTags ?? [],
-    enableHints: saved?.enableHints ?? true
-  });
+  function createInitialGenerationConfig(): GenerationConfig {
+    const aiAssistantPreferences = plugin.getAIAssistantPreferences();
+    const saved = aiAssistantPreferences.savedGenerationConfig;
+
+    return {
+      templateId: '',
+      promptTemplate: '',
+      cardCount: saved?.cardCount ?? 10,
+      difficulty: saved?.difficulty ?? 'medium',
+      typeDistribution: { ...(saved?.typeDistribution ?? { qa: 50, cloze: 30, choice: 20 }) },
+      provider: (aiAssistantPreferences.lastUsedProvider || plugin.settings.aiConfig?.defaultProvider || 'openai') as AIProvider,
+      model: aiAssistantPreferences.lastUsedModel || '',
+      temperature: saved?.temperature ?? 0.7,
+      maxTokens: saved?.maxTokens ?? 2000,
+      imageGeneration: {
+        enabled: false,
+        strategy: 'none',
+        imagesPerCard: 0,
+        placement: 'question'
+      },
+      templates: {
+        qa: 'official-qa',
+        choice: 'official-choice',
+        cloze: 'official-cloze'
+      },
+      autoTags: [...(saved?.autoTags ?? [])],
+      enableHints: saved?.enableHints ?? true
+    };
+  }
+
+  let generationConfig = $state<GenerationConfig>(untrack(() => createInitialGenerationConfig()));
 
   const filteredMarkdownFiles = $derived.by(() => {
     const query = filePickerQuery.trim().toLowerCase();
@@ -492,7 +499,7 @@
     showInlineHistoryPanel = !showInlineHistoryPanel;
   }
 
-  const generationService = new AICardGenerationService(plugin);
+  const generationService = untrack(() => new AICardGenerationService(plugin));
 
   async function handleGenerate() {
     try {
@@ -716,6 +723,37 @@
     return () => {
       document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('keydown', handleEscape, true);
+    };
+  });
+
+  $effect(() => {
+    if (!pageContainerEl) {
+      showInlinePluginMenuButton = false;
+      return;
+    }
+
+    const updateInlinePluginMenuButton = () => {
+      showInlinePluginMenuButton = !hasWeaveMobileNativeHeader(pageContainerEl);
+    };
+
+    updateInlinePluginMenuButton();
+
+    const host = findWeaveViewLeafContent(pageContainerEl);
+    if (!(host instanceof HTMLElement)) {
+      return;
+    }
+
+    const observer = new MutationObserver(() => {
+      updateInlinePluginMenuButton();
+    });
+
+    observer.observe(host, {
+      attributes: true,
+      attributeFilter: ['data-weave-mobile-native-header']
+    });
+
+    return () => {
+      observer.disconnect();
     };
   });
 
@@ -961,7 +999,7 @@
       showPromptSelector={false}
       showProviderSelector={false}
       showGenerateButton={false}
-      showPluginMenuButton={true}
+      showPluginMenuButton={showInlinePluginMenuButton}
       refreshKey={promptTemplatesRefreshKey}
     />
   </div>
@@ -1379,4 +1417,3 @@
     --weave-ai-card-bg: var(--weave-elevated-background, var(--weave-surface-secondary, var(--background-secondary)));
   }
 </style>
-

@@ -1,5 +1,4 @@
 import { EpubAnnotationService } from '../EpubAnnotationService';
-import { describe, expect, it, vi } from 'vitest';
 
 describe('EpubAnnotationService', () => {
 	it('clears legacy stored highlights at most once per book and keeps backlink highlights as the live source', async () => {

@@ -6,6 +6,7 @@
   // UI组件导入
   import EnhancedButton from "../ui/EnhancedButton.svelte";
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
+  import ObsidianIcon from "../ui/ObsidianIcon.svelte";
   import FloatingMenu from "../ui/FloatingMenu.svelte";
   import MarkdownView from "../atoms/MarkdownRenderer.svelte";
   import StatsCards from "./StatsCards.svelte";
@@ -123,6 +124,7 @@
   import { logger } from "../../utils/logger";
   import { openLinkWithExistingLeaf } from "../../utils/workspace-navigation";
   import { vaultStorage } from '../../utils/vault-local-storage';
+  import { calculateMobileEditViewportHeight } from "../../utils/mobile-edit-viewport";
   // 牌组信息获取工具
   import { getCardMetadata, parseEpubSourceInfo, parseSourceInfo, setCardProperties, getCardDeckIds, createContentWithMetadata } from "../../utils/yaml-utils";
   import { resolveStudySessionDeckId } from "../../utils/study/sessionDeckId";
@@ -199,17 +201,17 @@
   }: Props = $props();
 
   //  过滤回收的卡片（初始化时过滤，后续手动管理）
-  let cards = $state(filterRecycledCards(rawCards));
+  let cards = $state(untrack(() => filterRecycledCards(rawCards)));
 
   //  响应式翻译函数
   let t = $derived($tr);
 
   // --- 管理器实例 ---
   const sessionManager = StudySessionManager.getInstance();
-  const personalizationManager = new RobustPersonalizationManager(plugin, dataStorage);
+  const personalizationManager = untrack(() => new RobustPersonalizationManager(plugin, dataStorage));
   const premiumGuard = PremiumFeatureGuard.getInstance();
   const reviewUndoManager = new ReviewUndoManager();
-  const cardRelationService = new CardRelationService(dataStorage);
+  const cardRelationService = untrack(() => new CardRelationService(dataStorage));
   const queueGenerator = new StudyQueueGenerator();
   
   
@@ -297,7 +299,7 @@
 
   // --- 会话核心状态 ---
   let currentSessionId = $state<string | null>(null);
-  let currentCardIndex = $state(initialCardIndex);
+  let currentCardIndex = $state(untrack(() => initialCardIndex));
   let showAnswer = $state(false);
   let cardStartTime = $state(Date.now());
   let personalizationEnabled = $state(true);
@@ -372,10 +374,10 @@
   let cardTypeDisplayName = $derived(detectedCardType ? getCardTypeName(detectedCardType) : t('studyInterface.labels.unknownCardType'));
 
   // --- 媒体自动播放状态 ---
-  let autoPlayMedia = $state(plugin.settings.mediaAutoPlay?.enabled ?? false);
-  let playMediaMode = $state<'first' | 'all'>(plugin.settings.mediaAutoPlay?.mode ?? 'first');
-  let playMediaTiming = $state<'cardChange' | 'showAnswer'>(plugin.settings.mediaAutoPlay?.timing ?? 'cardChange');
-  let playbackInterval = $state(plugin.settings.mediaAutoPlay?.playbackInterval ?? 2000);
+  let autoPlayMedia = $state(untrack(() => plugin.settings.mediaAutoPlay?.enabled ?? false));
+  let playMediaMode = $state<'first' | 'all'>(untrack(() => plugin.settings.mediaAutoPlay?.mode ?? 'first'));
+  let playMediaTiming = $state<'cardChange' | 'showAnswer'>(untrack(() => plugin.settings.mediaAutoPlay?.timing ?? 'cardChange'));
+  let playbackInterval = $state(untrack(() => plugin.settings.mediaAutoPlay?.playbackInterval ?? 2000));
 
   // --- 父子卡片浮层状态 ---
   let showChildCardsOverlay = $state(false);
@@ -401,7 +403,7 @@
   let availableDecksList = $derived(memoryDecks.map(d => ({ id: d.id, name: d.name })));
 
   // --- 提示功能状态 ---
-  let hintMaxUsesPerSession = $state(plugin.settings.hintMaxUses ?? 5);
+  let hintMaxUsesPerSession = $state(untrack(() => plugin.settings.hintMaxUses ?? 5));
   let hintSessionUsedCount = $state(0); // 整个会话已使用次数
   let hintVisible = $state(false);
   let hintCapsuleElement: HTMLElement | null = $state(null); // 胶囊按钮引用（用于浮窗锚定）
@@ -620,7 +622,7 @@
     };
   });
 
-  let showClozeModeSwitchButton = $state(plugin.settings.showClozeModeSwitchButton ?? true);
+  let showClozeModeSwitchButton = $state(untrack(() => plugin.settings.showClozeModeSwitchButton ?? true));
 
   let currentStudyClozeMode = $derived.by(() => {
     return detectClozeModeFromContent(currentCard?.content || '');
@@ -1578,13 +1580,14 @@
 
   // --- UI控制状态 ---
   // 从 plugin.settings 初始化视图偏好，兼容 localStorage
-  const viewPrefs = plugin.getStudyInterfaceViewPreferences();
+  const viewPrefs = untrack(() => plugin.getStudyInterfaceViewPreferences());
+  const hasStoredStudyInterfaceViewPreferences = untrack(() => Boolean(plugin.settings.studyInterfaceViewPreferences));
   
   //  卡片关联相关状态 - 功能已移除
   let loadBalanceManager = $state<LoadBalanceManager | null>(null);
   
   // 向后兼容：如果settings中没有，尝试从localStorage读取
-  if (!plugin.settings.studyInterfaceViewPreferences && typeof window !== 'undefined') {
+  if (!hasStoredStudyInterfaceViewPreferences && typeof window !== 'undefined') {
     try {
       const savedCompactMode = vaultStorage.getItem('weave-sidebar-compact-mode-setting');
       if (savedCompactMode && (savedCompactMode === 'auto' || savedCompactMode === 'fixed')) {
@@ -1607,10 +1610,10 @@
   const editorSessionId = `weave-study-session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
   //  删除功能设置
-  let enableDirectDelete = $state(plugin.settings.enableDirectDelete ?? false);
+  let enableDirectDelete = $state(untrack(() => plugin.settings.enableDirectDelete ?? false));
 
   // 教程按钮显示设置
-  let showTutorialButton = $state(plugin.settings.showTutorialButton ?? true);
+  let showTutorialButton = $state(untrack(() => plugin.settings.showTutorialButton ?? true));
 
   //  删除确认弹窗状态
   let showDeleteConfirmModal = $state(false);
@@ -1935,7 +1938,7 @@
 
   // enhanceEmbeds已提取到utils/study/studyInterfaceUtils.ts
   const sourceLocateOverlay = getSourceLocateOverlayService();
-  const sourceNavigationService = new SourceNavigationService(plugin.app);
+  const sourceNavigationService = untrack(() => new SourceNavigationService(plugin.app));
 
   // Handle block link click - navigate to Obsidian file and block with highlighting
   function handleBlockLinkClick(blockLink: string) {
@@ -2188,7 +2191,7 @@
   // --- 学习会话数据 ---
   let session = $state<StudySession>({
     id: generateId(),
-    deckId: sessionDeckId || "",  // 优先绑定当前学习牌组，避免引用式牌组统计错位
+    deckId: untrack(() => sessionDeckId || ""),  // 优先绑定当前学习牌组，避免引用式牌组统计错位
     startTime: new Date(),
     cardsReviewed: 0,
     newCardsLearned: 0,
@@ -2359,7 +2362,7 @@
   // 计时器状态
   let currentCardTime = $state(0);
   let averageTime = $state(0);
-  let timerAutoPauseSeconds = $state(plugin.settings.timerAutoPauseSeconds ?? 60);
+  let timerAutoPauseSeconds = $state(untrack(() => plugin.settings.timerAutoPauseSeconds ?? 60));
   let timerPaused = $state(false);
 
   // 进度条刷新触发器
@@ -5745,24 +5748,34 @@
   // 让整个容器链使用 visualViewport.height 作为高度基准
   let mobileViewportHeight = $state<number | null>(null);
   let mobileViewportCleanup: (() => void) | null = null;
+  let studyInterfaceOverlayEl = $state<HTMLDivElement | null>(null);
   
-  //  Obsidian 移动端顶部栏高度（用于计算编辑器可用高度）
+  //  移动端编辑模式下，基于当前编辑层在视口中的真实顶部位置计算可见高度
   $effect(() => {
     // 只在移动端编辑模式下启用 visualViewport 监听
     if (Platform.isMobile && showEditModal) {
       const viewport = window.visualViewport;
       if (viewport) {
+        let rafId: number | null = null;
         const updateViewportHeight = () => {
-          mobileViewportHeight = Math.max(200, viewport.height); // 确保最小高度
+          const overlayTop = studyInterfaceOverlayEl?.getBoundingClientRect().top;
+          mobileViewportHeight = calculateMobileEditViewportHeight({
+            viewportHeight: viewport.height,
+            viewportOffsetTop: viewport.offsetTop,
+            overlayTop
+          });
 
           logger.debug('[StudyInterface] 📱 visualViewport 高度更新:', {
             viewportHeight: viewport.height,
+            viewportOffsetTop: viewport.offsetTop,
+            overlayTop,
             availableHeight: mobileViewportHeight
           });
         };
         
         // 立即设置初始高度
         updateViewportHeight();
+        rafId = window.requestAnimationFrame(updateViewportHeight);
         
         // 监听 resize 和 scroll 事件
         viewport.addEventListener('resize', updateViewportHeight);
@@ -5772,6 +5785,10 @@
         mobileViewportCleanup = () => {
           viewport.removeEventListener('resize', updateViewportHeight);
           viewport.removeEventListener('scroll', updateViewportHeight);
+          if (rafId !== null) {
+            window.cancelAnimationFrame(rafId);
+            rafId = null;
+          }
         };
       }
     } else {
@@ -6294,10 +6311,11 @@
 
 <div
   class="study-interface-overlay"
+  bind:this={studyInterfaceOverlayEl}
   class:mobile-edit-mode={Platform.isMobile && showEditModal}
   role="presentation"
   style={Platform.isMobile && showEditModal
-    ? `${mobileViewportHeight ? `height: ${mobileViewportHeight}px !important; --weave-viewport-height: ${mobileViewportHeight}px;` : ''}`
+    ? `${mobileViewportHeight ? `--weave-viewport-height: ${mobileViewportHeight}px;` : ''}`
     : ''}
   ondrop={(e) => e.preventDefault()}
   ondragover={(e) => e.preventDefault()}
@@ -6637,24 +6655,24 @@
 
               {#if showAnswer}
                 <!-- 返回预览按钮 -->
-                <button 
-                  class="compact-control-btn return-btn"
+                <button
+                  class="compact-control-btn clickable-icon return-btn"
                   onclick={undoShowAnswer}
                   title={t('studyInterface.labels.returnToPreview')}
                   aria-label={t('studyInterface.labels.returnToPreviewAria')}
                 >
-                  <EnhancedIcon name="arrow-left" size="18" />
+                  <ObsidianIcon name="chevron-left" size={16} />
                 </button>
                 
                 <!-- 撤销按钮 -->
                 <button
-                  class="compact-control-btn undo-btn"
+                  class="compact-control-btn clickable-icon undo-btn"
                   class:disabled={undoCount === 0}
                   onclick={undoCount > 0 ? handleUndoReview : undefined}
                   title={undoCount > 0 ? t('studyInterface.notices.undoLastRating') : t('studyInterface.notices.nothingToUndo')}
                   disabled={undoCount === 0}
                 >
-                  <EnhancedIcon name="undo" size="18" />
+                  <ObsidianIcon name="rotate-ccw" size={16} />
                 </button>
               {/if}
             </div>
@@ -7126,6 +7144,30 @@
     max-width: 340px;
   }
 
+  /* 移动端：提醒/优先级浮窗改为屏幕居中，避免锚点缺失时跑到左上角 */
+  :global(body.is-mobile) :global(.floating-menu.study-side-panel-menu),
+  :global(body.is-phone) :global(.floating-menu.study-side-panel-menu) {
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    animation: none !important;
+    width: min(92vw, 340px);
+    max-width: 92vw;
+    min-width: 0;
+  }
+
+  :global(body.is-mobile) .study-side-panel,
+  :global(body.is-mobile) .reminder-modal,
+  :global(body.is-mobile) .priority-modal,
+  :global(body.is-phone) .study-side-panel,
+  :global(body.is-phone) .reminder-modal,
+  :global(body.is-phone) .priority-modal {
+    width: min(92vw, 340px);
+    min-width: 0;
+    max-width: 92vw;
+    max-height: min(78vh, 640px);
+  }
+
   .study-side-panel,
   .reminder-modal,
   .priority-modal {
@@ -7432,23 +7474,13 @@
   }
 
   .footer-top-controls .compact-control-btn {
-    width: 36px;
-    height: 36px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--weave-study-panel-bg);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 0.5rem;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: all 0.15s ease;
+    width: 32px;
+    height: 32px;
   }
 
   .footer-top-controls .compact-control-btn:hover:not(.disabled) {
     background: var(--background-modifier-hover);
-    color: var(--text-normal);
-    border-color: var(--text-accent);
+    color: var(--icon-color-hover, var(--text-normal));
   }
 
   .footer-top-controls .compact-control-btn.disabled {
@@ -7914,29 +7946,30 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--weave-study-page-bg);
-    color: var(--text-muted);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 0.5rem;
-    padding: 0.5rem;  /* 紧凑的padding，参考侧边栏样式 */
-    width: 2.5rem;    /* 固定宽度，保持紧凑 */
-    height: 2.5rem;   /* 固定高度，保持紧凑 */
+    background: transparent;
+    color: var(--icon-color, var(--text-muted));
+    border: 0;
+    border-radius: 6px;
+    padding: 0;
+    width: 32px;
+    height: 32px;
     cursor: pointer;
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+    box-shadow: none;
   }
 
   .compact-control-btn:hover {
     background: var(--background-modifier-hover);
-    border-color: var(--text-accent);
-    color: var(--text-normal);
-    transform: translateY(-1px);  /* 轻微上移效果 */
-    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    color: var(--icon-color-hover, var(--text-normal));
   }
 
   .compact-control-btn:active {
-    transform: translateY(0);
-    transition: transform 0.1s ease;
+    background: var(--background-modifier-active-hover, var(--background-modifier-border));
+  }
+
+  .compact-control-btn:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
   }
 
   .compact-control-btn.disabled {
@@ -7946,11 +7979,9 @@
   }
 
   .compact-control-btn.disabled:hover {
-    background: var(--weave-study-page-bg);
-    border-color: var(--background-modifier-border);
-    color: var(--text-muted);
-    transform: none;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    background: transparent;
+    color: var(--icon-color, var(--text-muted));
+    box-shadow: none;
   }
 
   /* ==================== Obsidian 移动端适配 ==================== */
@@ -7961,7 +7992,10 @@
     position: absolute;
     padding: 0;
     top: 0;
-    bottom: var(--weave-workspace-bottom-offset, var(--weave-modal-bottom, 56px));
+    bottom: var(
+      --weave-workspace-bottom-offset,
+      var(--weave-modal-bottom, env(safe-area-inset-bottom, 0px))
+    );
     height: auto;
   }
 

@@ -32,12 +32,12 @@ export class ClozeInputModeHintModal extends Modal {
 
 		const yamlFieldItem = list.createEl("li");
 		yamlFieldItem.appendText("YAML 添加 ");
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Code sample should keep the exact config key.
 		yamlFieldItem.createEl("code", { text: "we_cloze_mode: input" });
 
 		const yamlTagItem = list.createEl("li");
 		yamlTagItem.appendText("YAML 标签添加 ");
-		// eslint-disable-next-line obsidianmd/ui/sentence-case
+		// eslint-disable-next-line obsidianmd/ui/sentence-case -- Code sample should keep the exact YAML syntax.
 		yamlTagItem.createEl("code", { text: "tags: [we_input]" });
 
 		const note = contentEl.createEl("p", {

@@ -3,7 +3,6 @@
  * 验证资源管理器能否正确防止内存泄漏
  */
 import { EditorResourceManager, getGlobalResourceManager } from '../utils/resource-manager';
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 describe('资源管理器内存泄漏防护测试', () => {
   let resourceManager: EditorResourceManager;
@@ -20,8 +19,8 @@ describe('资源管理器内存泄漏防护测试', () => {
   });
 
   test('应该正确注册和清理定时器', () => {
-    const mockSetTimeout = vi.mocked(globalThis.setTimeout);
-    const mockClearTimeout = vi.mocked(globalThis.clearTimeout);
+    const mockSetTimeout = vi.spyOn(globalThis, 'setTimeout');
+    const mockClearTimeout = vi.spyOn(globalThis, 'clearTimeout');
 
     mockSetTimeout.mockImplementation((() => 123 as unknown as ReturnType<typeof setTimeout>) as unknown as typeof setTimeout);
     mockClearTimeout.mockImplementation((() => undefined) as typeof clearTimeout);
@@ -210,7 +209,7 @@ describe('资源管理器内存泄漏防护测试', () => {
   });
 
   test('应该能够单独移除特定资源', () => {
-    const mockClearTimeout = vi.mocked(globalThis.clearTimeout);
+    const mockClearTimeout = vi.spyOn(globalThis, 'clearTimeout');
     mockClearTimeout.mockImplementation((() => undefined) as typeof clearTimeout);
 
     // 注册多个定时器
@@ -294,7 +293,7 @@ describe('全局资源管理器测试', () => {
   });
 
   test('应该能够清理所有资源', () => {
-    const mockClearTimeout = vi.mocked(globalThis.clearTimeout);
+    const mockClearTimeout = vi.spyOn(globalThis, 'clearTimeout');
     mockClearTimeout.mockImplementation((() => undefined) as typeof clearTimeout);
 
     const editor1 = globalManager.getEditorManager('editor-1');

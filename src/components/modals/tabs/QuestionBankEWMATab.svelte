@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte';
+  import { Platform } from 'obsidian';
   import type { Deck } from '../../../data/types';
   import type WeavePlugin from '../../../main';
   import type { TestAttempt } from '../../../types/question-bank-types';
@@ -19,6 +20,7 @@
   let chart: EChartsType | null = null;
   let attempts = $state<TestAttempt[]>([]);
   let isLoading = $state(true);
+  const isMobile = Platform.isMobile;
 
   function initializeChart() {
     if (!chartContainer || attempts.length === 0) {
@@ -67,15 +69,27 @@
         },
         legend: {
           show: true,
-          top: 10,
-          textStyle: { color: safeColors.text },
-          itemGap: 20
+          type: isMobile ? 'scroll' : 'plain',
+          top: isMobile ? 8 : 10,
+          left: isMobile ? 8 : 'center',
+          right: isMobile ? 8 : undefined,
+          textStyle: {
+            color: safeColors.text,
+            fontSize: isMobile ? 11 : 12
+          },
+          itemGap: isMobile ? 10 : 20,
+          itemWidth: isMobile ? 14 : 18,
+          itemHeight: isMobile ? 8 : 10,
+          pageTextStyle: {
+            color: safeColors.textMuted,
+            fontSize: isMobile ? 10 : 11
+          }
         },
         grid: {
-          left: '2%',
-          right: '3%',
-          bottom: '15%',
-          top: '15%',
+          left: isMobile ? '6%' : '2%',
+          right: isMobile ? '6%' : '3%',
+          bottom: isMobile ? '16%' : '15%',
+          top: isMobile ? 96 : '15%',
           containLabel: true
         },
         xAxis: {
@@ -95,7 +109,7 @@
         yAxis: [
           {
             type: 'value',
-            name: '正确率 (%)',
+            name: isMobile ? '' : '正确率 (%)',
             nameTextStyle: { color: safeColors.textMuted, fontSize: 12 },
             min: 0,
             max: 100,
@@ -114,7 +128,7 @@
           },
           {
             type: 'value',
-            name: '置信度',
+            name: isMobile ? '' : '置信度',
             nameTextStyle: { color: safeColors.textMuted, fontSize: 12 },
             min: 0,
             max: 1,
@@ -258,5 +272,20 @@
     border-radius: 10px;
     background: var(--background-secondary);
     min-height: 320px;
+  }
+
+  @media (max-width: 768px) {
+    .ewma-tab {
+      padding: 12px 10px 14px;
+    }
+
+    .chart-container {
+      min-height: 420px;
+      padding: 8px 4px 8px 0;
+    }
+
+    .chart {
+      min-height: 380px;
+    }
   }
 </style>

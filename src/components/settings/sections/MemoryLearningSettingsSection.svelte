@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { logger } from '../../../utils/logger';
   import type WeavePlugin from '../../../main';
   import ObsidianDropdown from '../../ui/ObsidianDropdown.svelte';
@@ -11,7 +12,7 @@
   }
 
   let { plugin }: Props = $props();
-  let settings = $state(plugin.settings);
+  let settings = $state(untrack(() => plugin.settings));
 
   let t = $derived($tr);
   const premiumGuard = PremiumFeatureGuard.getInstance();

@@ -13,7 +13,7 @@
   const margin = { top: 20, right: 80, bottom: 40, left: 60 };
   const width = 600;
   const chartWidth = width - margin.left - margin.right;
-  const chartHeight = height - margin.top - margin.bottom;
+  let chartHeight = $derived(height - margin.top - margin.bottom);
   
   // 计算数据范围
   let xScale = $derived(() => {

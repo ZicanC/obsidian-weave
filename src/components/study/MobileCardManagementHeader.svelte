@@ -147,6 +147,11 @@
     flex-shrink: 0;
   }
 
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .mobile-card-management-header),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .mobile-card-management-header) {
+    display: none !important;
+  }
+
   .mobile-menu-trigger {
     width: 44px; /* 增加到 44px，满足 Apple HIG 触控标准 */
     height: 44px;

@@ -369,6 +369,8 @@ export class MenuItem {
 export class Menu {
   private items: MenuItem[] = [];
   private separatorCount = 0;
+  private hideCallbacks: Array<() => void> = [];
+  private hidden = false;
 
   addItem(callback: (item: MenuItem) => void): this {
     const item = new MenuItem();
@@ -384,10 +386,30 @@ export class Menu {
 
   showAtMouseEvent(evt: MouseEvent): void {
     // Mock implementation - does nothing in tests
+    this.hidden = false;
   }
 
   showAtPosition(pos: { x: number; y: number }): void {
     // Mock implementation - does nothing in tests
+    this.hidden = false;
+  }
+
+  hide(): this {
+    if (this.hidden) {
+      return this;
+    }
+
+    this.hidden = true;
+    this.hideCallbacks.forEach((callback) => callback());
+    return this;
+  }
+
+  close(): void {
+    this.hide();
+  }
+
+  onHide(callback: () => void): void {
+    this.hideCallbacks.push(callback);
   }
 
   // Test helpers

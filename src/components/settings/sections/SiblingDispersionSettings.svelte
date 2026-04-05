@@ -16,6 +16,7 @@
   @date 2025-12-08
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { logger } from '../../../utils/logger';
   import type WeavePlugin from '../../../main';
   import { tr } from '../../../utils/i18n';
@@ -26,7 +27,7 @@
   }
 
   let { plugin }: Props = $props();
-  let settings = plugin.settings;
+  let settings = untrack(() => plugin.settings);
   let t = $derived($tr);
 
   // 默认配置（基于Anki最佳实践）

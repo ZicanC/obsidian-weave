@@ -3,6 +3,7 @@
   职责：处理基础配置项与主界面入口相关设置
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { logger } from '../../../utils/logger';
   import ObsidianDropdown from '../../ui/ObsidianDropdown.svelte';
   import VirtualizationSettingsSection from './VirtualizationSettingsSection.svelte';
@@ -17,7 +18,7 @@
   }
 
   let { plugin, onPremiumFeaturesPreviewToggle }: Props = $props();
-  let settings = $state(plugin.settings);
+  let settings = $state(untrack(() => plugin.settings));
   const premiumGuard = PremiumFeatureGuard.getInstance();
   
   // 响应式翻译函数

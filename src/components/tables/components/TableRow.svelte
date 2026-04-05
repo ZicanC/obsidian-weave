@@ -1,6 +1,7 @@
 ﻿<script lang="ts">
   import type { Card } from '../../../data/types';
   import StatusBadge from "../../ui/StatusBadge.svelte";
+  import { untrack } from "svelte";
   import EnhancedIcon from "../../ui/EnhancedIcon.svelte";
   import DraggableCheckboxWrapper from "./DraggableCheckboxWrapper.svelte";
   import { ICON_NAMES } from "../../../icons/index.js";
@@ -10,7 +11,7 @@
   import ActionsCell from "./cells/ActionsCell.svelte";
   import ReviewDataCell from "./cells/ReviewDataCell.svelte";
   import ModifiedCell from "./cells/ModifiedCell.svelte";
-  import type { TableRowProps } from "../types/table-types";
+  import type { FieldTemplateInfo, SourceDocumentStatusInfo, TableRowProps } from "../types/table-types";
   import { getCardDeckNames as getNormalizedCardDeckNames } from "../../../utils/yaml-utils";
 
   let {
@@ -80,9 +81,34 @@
     }
   }
 
+  const defaultTemplateInfo: FieldTemplateInfo = {
+    name: '未设置',
+    icon: ICON_NAMES.HELP,
+    class: 'weave-template-unknown'
+  };
+
+  const defaultSourceStatusInfo: SourceDocumentStatusInfo = {
+    text: '未知',
+    icon: ICON_NAMES.HELP,
+    class: 'weave-status-unknown',
+    tooltip: '源文档状态未知'
+  };
+
   // 只有行可见时才计算派生数据，减少大表格下的额外开销。
-  let templateInfo = $state(getFieldTemplateInfo(card.templateId || '', fieldTemplates, plugin));
-  let sourceStatusInfo = $state(getSourceDocumentStatusInfo((card as any).sourceDocumentStatus || ''));
+  let templateInfo = $state<FieldTemplateInfo>(
+    untrack(() =>
+      isVisible
+        ? getFieldTemplateInfo(card.templateId || '', fieldTemplates, plugin)
+        : defaultTemplateInfo
+    )
+  );
+  let sourceStatusInfo = $state<SourceDocumentStatusInfo>(
+    untrack(() =>
+      isVisible
+        ? getSourceDocumentStatusInfo((card as any).sourceDocumentStatus || '')
+        : defaultSourceStatusInfo
+    )
+  );
 
   let cardDeckNames = $derived.by(() => {
     if (!isVisible) return [];

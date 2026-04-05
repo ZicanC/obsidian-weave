@@ -29,8 +29,8 @@
 	--epub-shell-inline-padding: clamp(18px, 2.6vw, 34px);
 	--epub-reading-frame-gap: clamp(10px, 1.8vw, 22px);
 	--epub-bottom-toolbar-gap: clamp(16px, 2vw, 26px);
-	--epub-paged-safe-top: clamp(6px, 0.8vw, 10px);
-	--epub-paged-safe-bottom: clamp(10px, 1vw, 14px);
+	--epub-paged-safe-top: 0.86em;
+	--epub-paged-safe-bottom: 0.86em;
 	--epub-scrolled-safe-top: clamp(8px, 1vw, 14px);
 	--epub-scrolled-safe-bottom: clamp(10px, 1.2vw, 16px);
 
@@ -233,6 +233,8 @@
 	justify-content: center;
 	min-width: 0;
 	min-height: 0;
+	font-size: var(--epub-font-size);
+	line-height: var(--epub-line-height);
 	padding-inline: var(--epub-reading-frame-gap);
 	padding-top: var(--epub-paged-safe-top);
 	padding-bottom: var(--epub-paged-safe-bottom);
@@ -2045,8 +2047,6 @@ body.is-mobile .epub-content-wrapper {
 }
 
 body.is-mobile .epub-reader-root {
-	--epub-paged-safe-top: 4px;
-	--epub-paged-safe-bottom: 8px;
 	--epub-scrolled-safe-top: 6px;
 	--epub-scrolled-safe-bottom: 10px;
 }

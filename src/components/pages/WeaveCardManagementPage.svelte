@@ -52,6 +52,7 @@
   import { cardsToCSV, groupCardsBySource, groupCardsByMonth, groupCardsByDeck, sanitizeFileName, type ExportGroupMode } from "../../utils/card-export-utils";
   import { showObsidianConfirm } from "../../utils/obsidian-confirm";
   import { detectCardQuestionType, getQuestionTypeDistribution } from "../../utils/card-type-utils";
+  import { isInputClozeQuestionContent } from "../../utils/question-bank/input-cloze-utils";
   import { getErrorBookDistribution, getCardErrorLevel } from "../../utils/error-book-utils";
   import { CardType } from "../../data/types";
   import { applyTimeFilter } from "../../utils/time-filter-utils";
@@ -152,17 +153,55 @@
     | 'ir_priority';
   type GridLayoutMode = 'fixed' | 'masonry' | 'timeline';
   
-  const viewPrefs = plugin.settings.cardManagementViewPreferences || {
+  const viewPrefs = untrack(() => ({
     currentView: 'table',
     gridLayout: 'fixed',
     gridCardAttribute: 'uuid',
     kanbanLayoutMode: 'comfortable',
     tableViewMode: 'basic',
-    enableCardLocationJump: false
-  };
+    enableCardLocationJump: false,
+    ...(plugin.settings.cardManagementViewPreferences ?? {})
+  }));
   
   // 🔒 高级功能守卫实例（优先初始化）
   const premiumGuard = PremiumFeatureGuard.getInstance();
+
+  function resolveKanbanLayoutMode(value: unknown): 'compact' | 'comfortable' | 'spacious' {
+    return value === 'compact' || value === 'comfortable' || value === 'spacious'
+      ? value
+      : 'comfortable';
+  }
+
+  function resolveTableViewMode(value: unknown): 'basic' | 'review' | 'questionBank' | 'irContent' {
+    return value === 'basic' || value === 'review' || value === 'questionBank' || value === 'irContent'
+      ? value
+      : 'basic';
+  }
+
+  function resolveGridCardAttribute(value: unknown): GridCardAttributeType {
+    return value === 'none'
+      || value === 'uuid'
+      || value === 'source'
+      || value === 'priority'
+      || value === 'retention'
+      || value === 'modified'
+      || value === 'accuracy'
+      || value === 'question_type'
+      || value === 'ir_state'
+      || value === 'ir_priority'
+      ? value
+      : 'uuid';
+  }
+
+  function resolveGridLayoutMode(value: unknown): GridLayoutMode {
+    if (value === 'timeline' && premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.TIMELINE_VIEW)) {
+      return 'fixed';
+    }
+
+    return value === 'masonry' || value === 'timeline'
+      ? value
+      : 'fixed';
+  }
   
   // 🔒 视图权限检查和降级
   function getInitialView(): 'table' | 'grid' | 'kanban' {
@@ -181,18 +220,19 @@
     }
     return 'table';
   }
+
+  const initialView = getInitialView();
+  const initialGridLayout = resolveGridLayoutMode(viewPrefs.gridLayout);
+  const shouldPersistResolvedViewPreferences =
+    initialView !== viewPrefs.currentView || initialGridLayout !== viewPrefs.gridLayout;
   
-  let currentView = $state<'table' | 'grid' | 'kanban'>(getInitialView());
-  let gridLayout = $state<GridLayoutMode>(
-    viewPrefs.gridLayout === 'masonry' || viewPrefs.gridLayout === 'timeline'
-      ? viewPrefs.gridLayout
-      : 'fixed'
-  );
+  let currentView = $state<'table' | 'grid' | 'kanban'>(initialView);
+  let gridLayout = $state<GridLayoutMode>(initialGridLayout);
   let kanbanGroupBy = $state<'status' | 'type' | 'priority' | 'deck' | 'createTime'>('status'); // 看板分组方式
-  let kanbanLayoutMode = $state<'compact' | 'comfortable' | 'spacious'>(viewPrefs.kanbanLayoutMode);
-  let tableViewMode = $state<'basic' | 'review' | 'questionBank' | 'irContent'>(viewPrefs.tableViewMode);
+  let kanbanLayoutMode = $state<'compact' | 'comfortable' | 'spacious'>(resolveKanbanLayoutMode(viewPrefs.kanbanLayoutMode));
+  let tableViewMode = $state<'basic' | 'review' | 'questionBank' | 'irContent'>(resolveTableViewMode(viewPrefs.tableViewMode));
   let enableCardLocationJump = $state(viewPrefs.enableCardLocationJump);
-  let gridCardAttribute = $state<GridCardAttributeType>(viewPrefs.gridCardAttribute);
+  let gridCardAttribute = $state<GridCardAttributeType>(resolveGridCardAttribute(viewPrefs.gridCardAttribute));
   
   // 🆕 全局筛选状态（从FilterStateService同步）
   let globalSelectedDeckId = $state<string | null>(null);
@@ -1455,6 +1495,10 @@
   // 生命周期
   onMount(() => {
     isMounted = true;
+
+    if (shouldPersistResolvedViewPreferences) {
+      void saveViewPreferences();
+    }
     
     // 🆕 订阅全局筛选状态（从FilterStateService）
     const filterUnsubscribe = plugin.filterStateService?.subscribe((state) => {
@@ -1671,6 +1715,29 @@
       }
     };
     window.addEventListener('Weave:card-management-toolbar-action', handleCardManagementToolbarAction as EventListener);
+
+    const handleMainInterfaceMenuRequest = (e: Event) => {
+      const detail = (e as CustomEvent<{
+        page?: string;
+        event?: MouseEvent;
+        source?: string;
+      }>).detail;
+
+      if (detail?.page !== 'weave-card-management') {
+        return;
+      }
+
+      if (!(detail.event instanceof MouseEvent)) {
+        return;
+      }
+
+      e.preventDefault();
+      showMobileCardManagementMenu(detail.event);
+    };
+    window.addEventListener(
+      'Weave:request-main-interface-menu',
+      handleMainInterfaceMenuRequest as EventListener
+    );
     
     // 🆕 初始化时通知父组件当前视图状态
     window.dispatchEvent(new CustomEvent('Weave:card-view-change', { detail: currentView }));
@@ -1845,6 +1912,10 @@
       window.removeEventListener('Weave:card-data-source-change', handleCardDataSourceChange);
       window.removeEventListener('Weave:card-management-search-change', handleCardManagementSearchChange as EventListener);
       window.removeEventListener('Weave:card-management-toolbar-action', handleCardManagementToolbarAction as EventListener);
+      window.removeEventListener(
+        'Weave:request-main-interface-menu',
+        handleMainInterfaceMenuRequest as EventListener
+      );
       window.removeEventListener('Weave:ir-timer-updated', handleIRRealtimeRefresh);
       window.removeEventListener('Weave:ir-data-updated', handleIRRealtimeRefresh);
       if (resizeObserver) resizeObserver.disconnect();
@@ -3059,16 +3130,19 @@
         return;
       }
 
-      // 从选中的卡片中筛选出选择题类型
+      // 从选中的卡片中筛选出可加入考试牌组的题型
       const sourceCards = currentSourceCards;
       const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
-      const choiceCards = selectedCardData.filter(c => {
+      const supportedQuestionCards = selectedCardData.filter(c => {
         const questionType = detectCardQuestionType(c);
-        return questionType === 'single-choice' || questionType === 'multiple-choice';
+        return questionType === 'single-choice'
+          || questionType === 'multiple-choice'
+          || isInputClozeQuestionContent(c.content);
       });
+      const skippedUnsupportedCount = selectedCardData.length - supportedQuestionCards.length;
 
-      if (choiceCards.length === 0) {
-        showNotification('选中的卡片中没有选择题类型的卡片', 'warning');
+      if (supportedQuestionCards.length === 0) {
+        showNotification('选中的卡片中没有可加入考试题组的选择题或带 #input 标签的挖空题', 'warning');
         return;
       }
 
@@ -3079,18 +3153,21 @@
         return;
       }
 
-      // 将选择题卡片的 UUID 引用添加到考试牌组
+      // 将支持的题目卡片 UUID 引用添加到考试牌组
       const existingUUIDs = new Set(bank.cardUUIDs || []);
       let addedCount = 0;
-      for (const card of choiceCards) {
+      let skippedExistingCount = 0;
+      for (const card of supportedQuestionCards) {
         if (!existingUUIDs.has(card.uuid)) {
           existingUUIDs.add(card.uuid);
           addedCount++;
+        } else {
+          skippedExistingCount++;
         }
       }
 
       if (addedCount === 0) {
-        showNotification('选中的选择题卡片已在该考试牌组中', 'info');
+        showNotification('可加入的题目都已在该考试题组中', 'info');
         return;
       }
 
@@ -3098,7 +3175,14 @@
       bank.modified = new Date().toISOString();
       await questionBankStorage!.saveBanks(plugin.questionBankService.getAllQuestionBanks());
 
-      showNotification(`已将 ${addedCount} 张选择题添加到考试牌组"${bank.name}"`, 'success');
+      const summaryParts = [`已将 ${addedCount} 题加入考试题组"${bank.name}"`];
+      if (skippedUnsupportedCount > 0) {
+        summaryParts.push(`跳过 ${skippedUnsupportedCount} 张不支持的卡片`);
+      }
+      if (skippedExistingCount > 0) {
+        summaryParts.push(`跳过 ${skippedExistingCount} 张已存在题目`);
+      }
+      showNotification(summaryParts.join('，'), 'success');
     } catch (error) {
       logger.error('添加到考试牌组失败:', error);
       showNotification('操作失败', 'error');
@@ -5502,6 +5586,8 @@
       showActivationPrompt
   );
 
+  const showBatchToolbar = $derived(selectedCards.size > 0 && !modalActive);
+
   $effect(() => {
     if (!showColumnManager) return;
 
@@ -5546,6 +5632,15 @@
 
   // 布局切换处理
   async function handleLayoutModeChange(layout: GridLayoutMode) {
+    if (layout === 'timeline' && premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.TIMELINE_VIEW)) {
+      promptPremiumFeature(PREMIUM_FEATURES.TIMELINE_VIEW);
+      return;
+    }
+
+    if (gridLayout === layout) {
+      return;
+    }
+
     gridLayout = layout;
     await saveViewPreferences(); // 保存视图偏好
   }
@@ -5739,9 +5834,10 @@
           });
       });
 
+      const timelineLayoutLocked = premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.TIMELINE_VIEW);
       menu.addItem((item) => {
         item
-          .setTitle('时间线布局')
+          .setTitle(timelineLayoutLocked ? '时间线布局 (高级)' : '时间线布局')
           .setIcon('history')
           .setChecked(gridLayout === 'timeline')
           .onClick(async () => {
@@ -6228,7 +6324,10 @@
 
 </script>
 
-<div class="weave-card-management-page" class:is-table-view={currentView === 'table'}>
+<div
+  class="weave-card-management-page"
+  class:is-table-view={currentView === 'table'}
+>
   
   <!-- 加载动画 - 全屏显示 -->
   {#if isLoading || isViewSwitching}
@@ -6291,7 +6390,7 @@
   <!-- 批量操作工具栏 -->
   <WeaveBatchToolbar
     selectedCount={selectedCards.size}
-    visible={selectedCards.size > 0 && !modalActive}
+    visible={showBatchToolbar}
     app={plugin.app}
     {dataSource}
     onBatchChangeDeck={dataSource === 'memory' ? handleBatchChangeDeck : undefined}
@@ -6574,6 +6673,7 @@
   .weave-card-management-page {
     --weave-card-management-page-bg: var(--background-primary);
     --weave-card-management-surface-bg: var(--background-secondary);
+    --weave-card-management-table-top-gap: 0px;
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -6900,6 +7000,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    padding-top: var(--weave-card-management-table-top-gap);
     background: var(--weave-card-management-page-bg);
   }
 
@@ -6924,6 +7025,9 @@
     padding-bottom: var(--weave-mobile-content-bottom-padding, 60px);
   }
 
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .weave-card-management-page.is-table-view),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .weave-card-management-page.is-table-view) {
+    --weave-card-management-table-top-gap: 6px;
+  }
+
 </style>
-
-

@@ -264,13 +264,17 @@
 
   /* 移动端适配 */
   .weave-batch-toolbar.mobile {
+    --weave-batch-toolbar-mobile-bottom-gap: 8px;
     flex-direction: column;
     gap: 0.75rem;
     padding: 1rem;
     border-radius: 0.75rem 0.75rem 0 0;
-    bottom: 48px;
-    left: 0;
-    right: 0;
+    bottom: calc(
+      var(--weave-workspace-bottom-offset, var(--weave-modal-bottom, env(safe-area-inset-bottom, 0px)))
+      + var(--weave-batch-toolbar-mobile-bottom-gap)
+    );
+    left: env(safe-area-inset-left, 0px);
+    right: env(safe-area-inset-right, 0px);
     transform: none;
     max-width: none;
   }

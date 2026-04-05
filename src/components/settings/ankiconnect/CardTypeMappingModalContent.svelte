@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { AnkiModelInfo } from '../../../types/ankiconnect-types';
   import type {
     AnkiSyncCardType,
@@ -83,12 +84,12 @@
     onClose
   }: Props = $props();
 
-  let localMapping = $state(cloneDeckMapping(mapping));
-  let localModels = $state(sortModels(ankiModels));
-  let activeCardType = $state(resolveInitialCardType(mapping));
+  let localMapping = $state(untrack(() => cloneDeckMapping(mapping)));
+  let localModels = $derived(sortModels(ankiModels));
+  let activeCardType = $state(untrack(() => resolveInitialCardType(mapping)));
   let fieldOrderByCardType = $state(createInitialFieldOrderState());
 
-  let isExportMapping = $derived(localMapping.syncDirection === 'to_anki');
+  let isExportMapping = $derived(localMapping.syncDirection !== 'from_anki');
   let activeCardTypeMapping = $derived(getCardTypeMapping(activeCardType));
   let activeSelectedModel = $derived(getModelByName(activeCardTypeMapping.ankiModelName));
   let activeFieldDefinitions = $derived(getOrderedFieldDefinitions(activeCardType));

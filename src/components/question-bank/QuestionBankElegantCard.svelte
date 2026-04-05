@@ -63,6 +63,7 @@
   // 处理菜单按钮点击
   function handleMenuClick(event: MouseEvent) {
     event.preventDefault();
+    event.stopPropagation();
     onMenu(event);
   }
 
@@ -140,6 +141,8 @@
 
   .question-bank-elegant-card {
     position: relative;
+    width: 100%;
+    min-width: 0;
     height: 220px;
     border-radius: 16px;
     overflow: hidden;
@@ -148,6 +151,7 @@
     cursor: pointer;
     display: flex;
     flex-direction: column;
+    touch-action: manipulation;
   }
 
   .question-bank-elegant-card:hover {
@@ -232,6 +236,7 @@
     backdrop-filter: blur(8px);
     transition: all 0.2s;
     opacity: 0;
+    touch-action: manipulation;
   }
 
   .question-bank-elegant-card:hover .menu-btn {
@@ -291,6 +296,8 @@
   .stats-bar {
     display: flex;
     gap: 20px;
+    row-gap: 8px;
+    flex-wrap: wrap;
     color: rgba(255, 255, 255, 0.9);
     font-size: 13px;
   }
@@ -387,6 +394,71 @@
 
     .stat-value {
       font-size: 18px;
+    }
+  }
+
+  @container deck-card (max-width: 360px) {
+    .question-bank-elegant-card {
+      height: 180px;
+      border-radius: 14px;
+    }
+
+    .card-content {
+      padding: 18px 18px;
+    }
+
+    .card-title {
+      font-size: 21px;
+    }
+
+    .stats-bar {
+      gap: 12px 16px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+    }
+
+    .stat-value {
+      font-size: 14px;
+    }
+
+    .menu-btn {
+      opacity: 1;
+    }
+  }
+
+  @container deck-card (max-width: 280px) {
+    .question-bank-elegant-card {
+      height: 162px;
+      border-radius: 12px;
+    }
+
+    .card-content {
+      padding: 14px 14px;
+    }
+
+    .card-title {
+      font-size: 18px;
+    }
+
+    .stats-bar {
+      gap: 10px 12px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+    }
+
+    .stat-value {
+      font-size: 13px;
+    }
+
+    .menu-btn {
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
     }
   }
 </style>

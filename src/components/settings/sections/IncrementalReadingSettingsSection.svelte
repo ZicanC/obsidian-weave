@@ -5,6 +5,7 @@
   已移除弃用的聚焦阅读模式相关设置
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { logger } from '../../../utils/logger';
   import type WeavePlugin from '../../../main';
   import { tr } from '../../../utils/i18n';
@@ -85,7 +86,7 @@
   }
 
   let { plugin }: Props = $props();
-  let settings = $state(plugin.settings);
+  let settings = $state(untrack(() => plugin.settings));
   
   // 确保 incrementalReading 设置存在
   $effect(() => {

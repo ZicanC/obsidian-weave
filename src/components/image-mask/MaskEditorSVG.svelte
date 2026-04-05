@@ -15,7 +15,7 @@ import { logger } from '../../utils/logger';
  * @date 2025-10-22
  */
 
-import { onMount, tick } from 'svelte';
+import { onMount, tick, untrack } from 'svelte';
 import MaskShapeV2 from './MaskShapeV2.svelte';
 import { createMaskStore } from '../../stores/mask-store';
 import { getSVGPoint, isValidMask, isMaskTooSmall, clampMask } from '../../services/image-mask/mask-operations';
@@ -42,7 +42,7 @@ let {
 } = $props();
 
 // 创建Store实例
-const store = createMaskStore(initialMaskData?.masks || []);
+const store = untrack(() => createMaskStore(initialMaskData?.masks || []));
 
 // 创建响应式代理，让 store 的关键属性触发重新渲染
 let storeMasks = $state<Mask[]>([]);
@@ -655,4 +655,3 @@ function handleSvgClick(e: MouseEvent) {
   }
   
 </style>
-

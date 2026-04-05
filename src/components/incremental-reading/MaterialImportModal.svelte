@@ -11,7 +11,7 @@
   @version 4.0.0
 -->
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { TFolder, TFile, Notice, normalizePath, Menu } from 'obsidian';
   import type { WeavePlugin } from '../../main';
   import { logger } from '../../utils/logger';
@@ -245,7 +245,7 @@
   let showNewDeckInput = $state(false);
   let newDeckName = $state('');
   let creatingDeck = $state(false);
-  const services = getServices(plugin.app, plugin.settings?.incrementalReading?.importFolder);
+  const services = untrack(() => getServices(plugin.app, plugin.settings?.incrementalReading?.importFolder));
   
   // v5.0 文件化块服务
   let chunkFileService: IRChunkFileService | null = $state(null);

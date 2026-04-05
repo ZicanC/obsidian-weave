@@ -32,9 +32,9 @@ export function createRetentionScrollableLegend(
 	return {
 		type: "scroll",
 		data,
-		top: isMobile ? 8 : 10,
-		left: isMobile ? 8 : 12,
-		right: isMobile ? 8 : 16,
+		left: isMobile ? 6 : 10,
+		right: isMobile ? 6 : 10,
+		bottom: isMobile ? 4 : 8,
 		pageIconColor: colors.accentColor,
 		pageIconInactiveColor: colors.axisLineColor,
 		pageTextStyle: {
@@ -57,10 +57,10 @@ export function createRetentionScrollableLegend(
 
 export function createRetentionChartGrid(isMobile: boolean, withLegend = true) {
 	return {
-		left: isMobile ? 30 : 45,
-		right: isMobile ? 12 : 36,
-		top: withLegend ? (isMobile ? 62 : 72) : isMobile ? 26 : 36,
-		bottom: isMobile ? 52 : 56,
+		left: isMobile ? 18 : 30,
+		right: isMobile ? 10 : 28,
+		top: withLegend ? (isMobile ? 26 : 34) : isMobile ? 24 : 32,
+		bottom: withLegend ? (isMobile ? 70 : 76) : isMobile ? 46 : 54,
 		containLabel: true,
 	};
 }

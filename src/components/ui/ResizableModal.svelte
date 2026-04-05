@@ -7,7 +7,7 @@
   import { focusManager } from '../../utils/focus-manager';
   import { getWorkspaceBounds, isMobileDevice, type WorkspaceBounds } from '../../utils/mobile-modal-bounds';
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import type { Snippet } from 'svelte';
   import { getModalSizePresets, MODAL_SIZE_LIMITS } from '../settings/constants/settings-constants';
   import type { WeavePlugin } from '../../main';
@@ -122,7 +122,7 @@
     rememberLastSize: true,  //  默认启用尺寸记忆
     enableResize: true
   });
-  let persistedModalSize = $state(plugin.getEditorModalSizeState());
+  let persistedModalSize = $state(untrack(() => plugin.getEditorModalSizeState()));
 
   // 当前模态窗尺寸 - 响应式更新
   let currentWidth = $state(800);

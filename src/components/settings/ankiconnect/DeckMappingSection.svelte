@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Menu, Notice } from 'obsidian';
+  import { type App, Menu, Notice } from 'obsidian';
   import type { AnkiDeckInfo, AnkiModelInfo } from '../../../types/ankiconnect-types';
   import type { Deck } from '../../../data/types';
   import type { DeckSyncMapping } from '../../settings/types/settings-types';
   import type { AnkiConnectSettings } from '../../settings/types/settings-types';
   import { tr } from '../../../utils/i18n';
   import ObsidianDropdown from '../../ui/ObsidianDropdown.svelte';
+  import { CardTypeMappingModalObsidian } from './CardTypeMappingModalObsidian';
   
   //  高级功能限制
   import { PremiumFeatureGuard } from '../../../services/premium/PremiumFeatureGuard';
@@ -19,7 +20,12 @@
   
   // UI组件（原生 Menu API，无需额外导入）
   
+  type DeckMappingRow = DeckSyncMapping & {
+    _id: string;
+  };
+
   let {
+    app,
     ankiDecks = [],
     ankiModels = [],
     weaveDecks = [],
@@ -38,6 +44,7 @@
     onBidirectionalSync,
     onBatchSync
   }: {
+    app: App;
     ankiDecks: AnkiDeckInfo[];
     ankiModels?: AnkiModelInfo[];
     weaveDecks: Deck[];
@@ -80,7 +87,7 @@
     const list = Object.entries(mappings).map(([id, mapping]) => ({
       _id: id, // 保留原始 key
       ...mapping
-    }));
+    })) as DeckMappingRow[];
     return list;
   });
 
@@ -158,14 +165,33 @@
     return date.toLocaleDateString();
   }
 
-  function getContentConversionValue(mapping: any): 'standard' | 'preserve_style' | 'minimal' {
+  function handleHelpModalOverlayKeydown(event: KeyboardEvent) {
+    if (event.target !== event.currentTarget) return;
+
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      showHelpModal = false;
+    }
+  }
+
+  function getContentConversionValue(mapping: DeckSyncMapping): 'standard' | 'preserve_style' | 'minimal' {
     return mapping?.contentConversion || 'standard';
+  }
+
+  function openCardTypeMappingModal(mapping: DeckMappingRow) {
+    new CardTypeMappingModalObsidian(app, {
+      mappingId: mapping._id,
+      mapping,
+      ankiModels,
+      isConnected,
+      onUpdateMapping
+    }).open();
   }
 
   /**
    * 显示映射操作菜单（Obsidian 原生 Menu）
    */
-  function showMappingActionsMenu(mapping: any, event: MouseEvent) {
+  function showMappingActionsMenu(mapping: DeckMappingRow, event: MouseEvent) {
     const menu = new Menu();
     const isSyncing = syncingDeckId === mapping._id || syncingDeckId === mapping.ankiDeckName;
     
@@ -199,6 +225,13 @@
           .onClick(() => handleBidirectionalSync(mapping._id));
       });
     }
+
+    menu.addItem((item) => {
+      item
+        .setTitle('字段映射配置')
+        .setIcon('settings-2')
+        .onClick(() => openCardTypeMappingModal(mapping));
+    });
     
     // 添加分隔符和删除选项
     menu.addSeparator();
@@ -465,6 +498,7 @@
     aria-labelledby="help-modal-title"
     tabindex="-1"
     onclick={() => showHelpModal = false}
+    onkeydown={handleHelpModalOverlayKeydown}
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div 
@@ -968,4 +1002,3 @@
     }
   }
 </style>
-

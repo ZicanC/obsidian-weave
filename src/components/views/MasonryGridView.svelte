@@ -4,7 +4,7 @@
   自动分配卡片到最短的列
 -->
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import type { Card } from '../../data/types';
   import type { WeavePlugin } from '../../main';
   import LazyGridCard from '../cards/LazyGridCard.svelte';
@@ -49,7 +49,7 @@
   // 状态管理
   let containerElement: HTMLElement;
   let columns = $state<Card[][]>([]);
-  let actualColumnCount = $state(columnCount);
+  let actualColumnCount = $state(untrack(() => columnCount));
   
   // 横向滚动条相关
   let topScrollbar = $state<HTMLDivElement>();
@@ -634,4 +634,3 @@
   }
 
 </style>
-

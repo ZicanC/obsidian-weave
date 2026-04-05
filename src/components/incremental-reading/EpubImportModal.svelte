@@ -10,7 +10,7 @@
   @version 1.0.0
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { TFile, Notice } from 'obsidian';
   import type { App } from 'obsidian';
   import { setIcon } from 'obsidian';
@@ -51,7 +51,7 @@
   // --- State ---
   let currentStep = $state<Step>('select');
   let epubFiles = $state<TFile[]>([]);
-  let selectedEpubPath = $state(preselectedEpubPath || '');
+  let selectedEpubPath = $state(untrack(() => preselectedEpubPath || ''));
   let irDecks = $state<IRDeck[]>([]);
   let selectedDeckId = $state('');
 

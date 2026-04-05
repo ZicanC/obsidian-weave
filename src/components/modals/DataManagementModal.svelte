@@ -3,7 +3,7 @@
   职责：通过标签页切换数据管理和卡片质量扫描功能
 -->
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Notice } from 'obsidian';
   import { logger } from '../../utils/logger';
   import type { WeavePlugin } from '../../main';
@@ -56,7 +56,7 @@
 
   // ===== 标签页 =====
   type TabId = 'data' | 'quality';
-  let activeTab = $state<TabId>(initialTab);
+  let activeTab = $state<TabId>(untrack(() => initialTab));
   
   function handleTabChange(tabId: TabId) {
     activeTab = tabId;
@@ -167,7 +167,7 @@
   });
 
   // ===== Service =====
-  const dataService = getDataManagementService(plugin);
+  const dataService = getDataManagementService(untrack(() => plugin));
 
   async function refreshLatestMigrationSummary() {
     const report = await dataService.getLatestMigrationReport();

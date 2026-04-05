@@ -1258,6 +1258,7 @@ export class ReadiumReaderService implements EpubReaderEngine {
 		const concealment = this.getConcealmentPalette();
 		const colorScheme = this.getCurrentColorScheme();
 		const rootSelector = `html[${READIUM_THEME_DOCUMENT_ATTRIBUTE}][${READIUM_THEME_DOCUMENT_ATTRIBUTE}][${READIUM_THEME_DOCUMENT_ATTRIBUTE}]`;
+		const pagedContentInset = `${(this.currentLineHeight * 0.35).toFixed(3)}em`;
 
 		return `${rootSelector} {
 	color-scheme: ${colorScheme};
@@ -1273,6 +1274,10 @@ ${rootSelector} body {
 	margin: 0 !important;
 	text-rendering: optimizeLegibility;
 	font-kerning: normal;
+}
+${rootSelector}:not([style*="readium-scroll-on"]) body {
+	padding-top: ${pagedContentInset} !important;
+	padding-bottom: ${pagedContentInset} !important;
 }
 ${rootSelector} body :is(${READIUM_THEMEABLE_TEXT_SELECTORS}) {
 	color: inherit !important;

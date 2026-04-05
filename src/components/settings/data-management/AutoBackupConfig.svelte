@@ -3,6 +3,7 @@
   提供自动备份的配置界面
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { AutoBackupConfig } from '../../../types/data-management-types';
   import type { WeavePlugin } from '../../../main';
   import { tr } from '../../../utils/i18n';
@@ -16,28 +17,38 @@
 
   let { plugin }: Props = $props();
 
+  function createConfigSnapshot(): AutoBackupConfig {
+    const currentConfig = plugin.settings.autoBackupConfig;
+
+    return {
+      enabled: currentConfig?.enabled ?? true,
+      intervalHours: currentConfig?.intervalHours ?? 24,
+      triggers: {
+        onStartup: currentConfig?.triggers?.onStartup ?? true,
+        onCardThreshold: currentConfig?.triggers?.onCardThreshold ?? true,
+        cardThresholdCount: currentConfig?.triggers?.cardThresholdCount ?? 100
+      },
+      notifications: {
+        onSuccess: currentConfig?.notifications?.onSuccess ?? true,
+        onFailure: currentConfig?.notifications?.onFailure ?? true
+      },
+      lastAutoBackupTime: currentConfig?.lastAutoBackupTime,
+      autoBackupCount: currentConfig?.autoBackupCount ?? 0
+    };
+  }
+
   // 响应式配置状态
-  let config = $state<AutoBackupConfig>({
-    enabled: plugin.settings.autoBackupConfig?.enabled ?? true,
-    intervalHours: plugin.settings.autoBackupConfig?.intervalHours ?? 24,
-    triggers: {
-      onStartup: plugin.settings.autoBackupConfig?.triggers.onStartup ?? true,
-      onCardThreshold: plugin.settings.autoBackupConfig?.triggers.onCardThreshold ?? true,
-      cardThresholdCount: plugin.settings.autoBackupConfig?.triggers.cardThresholdCount ?? 100
-    },
-    notifications: plugin.settings.autoBackupConfig?.notifications ?? {
-      onSuccess: true,
-      onFailure: true
-    },
-    lastAutoBackupTime: plugin.settings.autoBackupConfig?.lastAutoBackupTime,
-    autoBackupCount: plugin.settings.autoBackupConfig?.autoBackupCount ?? 0
-  });
+  let config = $state<AutoBackupConfig>(untrack(() => createConfigSnapshot()));
 
 
 
   // 保存配置
   async function saveConfig() {
-    plugin.settings.autoBackupConfig = { ...config };
+    plugin.settings.autoBackupConfig = {
+      ...config,
+      triggers: { ...config.triggers },
+      notifications: { ...config.notifications }
+    };
     await plugin.saveSettings();
     
     // 重启调度器以应用新配置

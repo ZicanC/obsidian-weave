@@ -3,7 +3,7 @@
   import { getWorkspaceBounds, isMobileDevice, type WorkspaceBounds } from '../../utils/mobile-modal-bounds';
 
   import type { Snippet } from "svelte";
-  import { createEventDispatcher, onMount, onDestroy } from "svelte";
+  import { createEventDispatcher, onMount, onDestroy, untrack } from "svelte";
   import EnhancedButton from "./EnhancedButton.svelte";
   import EnhancedIcon from "./EnhancedIcon.svelte";
 
@@ -132,7 +132,7 @@
 
   let modalRef = $state<HTMLDivElement | null>(null);
   let isOkLoading = $state(false);
-  let shouldRender = $state(open);
+  let shouldRender = $state(untrack(() => open));
   
   //  移动端边界状态
   let mobileBounds = $state<WorkspaceBounds | null>(null);

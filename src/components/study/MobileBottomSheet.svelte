@@ -271,6 +271,7 @@
     <div 
       class="mobile-bottom-sheet"
       bind:this={sheetElement}
+      role="document"
       ontouchstart={handleTouchStart}
       ontouchmove={handleTouchMove}
       ontouchend={handleTouchEnd}

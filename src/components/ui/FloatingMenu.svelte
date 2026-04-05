@@ -192,7 +192,7 @@
     box-shadow: 
       0 8px 24px rgba(0, 0, 0, 0.12),
       0 2px 8px rgba(0, 0, 0, 0.08);
-    z-index: var(--weave-z-overlay); /* 🔧 合理的z-index层级（原：2147483647 过高） */
+    z-index: var(--weave-z-menu, 1200); /* Portal 到 body 时也要有可用的全局回退层级 */
     min-width: 180px;
     max-width: 400px;
     width: max-content;
@@ -219,4 +219,3 @@
     position: fixed !important;
   }
 </style>
-

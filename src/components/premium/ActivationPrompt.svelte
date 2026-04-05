@@ -73,6 +73,15 @@
       onClose();
     }
   }
+
+  function handleOverlayKeydown(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget) return;
+
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClose();
+    }
+  }
 </script>
 
 {#if visible}
@@ -133,6 +142,7 @@
     <div 
       class="activation-prompt-overlay" 
       onclick={handleOverlayClick}
+      onkeydown={handleOverlayKeydown}
       role="dialog"
       aria-modal="true"
       tabindex="-1"
@@ -487,4 +497,3 @@
     }
   }
 </style>
-

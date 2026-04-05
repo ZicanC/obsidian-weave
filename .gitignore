@@ -58,6 +58,7 @@ jspm_packages/
 # Nuxt.js build / generate output
 .nuxt
 dist
+.mobile-hot-reload/
 
 # Gatsby files
 .cache/
@@ -86,6 +87,7 @@ vitest-*.json
 
 # Local development artifacts
 .dev-watch.lock.json
+.mobile-watch.lock.json
 .lint-obsidian.json
 .tmp-*.json
 .tmp-*.txt
@@ -237,7 +239,11 @@ start-dev.bat
 start-dev.sh
 
 # 脚本（含激活码生成等敏感工具）
-scripts/
+scripts/*
+!scripts/clean-cache.cjs
+!scripts/copy-manifest.cjs
+!scripts/dev-watch.cjs
+!scripts/kill-vite.cjs
 
 # 测试文件
 test/

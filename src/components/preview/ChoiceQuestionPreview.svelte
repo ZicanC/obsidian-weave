@@ -414,20 +414,17 @@
   <!-- 答案对比区域 - 极简主义设计 -->
   {#if hasAnswerKey && showAnswer && hasAnswered}
     <div class="answer-comparison">
-      <div class="comparison-row">
-        <div class="comparison-item your-answer">
-          <span class="comparison-label">你的答案</span>
-          <span class="comparison-value" class:incorrect={!isCorrect}>
-            {selectedOptions.sort().join('、')}
-          </span>
-        </div>
-        <div class="comparison-divider"></div>
-        <div class="comparison-item correct-answer">
-          <span class="comparison-label">正确答案</span>
-          <span class="comparison-value correct">
-            {correctAnswerLabels.sort().join('、')}
-          </span>
-        </div>
+      <div class="comparison-line your-answer-line">
+        <span class="comparison-label">你的答案：</span>
+        <span class="comparison-value" class:incorrect={!isCorrect}>
+          {selectedOptions.sort().join('、')}
+        </span>
+      </div>
+      <div class="comparison-line correct-answer-line">
+        <span class="comparison-label">正确答案：</span>
+        <span class="comparison-value correct">
+          {correctAnswerLabels.sort().join('、')}
+        </span>
       </div>
     </div>
   {/if}
@@ -514,23 +511,22 @@
     border: 1px solid var(--background-modifier-border);
   }
 
-  .comparison-row {
+  .comparison-line {
     display: flex;
-    align-items: center;
-    gap: 1.5rem;
+    align-items: baseline;
+    gap: 0;
+    padding: 0.625rem 0;
   }
 
-  .comparison-item {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
+  .comparison-line + .comparison-line {
+    border-top: 1px solid var(--background-modifier-border);
   }
 
   .comparison-label {
     font-size: 0.875rem;
     color: var(--text-muted);
     font-weight: 500;
+    flex-shrink: 0;
   }
 
   .comparison-value {
@@ -545,13 +541,6 @@
 
   .comparison-value.incorrect {
     color: var(--color-red);
-  }
-
-  .comparison-divider {
-    width: 1px;
-    height: 40px;
-    background-color: var(--background-modifier-border);
-    flex-shrink: 0;
   }
 
   /* ===== 解析区域 - 直接显示设计 ===== */
@@ -598,15 +587,8 @@
       font-size: 1rem;
     }
 
-    /* 移动端答案对比垂直布局 */
-    .comparison-row {
-      flex-direction: column;
-      gap: 1rem;
-    }
-
-    .comparison-divider {
-      width: 100%;
-      height: 1px;
+    .comparison-line {
+      padding: 0.5rem 0;
     }
 
   }
@@ -721,4 +703,3 @@
     visibility: visible !important;
   }
 </style>
-

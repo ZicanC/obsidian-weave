@@ -89,7 +89,7 @@
    * @module components/incremental-reading/IRDeckView
    * @version 2.0.0
    */
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { Notice, Menu, Modal, Setting, TFile } from 'obsidian';
   import { MaterialImportModalObsidian } from './MaterialImportModalObsidian';
   import IRLoadForecastModal from '../modals/IRLoadForecastModal.svelte';
@@ -147,7 +147,7 @@
   );
 
   // v6.0: 获取模块级别的服务实例
-  const services = getServices(plugin.app, plugin.settings?.incrementalReading?.importFolder);
+  const services = untrack(() => getServices(plugin.app, plugin.settings?.incrementalReading?.importFolder));
 
   // 牌组数据
   let decks = $state<IRDeck[]>([]);
@@ -991,13 +991,13 @@
         {@const irStats = getStats(deckId)}
         {@const colorVariant = ((index % 4) + 1) as 1 | 2 | 3 | 4}
         
-        {#if deckCardStyle === 'chinese-elegant'}
+        <div class="deck-card-shell">
+          {#if deckCardStyle === 'chinese-elegant'}
           <!-- 典雅风格卡片 -->
           <IRDeckCard
             deck={irDeck}
             stats={irStats}
             {colorVariant}
-            compact={false}
             onStudy={() => handleStartReading(deckId)}
             onMenu={(e) => showDeckMenu(e, irDeck)}
           />
@@ -1012,7 +1012,8 @@
             onStudy={() => handleStartReading(deckId)}
             onMenu={(e) => showDeckMenu(e, irDeck)}
           />
-        {/if}
+          {/if}
+        </div>
       {/each}
     </div>
   {/if}
@@ -1074,11 +1075,15 @@
 
 <style>
   .ir-deck-view {
+    --weave-deck-card-min-width: 300px;
+    --weave-deck-grid-gap: 16px;
     display: flex;
     flex-direction: column;
     height: 100%;
     padding: var(--weave-deck-page-content-gap, 1rem);
     overflow: auto;
+    container-type: inline-size;
+    container-name: ir-deck-grid;
   }
 
   /* 加载状态 */
@@ -1140,15 +1145,48 @@
   /* 牌组网格（与记忆牌组一致） */
   .cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--weave-deck-card-min-width)), 1fr));
+    gap: var(--weave-deck-grid-gap);
     padding: 0.5rem 0;
+    container-type: inline-size;
   }
 
   /* 响应式 */
-  @media (max-width: 640px) {
+  .deck-card-shell {
+    min-width: 0;
+    container-type: inline-size;
+    container-name: deck-card;
+  }
+
+  @container ir-deck-grid (max-width: 1100px) {
+    .ir-deck-view {
+      --weave-deck-card-min-width: 280px;
+      --weave-deck-grid-gap: 14px;
+    }
+  }
+
+  @container ir-deck-grid (max-width: 760px) {
+    .ir-deck-view {
+      --weave-deck-card-min-width: 100%;
+      --weave-deck-grid-gap: 12px;
+    }
+
     .cards-grid {
-      grid-template-columns: 1fr;
+      padding: 0.25rem 0;
+    }
+
+    .mode-placeholder {
+      padding: 3rem 1rem;
+    }
+  }
+
+  @container ir-deck-grid (max-width: 420px) {
+    .ir-deck-view {
+      --weave-deck-grid-gap: 8px;
+    }
+
+    .cards-grid {
+      padding: 0.125rem 0;
     }
   }
 </style>

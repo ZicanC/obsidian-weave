@@ -2,6 +2,7 @@
   import { Notice } from 'obsidian';
   import type AnkiObsidianPlugin from '../../main';
   import type { DeckTagGroup } from '../../types/deck-kanban-types';
+  import { untrack } from 'svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import { tr } from '../../utils/i18n';
 
@@ -17,8 +18,8 @@
   let t = $derived($tr);
 
   // 初始化时加载编辑数据
-  let name = $state(editingTagGroup?.name || '');
-  let tags = $state<string[]>(editingTagGroup?.tags || []);
+  let name = $state(untrack(() => editingTagGroup?.name || ''));
+  let tags = $state<string[]>(untrack(() => editingTagGroup?.tags || []));
   let tagInput = $state('');
   let showSuggestions = $state(false);
   let allExistingTags = $state<string[]>([]);

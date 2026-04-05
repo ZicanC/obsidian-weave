@@ -1,8 +1,8 @@
 import { logger } from '../utils/logger';
+
 /**
- * CodeMirror 6 棰勮鍔熻兘淇娴嬭瘯
- *
- * 杩欎釜娴嬭瘯鏂囦欢鐢ㄤ簬楠岃瘉棰勮鍔熻兘鐨勪慨澶嶆晥鏋?
+ * Legacy manual preview scenarios kept for developer smoke checks.
+ * This file is not part of the active Vitest suite.
  */
 
 export interface PreviewTestCase {
@@ -15,100 +15,96 @@ export interface PreviewTestCase {
 
 export const previewTestCases: PreviewTestCase[] = [
   {
-    name: "鍩虹棰勮鍔熻兘",
-    description: "娴嬭瘯鍩烘湰鐨?Markdown 棰勮鍔熻兘",
-    input: "# 鏍囬\n\n杩欐槸涓€涓?*绮椾綋**鏂囨湰鍜?鏂滀綋*鏂囨湰銆俓n\n- 鍒楄〃椤?1\n- 鍒楄〃椤?2",
-    expectedBehavior: "搴旇姝ｇ‘娓叉煋 Markdown 鍐呭锛屽寘鎷爣棰樸€佺矖浣撱€佹枩浣撳拰鍒楄〃",
+    name: 'Basic markdown preview',
+    description: 'Render headings, emphasis, and list content without layout glitches.',
+    input: '# Title\n\nThis is **bold** and *italic* text.\n\n- Item 1\n- Item 2',
+    expectedBehavior: 'Preview renders the markdown content correctly.',
     testSteps: [
-      "1. 鍦ㄧ紪杈戝櫒涓緭鍏?Markdown 鍐呭",
-      "2. 鐐瑰嚮棰勮鎸夐挳",
-      "3. 楠岃瘉鍐呭姝ｇ‘娓叉煋",
-      "4. 鍒囨崲鍥炵紪杈戞ā寮?
+      'Enter markdown content in the editor.',
+      'Switch to preview mode.',
+      'Confirm the rendered output matches the markdown structure.',
+      'Switch back to edit mode and verify the editor remains stable.'
     ]
   },
   {
-    name: "绌哄唴瀹归瑙?,
-    description: "娴嬭瘯绌哄唴瀹规椂鐨勯瑙堣涓?,
-    input: "",
-    expectedBehavior: "搴旇鏄剧ず鍗犱綅绗︽枃鏈€屼笉鏄┖鐧?,
+    name: 'Empty state preview',
+    description: 'Show a safe placeholder when the editor content is empty.',
+    input: '',
+    expectedBehavior: 'Preview shows an empty-state placeholder instead of a blank or broken panel.',
     testSteps: [
-      "1. 娓呯┖缂栬緫鍣ㄥ唴瀹?,
-      "2. 鍒囨崲鍒伴瑙堟ā寮?,
-      "3. 楠岃瘉鏄剧ず鍗犱綅绗?,
-      "4. 鍒囨崲鍥炵紪杈戞ā寮?
+      'Clear the editor content.',
+      'Switch to preview mode.',
+      'Confirm the placeholder is visible.',
+      'Switch back to edit mode.'
     ]
   },
   {
-    name: "蹇€熷垏鎹㈡祴璇?,
-    description: "娴嬭瘯蹇€熷垏鎹㈢紪杈?棰勮妯″紡",
-    input: "娴嬭瘯鍐呭",
-    expectedBehavior: "鍒囨崲搴旇娴佺晠锛屾棤绌虹櫧闂儊",
+    name: 'Fast mode switching',
+    description: 'Rapidly switch between edit and preview modes without flicker or errors.',
+    input: 'Quick toggle test content',
+    expectedBehavior: 'The mode switch stays responsive and does not flash a broken state.',
     testSteps: [
-      "1. 杈撳叆娴嬭瘯鍐呭",
-      "2. 蹇€熷娆＄偣鍑婚瑙堟寜閽?,
-      "3. 楠岃瘉姣忔鍒囨崲閮芥甯?,
-      "4. 妫€鏌ユ棤闂儊鎴栭敊璇?
+      'Enter sample content.',
+      'Toggle preview mode several times in a row.',
+      'Confirm each transition completes cleanly.',
+      'Check the console for unexpected errors.'
     ]
   },
   {
-    name: "鍐呭鍙樺寲棰勮",
-    description: "娴嬭瘯鍐呭鍙樺寲鏃剁殑棰勮鏇存柊",
-    input: "鍒濆鍐呭",
-    expectedBehavior: "棰勮搴旇瀹炴椂鏇存柊锛屼娇鐢ㄩ槻鎶栨満鍒?,
+    name: 'Content refresh after edits',
+    description: 'Refresh preview content after the source text changes.',
+    input: 'Initial content',
+    expectedBehavior: 'Preview reflects the updated content after returning to preview mode.',
     testSteps: [
-      "1. 杈撳叆鍒濆鍐呭骞跺垏鎹㈠埌棰勮",
-      "2. 鍒囨崲鍥炵紪杈戞ā寮?,
-      "3. 淇敼鍐呭",
-      "4. 鍐嶆鍒囨崲鍒伴瑙?,
-      "5. 楠岃瘉棰勮鍐呭宸叉洿鏂?
+      'Enter the initial content and open preview mode.',
+      'Return to edit mode.',
+      'Change the content.',
+      'Open preview mode again.',
+      'Confirm the refreshed preview matches the new content.'
     ]
   },
   {
-    name: "妯℃澘搴旂敤鍚庨瑙?,
-    description: "娴嬭瘯搴旂敤妯℃澘鍚庣殑棰勮鍔熻兘",
-    input: "闂锛氫粈涔堟槸 JavaScript锛焅n绛旀锛氫竴绉嶇紪绋嬭瑷€",
-    expectedBehavior: "搴旂敤妯℃澘鍚庨瑙堝姛鑳藉簲璇ユ甯稿伐浣?,
+    name: 'Template application preview',
+    description: 'Render content correctly after a template or field transform is applied.',
+    input: 'Question: What is JavaScript?\nAnswer: A programming language.',
+    expectedBehavior: 'Preview remains usable after applying a template transformation.',
     testSteps: [
-      "1. 杈撳叆鍩虹鍐呭",
-      "2. 搴旂敤瀛楁妯℃澘",
-      "3. 鍒囨崲鍒伴瑙堟ā寮?,
-      "4. 楠岃瘉妯℃澘鍐呭姝ｇ‘棰勮"
+      'Enter base content.',
+      'Apply the field or template transformation.',
+      'Open preview mode.',
+      'Confirm the transformed content still renders correctly.'
     ]
   },
   {
-    name: "閿欒澶勭悊娴嬭瘯",
-    description: "娴嬭瘯棰勮娓叉煋閿欒鐨勫鐞?,
-    input: "鍖呭惈鐗规畩瀛楃鐨勫唴瀹癸細<script>alert('test')</script>",
-    expectedBehavior: "搴旇瀹夊叏澶勭悊鐗规畩鍐呭锛屾樉绀洪敊璇俊鎭€屼笉鏄穿婧?,
+    name: 'Unsafe markup handling',
+    description: 'Handle unsafe markup safely instead of executing it.',
+    input: "Potentially unsafe input: <script>alert('test')</script>",
+    expectedBehavior: 'Unsafe markup is escaped or sanitized and never executed.',
     testSteps: [
-      "1. 杈撳叆鍖呭惈鐗规畩瀛楃鐨勫唴瀹?,
-      "2. 鍒囨崲鍒伴瑙堟ā寮?,
-      "3. 楠岃瘉鍐呭琚畨鍏ㄥ鐞?,
-      "4. 妫€鏌ユ棤 JavaScript 鎵ц"
+      'Enter content containing unsafe markup.',
+      'Open preview mode.',
+      'Confirm the content is displayed safely.',
+      'Verify that no script execution occurs.'
     ]
   }
 ];
 
-/**
- * 棰勮鍔熻兘娴嬭瘯宸ュ叿绫?
- */
 export class PreviewTestRunner {
-  private testResults: Map<string, boolean> = new Map();
+  private readonly testResults = new Map<string, boolean>();
 
-  /**
-   * 杩愯鎵€鏈夋祴璇曠敤渚?
-   */
   async runAllTests(): Promise<Map<string, boolean>> {
-    logger.debug('馃И 寮€濮嬭繍琛岄瑙堝姛鑳芥祴璇?..');
+    logger.debug('[preview-tests] Starting legacy manual preview smoke checks.');
 
     for (const testCase of previewTestCases) {
       try {
-        logger.debug(`馃搵 杩愯娴嬭瘯: ${testCase.name}`);
+        logger.debug(`[preview-tests] Running scenario: ${testCase.name}`);
         const result = await this.runSingleTest(testCase);
         this.testResults.set(testCase.name, result);
-        logger.debug(`${result ? '鉁? : '鉂?} ${testCase.name}: ${result ? '閫氳繃' : '澶辫触'}`);
+        logger.debug(
+          `[preview-tests] ${testCase.name}: ${result ? 'passed (manual placeholder)' : 'failed'}`
+        );
       } catch (error) {
-        logger.error(`鉂?娴嬭瘯 ${testCase.name} 鎵ц澶辫触:`, error);
+        logger.error(`[preview-tests] Scenario failed: ${testCase.name}`, error);
         this.testResults.set(testCase.name, false);
       }
     }
@@ -116,92 +112,94 @@ export class PreviewTestRunner {
     return this.testResults;
   }
 
-  /**
-   * 杩愯鍗曚釜娴嬭瘯鐢ㄤ緥
-   */
   private async runSingleTest(testCase: PreviewTestCase): Promise<boolean> {
-    // 杩欓噷搴旇瀹炵幇鍏蜂綋鐨勬祴璇曢€昏緫
-    // 鐢变簬杩欐槸涓€涓ā鎷熸祴璇曪紝鎴戜滑杩斿洖 true
-    // 鍦ㄥ疄闄呯幆澧冧腑锛岃繖閲屼細鍖呭惈 DOM 鎿嶄綔鍜岄獙璇侀€昏緫
+    logger.debug(`[preview-tests] Description: ${testCase.description}`);
+    logger.debug(`[preview-tests] Expected behavior: ${testCase.expectedBehavior}`);
+    logger.debug(`[preview-tests] Manual steps: ${testCase.testSteps.join(' | ')}`);
 
-    logger.debug(`馃摑 娴嬭瘯鎻忚堪: ${testCase.description}`);
-    logger.debug(`馃摜 杈撳叆鍐呭: ${testCase.input}`);
-    logger.debug(`馃幆 鏈熸湜琛屼负: ${testCase.expectedBehavior}`);
-    logger.debug("馃搵 娴嬭瘯姝ラ:", testCase.testSteps);
+    await new Promise((resolve) => setTimeout(resolve, 100));
 
-    // 妯℃嫙娴嬭瘯寤惰繜
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    return true; // 妯℃嫙娴嬭瘯閫氳繃
+    return true;
   }
 
-  /**
-   * 鐢熸垚娴嬭瘯鎶ュ憡
-   */
   generateReport(): string {
     const total = this.testResults.size;
-    const passed = Array.from(this.testResults.values()).filter(_result => _result).length;
+    const passed = Array.from(this.testResults.values()).filter(Boolean).length;
     const failed = total - passed;
+    const successRate = total === 0 ? 0 : (passed / total) * 100;
 
-    let report = "\n馃搳 棰勮鍔熻兘娴嬭瘯鎶ュ憡\n";
-    report += "==================\n";
-    report += `鎬绘祴璇曟暟: ${total}\n`;
-    report += `閫氳繃: ${passed}\n`;
-    report += `澶辫触: ${failed}\n`;
-    report += `鎴愬姛鐜? ${((passed / total) * 100).toFixed(1)}%\n\n`;
+    const lines = [
+      '',
+      'Legacy preview smoke test report',
+      '================================',
+      `Total scenarios: ${total}`,
+      `Passed: ${passed}`,
+      `Failed: ${failed}`,
+      `Success rate: ${successRate.toFixed(1)}%`,
+      '',
+      'Detailed results:'
+    ];
 
-    report += "璇︾粏缁撴灉:\n";
     for (const [testName, result] of this.testResults) {
-      report += `${result ? '鉁? : '鉂?} ${testName}\n`;
+      lines.push(`${result ? '[PASS]' : '[FAIL]'} ${testName}`);
     }
 
-    return report;
+    return lines.join('\n');
   }
 }
 
-/**
- * 鎵嬪姩娴嬭瘯鎸囧崡
- */
-export const manualTestGuide = {
-  title: "CodeMirror 6 棰勮鍔熻兘鎵嬪姩娴嬭瘯鎸囧崡",
+interface ManualGuideStep {
+  step: number;
+  title: string;
+  description: string;
+}
+
+interface ManualTestGuide {
+  title: string;
+  steps: ManualGuideStep[];
+  checkpoints: string[];
+}
+
+export const manualTestGuide: ManualTestGuide = {
+  title: 'CodeMirror preview manual smoke test guide',
   steps: [
     {
       step: 1,
-      title: "鎵撳紑鍗＄墖缂栬緫鍣?,
-      description: "鍦?Obsidian 涓墦寮€ Weave 鎻掍欢锛屽垱寤烘垨缂栬緫涓€寮犲崱鐗?
+      title: 'Open the card editor',
+      description: 'Open the plugin in Obsidian and create or edit a card.'
     },
     {
       step: 2,
-      title: "鍒囨崲鍒?Markdown 妯″紡",
-      description: "纭繚缂栬緫鍣ㄥ浜?Markdown 缂栬緫妯″紡"
+      title: 'Stay in markdown mode',
+      description: 'Confirm the editor is in markdown editing mode before testing.'
     },
     {
       step: 3,
-      title: "杈撳叆娴嬭瘯鍐呭",
-      description: "杈撳叆鍖呭惈鍚勭 Markdown 璇硶鐨勫唴瀹?
+      title: 'Enter preview content',
+      description: 'Add content that exercises headings, formatting, and lists.'
     },
     {
       step: 4,
-      title: "娴嬭瘯棰勮鍔熻兘",
-      description: "鐐瑰嚮棰勮鎸夐挳锛岄獙璇佸唴瀹规纭覆鏌?
+      title: 'Validate preview rendering',
+      description: 'Open preview mode and confirm the rendered output is correct.'
     },
     {
       step: 5,
-      title: "娴嬭瘯杈圭晫鎯呭喌",
-      description: "娴嬭瘯绌哄唴瀹广€佸揩閫熷垏鎹€佹ā鏉垮簲鐢ㄧ瓑鍦烘櫙"
+      title: 'Check edge cases',
+      description: 'Test empty content, fast toggles, and template-applied content.'
     },
     {
       step: 6,
-      title: "楠岃瘉鎬ц兘",
-      description: "妫€鏌ュ垏鎹㈡祦鐣呭害銆佸唴瀛樹娇鐢ㄣ€佹覆鏌撻€熷害"
+      title: 'Check performance',
+      description: 'Watch for lag, flicker, excessive memory use, or stale output.'
     }
   ],
   checkpoints: [
-    "鉁?棰勮鍐呭姝ｇ‘鏄剧ず",
-    "鉁?绌哄唴瀹规樉绀哄崰浣嶇",
-    "鉁?鍒囨崲娴佺晠鏃犻棯鐑?,
-    "鉁?鍔犺浇鐘舵€佹竻鏅?,
-    "鉁?閿欒澶勭悊姝ｅ父",
-    "鉁?璧勬簮娓呯悊褰诲簳"
+    'Preview content is rendered correctly.',
+    'Empty content shows a safe placeholder.',
+    'Mode switching stays smooth.',
+    'Error states are handled gracefully.',
+    'Unsafe markup is not executed.',
+    'Resources are cleaned up after toggling modes.'
   ]
 };

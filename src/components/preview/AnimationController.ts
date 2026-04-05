@@ -34,14 +34,24 @@ export class AnimationController {
 	 * 检测用户的动画偏好
 	 */
 	private detectReducedMotion(): void {
-		if (typeof window !== "undefined" && window.matchMedia) {
+		if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
 			const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-			this.options.reducedMotion = mediaQuery.matches;
+			if (!mediaQuery) {
+				return;
+			}
+
+			this.options.reducedMotion = Boolean(mediaQuery.matches);
 
 			// 监听偏好变化
-			mediaQuery.addEventListener("change", (e) => {
-				this.options.reducedMotion = e.matches;
-			});
+			if (typeof mediaQuery.addEventListener === "function") {
+				mediaQuery.addEventListener("change", (e) => {
+					this.options.reducedMotion = e.matches;
+				});
+			} else if (typeof mediaQuery.addListener === "function") {
+				mediaQuery.addListener((e) => {
+					this.options.reducedMotion = e.matches;
+				});
+			}
 		}
 	}
 

@@ -885,8 +885,12 @@
   .reading-sidebar-view {
     display: flex;
     flex-direction: column;
+    width: 100%;
+    max-width: 100%;
     height: 100%;
     font-size: 12px;
+    box-sizing: border-box;
+    container-type: inline-size;
     overflow: hidden;
   }
 
@@ -898,6 +902,7 @@
     padding: 8px;
     border-bottom: 1px solid var(--background-modifier-border);
     flex-shrink: 0;
+    min-width: 0;
   }
 
   .view-toggle {
@@ -930,6 +935,7 @@
     gap: 12px;
     font-size: 13px;
     color: var(--text-muted);
+    min-width: 0;
   }
 
   .stat { 
@@ -1013,6 +1019,7 @@
     flex-direction: column;
     flex: 1;
     overflow: hidden;
+    min-width: 0;
   }
 
   .calendar-nav {
@@ -1021,6 +1028,7 @@
     gap: 4px;
     padding: 8px;
     flex-shrink: 0;
+    min-width: 0;
   }
 
   .nav-btn {
@@ -1041,10 +1049,14 @@
 
   .period {
     flex: 1;
+    min-width: 0;
     text-align: center;
     font-size: 14px;
     font-weight: 600;
     color: var(--text-normal);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .today-btn {
@@ -1067,15 +1079,22 @@
   .mini-calendar {
     padding: 0 8px;
     flex-shrink: 0;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow: clip;
   }
 
   .weekday-header {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     margin-bottom: 4px;
+    min-width: 0;
   }
 
   .weekday-cell {
+    min-width: 0;
     text-align: center;
     font-size: 10px;
     color: var(--text-muted);
@@ -1084,8 +1103,9 @@
 
   .calendar-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 2px;
+    min-width: 0;
   }
 
   .day-cell {
@@ -1098,6 +1118,7 @@
     border-radius: 6px;
     background: transparent;
     cursor: pointer;
+    min-width: 0;
     min-height: 48px;
     transition: all 0.15s;
     gap: 2px;
@@ -1157,6 +1178,7 @@
     border-top: 1px solid var(--background-modifier-border);
     margin-top: 8px;
     min-height: 0; /* 防止 flex 子元素撑开 */
+    min-width: 0;
   }
 
   .date-header {
@@ -1181,11 +1203,114 @@
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.15s;
+    min-width: 0;
   }
 
   .date-material-item:hover { background: var(--background-modifier-hover); }
 
   .material-info { flex: 1; min-width: 0; }
+
+  @container (max-width: 340px) {
+    .sidebar-header {
+      padding: 6px;
+    }
+
+    .quick-stats {
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .calendar-nav {
+      gap: 3px;
+      padding: 6px;
+    }
+
+    .nav-btn {
+      width: 24px;
+      height: 24px;
+    }
+
+    .period {
+      font-size: 12px;
+    }
+
+    .today-btn {
+      padding: 3px 8px;
+      font-size: 11px;
+    }
+
+    .mini-calendar {
+      padding: 0 6px;
+    }
+
+    .weekday-cell {
+      font-size: 9px;
+      padding: 1px;
+    }
+
+    .day-cell {
+      min-height: 42px;
+      padding: 3px 1px;
+      border-radius: 5px;
+    }
+
+    .day-cell.selected {
+      transform: none;
+      box-shadow: 0 2px 6px rgba(var(--interactive-accent-rgb, 124, 58, 237), 0.24);
+    }
+
+    .day-num {
+      font-size: 12px;
+    }
+
+    .activity-dots {
+      gap: 2px;
+      min-height: 8px;
+    }
+
+    .activity-dot {
+      width: 5px;
+      height: 5px;
+    }
+
+    .date-materials {
+      padding: 6px;
+      margin-top: 6px;
+    }
+  }
+
+  @container (max-width: 280px) {
+    .calendar-nav {
+      padding: 4px;
+    }
+
+    .nav-btn {
+      width: 22px;
+      height: 22px;
+    }
+
+    .period {
+      font-size: 11px;
+    }
+
+    .today-btn {
+      padding: 2px 6px;
+      font-size: 10px;
+    }
+
+    .mini-calendar {
+      padding: 0 4px;
+    }
+
+    .day-cell {
+      min-height: 38px;
+      padding: 2px 1px;
+    }
+
+    .day-num {
+      font-size: 11px;
+    }
+  }
 
   .reschedule-btn {
     display: flex;

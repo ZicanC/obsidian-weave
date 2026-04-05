@@ -10,7 +10,7 @@
    */
   import BottomSheetModal from '../ui/BottomSheetModal.svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
-  import type { Snippet } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
 
   interface TagItem {
     id: string;
@@ -47,8 +47,8 @@
   }: Props = $props();
 
   // 本地状态
-  let localName = $state(deckName);
-  let localTags = $state<TagItem[]>([...tags]);
+  let localName = $state(untrack(() => deckName));
+  let localTags = $state<TagItem[]>(untrack(() => [...tags]));
 
   // 同步外部状态
   $effect(() => {

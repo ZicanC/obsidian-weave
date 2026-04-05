@@ -1,9 +1,9 @@
 /**
- * 璧勬簮绠＄悊鍣ㄥ熀纭€鍔熻兘娴嬭瘯
+ * 资源管理器基础测试
  */
 import { EditorResourceManager, getGlobalResourceManager } from '../utils/resource-manager';
 
-describe('璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
+describe('资源管理器基础测试', () => {
   let resourceManager: EditorResourceManager;
   const editorId = 'test-editor';
 
@@ -12,7 +12,7 @@ describe('璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
     resourceManager = globalManager.getEditorManager(editorId);
   });
 
-  test('搴旇鑳藉垱寤鸿祫婧愮鐞嗗櫒瀹炰緥', () => {
+  test('应该创建资源管理器实例', () => {
     expect(resourceManager).toBeDefined();
     expect(typeof resourceManager.registerTimer).toBe('function');
     expect(typeof resourceManager.registerEventListener).toBe('function');
@@ -21,7 +21,7 @@ describe('璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
     expect(typeof resourceManager.registerCustomCleanup).toBe('function');
   });
 
-  test('搴旇鑳借幏鍙栬祫婧愮粺璁?, () => {
+  test('应该返回资源统计', () => {
     const stats = resourceManager.getResourceStats();
     expect(stats).toBeDefined();
     expect(typeof stats.timers).toBe('number');
@@ -32,8 +32,8 @@ describe('璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
     expect(typeof stats.total).toBe('number');
   });
 
-  test('搴旇鑳芥敞鍐屽畾鏃跺櫒', () => {
-    const timerId = resourceManager.registerTimer(123 as any, 'timeout', '娴嬭瘯瀹氭椂鍣?);
+  test('应该注册定时器', () => {
+    const timerId = resourceManager.registerTimer(123 as any, 'timeout', '测试定时器');
     expect(timerId).toBeTruthy();
     expect(typeof timerId).toBe('string');
 
@@ -42,48 +42,49 @@ describe('璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
     expect(stats.total).toBe(1);
   });
 
-  test('搴旇鑳芥敞鍐岃嚜瀹氫箟娓呯悊鍑芥暟', () => {
+  test('应该执行自定义清理函数', () => {
     let cleanupCalled = false;
-    const cleanup = () => { cleanupCalled = true; };
+    const cleanup = () => {
+      cleanupCalled = true;
+    };
 
-    const cleanupId = resourceManager.registerCustomCleanup(cleanup, '娴嬭瘯娓呯悊');
+    const cleanupId = resourceManager.registerCustomCleanup(cleanup, '测试清理');
     expect(cleanupId).toBeTruthy();
 
     const stats = resourceManager.getResourceStats();
     expect(stats.customCleanups).toBe(1);
 
-    // 閿€姣佽祫婧愮鐞嗗櫒
     resourceManager.destroy();
 
-    // 楠岃瘉娓呯悊鍑芥暟琚皟鐢?    expect(cleanupCalled).toBe(true);
+    expect(cleanupCalled).toBe(true);
   });
 
-  test('搴旇鑳芥娴嬭祫婧愭硠婕?, () => {
-    // 娉ㄥ唽澶ч噺瀹氭椂鍣?    for (let i = 0; i < 15; i++) {
-      resourceManager.registerTimer(i as any, 'timeout', `瀹氭椂鍣?{i}`);
+  test('应该检测资源泄漏', () => {
+    for (let i = 0; i < 15; i++) {
+      resourceManager.registerTimer(i as any, 'timeout', `定时器${i}`);
     }
 
     const leaks = resourceManager.checkForLeaks();
     expect(leaks.length).toBeGreaterThan(0);
-    expect(leaks.some(leak => leak.includes('瀹氭椂鍣ㄨ繃澶?))).toBe(true);
+    expect(leaks.some((leak) => leak.includes('定时器过多'))).toBe(true);
   });
 
-  test('搴旇鑳介攢姣佹墍鏈夎祫婧?, () => {
-    // 娉ㄥ唽涓€浜涜祫婧?    resourceManager.registerTimer(123 as any, 'timeout', '娴嬭瘯瀹氭椂鍣?);
-    resourceManager.registerCustomCleanup(() => {}, '娴嬭瘯娓呯悊');
+  test('应该销毁所有资源', () => {
+    resourceManager.registerTimer(123 as any, 'timeout', '测试定时器');
+    resourceManager.registerCustomCleanup(() => {}, '测试清理');
 
     let stats = resourceManager.getResourceStats();
     expect(stats.total).toBeGreaterThan(0);
 
-    // 閿€姣?    resourceManager.destroy();
+    resourceManager.destroy();
 
-    // 楠岃瘉璧勬簮琚竻鐞?    stats = resourceManager.getResourceStats();
+    stats = resourceManager.getResourceStats();
     expect(stats.total).toBe(0);
   });
 });
 
-describe('鍏ㄥ眬璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
-  test('搴旇鑳借幏鍙栧叏灞€璧勬簮绠＄悊鍣ㄥ疄渚?, () => {
+describe('全局资源管理器基础测试', () => {
+  test('应该获取全局资源管理器实例', () => {
     const globalManager = getGlobalResourceManager();
     expect(globalManager).toBeDefined();
     expect(typeof globalManager.getEditorManager).toBe('function');
@@ -93,7 +94,7 @@ describe('鍏ㄥ眬璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
     expect(typeof globalManager.cleanup).toBe('function');
   });
 
-  test('搴旇鑳界鐞嗗涓紪杈戝櫒', () => {
+  test('应该管理多个编辑器', () => {
     const globalManager = getGlobalResourceManager();
 
     const editor1 = globalManager.getEditorManager('editor-1');
@@ -103,23 +104,21 @@ describe('鍏ㄥ眬璧勬簮绠＄悊鍣ㄥ熀纭€娴嬭瘯', () => {
     expect(editor2).toBeDefined();
     expect(editor1).not.toBe(editor2);
 
-    // 娓呯悊
     globalManager.destroyEditorManager('editor-1');
     globalManager.destroyEditorManager('editor-2');
   });
 
-  test('搴旇鑳借幏鍙栧叏灞€缁熻', () => {
+  test('应该返回全局统计', () => {
     const globalManager = getGlobalResourceManager();
 
     const editor1 = globalManager.getEditorManager('test-editor-1');
-    editor1.registerTimer(123 as any, 'timeout', '娴嬭瘯瀹氭椂鍣?);
+    editor1.registerTimer(123 as any, 'timeout', '测试定时器');
 
     const globalStats = globalManager.getGlobalStats();
     expect(globalStats).toBeDefined();
     expect(globalStats['test-editor-1']).toBeDefined();
     expect(globalStats['test-editor-1'].timers).toBe(1);
 
-    // 娓呯悊
     globalManager.destroyEditorManager('test-editor-1');
   });
 });

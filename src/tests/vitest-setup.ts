@@ -6,7 +6,7 @@ import { logger } from '../utils/logger';
  */
 
 import '@testing-library/jest-dom';
-import { afterEach, vi } from 'vitest';
+import { vi } from 'vitest';
 
 type TestWindow = Window &
   typeof globalThis & {
@@ -27,18 +27,5 @@ if (typeof window !== 'undefined') {
   const testWindow = window as TestWindow;
   testWindow.app ??= {};
 }
-
-// 清理函数：每个测试后清理
-afterEach(() => {
-  const testWindow = typeof window !== 'undefined' ? (window as TestWindow) : null;
-
-  try {
-    testWindow?.__weaveThemeManagerCleanup?.();
-  } catch {
-    // ignore theme manager cleanup issues in tests
-  }
-
-  vi.clearAllMocks();
-});
 
 logger.debug('✓ Vitest测试环境已初始化');

@@ -14,6 +14,7 @@ const premiumFeatureIds = vi.hoisted(() => new Set([
   'question-bank',
   'grid-view',
   'kanban-view',
+  'timeline-view',
   'csv-import',
   'clipboard-import'
 ]));
@@ -94,6 +95,7 @@ vi.mock('../../services/premium/PremiumFeatureGuard', () => {
       QUESTION_BANK: 'question-bank',
       GRID_VIEW: 'grid-view',
       KANBAN_VIEW: 'kanban-view',
+      TIMELINE_VIEW: 'timeline-view',
       CSV_IMPORT: 'csv-import',
       CLIPBOARD_IMPORT: 'clipboard-import'
     }
@@ -203,6 +205,27 @@ describe('SidebarNavHeader', () => {
 
     expect(irItem).toBeTruthy();
     expect(questionBankItem).toBeTruthy();
+  });
+
+  it('开启高级预览但未激活时显示锁定的时间线视图标题', async () => {
+    premiumMockState.showPreview = true;
+
+    const { container } = render(SidebarNavHeader, {
+      props: {
+        currentPage: 'weave-card-management',
+        currentView: 'table',
+        cardDataSource: 'memory',
+        onNavigate: mockOnNavigate,
+        onViewChange: mockOnViewChange,
+        onCardDataSourceChange: mockOnCardDataSourceChange
+      }
+    });
+
+    await fireEvent.click(container.querySelector('.sidebar-menu-trigger')!);
+
+    const menu = menuInstances[0];
+    const timelineItem = menu.findItemByTitle('时间线视图 (高级)');
+    expect(timelineItem).toBeTruthy();
   });
 
   it('在牌组学习页面显示切换视图和新建牌组菜单项', async () => {

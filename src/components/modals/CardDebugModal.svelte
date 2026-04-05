@@ -9,7 +9,7 @@
   let { card, onClose }: Props = $props();
 
   // 格式化JSON数据
-  const formattedJson = JSON.stringify(card, null, 2);
+  let formattedJson = $derived(JSON.stringify(card, null, 2));
   
   function handleKeydown(_e: KeyboardEvent) {
   }

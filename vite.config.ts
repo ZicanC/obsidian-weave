@@ -1,4 +1,5 @@
 import { pathToFileURL } from "url";
+import { createRequire } from "module";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import builtins from "builtin-modules";
 import UnoCSS from "unocss/vite";
@@ -7,6 +8,29 @@ import { viteStaticCopy } from "vite-plugin-static-copy";
 import commonjs from "vite-plugin-commonjs";
 import path from "path";
 import fs from "fs";
+
+const require = createRequire(import.meta.url);
+
+function resolveInstalledPackageVersion(packageName: string): string {
+	const packageJsonPath = path.resolve(
+		process.cwd(),
+		"node_modules",
+		...packageName.split("/"),
+		"package.json"
+	);
+
+	if (!fs.existsSync(packageJsonPath)) {
+		throw new Error(`Unable to find installed package.json for ${packageName}`);
+	}
+
+	return JSON.parse(fs.readFileSync(packageJsonPath, "utf8")).version as string;
+}
+
+const svelteVersion = resolveInstalledPackageVersion("svelte");
+const vitePluginSvelteVersion = resolveInstalledPackageVersion("@sveltejs/vite-plugin-svelte");
+const svelteCacheFingerprint = [svelteVersion, vitePluginSvelteVersion]
+	.join("-")
+	.replace(/[^a-zA-Z0-9._-]/g, "_");
 
 function sleep(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -33,6 +57,12 @@ export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), '');
 	console.log(`🔧 Vite mode: ${mode}`);
 	const isDev = mode === "development";
+	const isMobileHotReloadBuild = process.env.WEAVE_MOBILE_HOT_RELOAD === "1";
+	const mobileHotReloadOutputDir = process.env.WEAVE_MOBILE_SOURCE_DIR?.trim()
+		? path.resolve(process.env.WEAVE_MOBILE_SOURCE_DIR)
+		: path.resolve(process.cwd(), ".mobile-hot-reload");
+	const shouldMinifyOutput = !isDev || isMobileHotReloadBuild;
+	const buildSourceMap = isMobileHotReloadBuild ? "hidden" : isDev ? "inline" : false;
 
 	const suppressedSvelteWarnings = new Set([
 		"a11y_click_events_have_key_events",
@@ -47,16 +77,19 @@ export default defineConfig(({ mode }) => {
 	// 开发模式需设置 OBSIDIAN_VAULT_PATH 环境变量（指向 .obsidian 所在目录）
 	// 示例: OBSIDIAN_VAULT_PATH=C:/Users/you/my-vault/.obsidian
 	const obsidianVaultPath = env.OBSIDIAN_VAULT_PATH ? path.resolve(env.OBSIDIAN_VAULT_PATH) : null;
-	const PLUGIN_DIR = isDev
-		? obsidianVaultPath
-			? `${obsidianVaultPath}/plugins/weave`
-			: "dist"
-		: obsidianVaultPath
-			? `${obsidianVaultPath}/plugins/weave`
-			: "dist";
+	const PLUGIN_DIR = isMobileHotReloadBuild
+		? mobileHotReloadOutputDir
+		: isDev
+			? obsidianVaultPath
+				? `${obsidianVaultPath}/plugins/weave`
+				: "dist"
+			: obsidianVaultPath
+				? `${obsidianVaultPath}/plugins/weave`
+				: "dist";
 
 
 	return {
+		cacheDir: path.resolve(process.cwd(), `node_modules/.vite-${svelteCacheFingerprint}`),
 		resolve: {
 			conditions: ['browser', 'import', 'module', 'default']
 		},
@@ -155,8 +188,7 @@ export default defineConfig(({ mode }) => {
 				compatibility: {
 					componentApi: 4
 				}
-			},
-			hot: isDev // Svelte 5简化了hot配置，只需boolean值
+			}
 		}),
 			UnoCSS(),
 		],
@@ -187,7 +219,10 @@ export default defineConfig(({ mode }) => {
 					inlineDynamicImports: true,
 					manualChunks: undefined,
 					assetFileNames: "styles.css",
-					sourcemapBaseUrl: isDev ? pathToFileURL(`${PLUGIN_DIR}/`).toString() : undefined,
+					sourcemapBaseUrl:
+						isDev && !isMobileHotReloadBuild
+							? pathToFileURL(`${PLUGIN_DIR}/`).toString()
+							: undefined,
 					exports: "named", // 🔧 解决混合导出警告
 				},
 				external: [
@@ -210,14 +245,15 @@ export default defineConfig(({ mode }) => {
 		outDir: isDev ? PLUGIN_DIR : "dist",
 	copyPublicDir: false,
 		emptyOutDir: false, // 禁用vite清空，改用prebuild脚本手动清理
-		sourcemap: isDev ? "inline" : false,
+		sourcemap: buildSourceMap,
 		target: ["es2020"],
-		minify: isDev ? false : "esbuild"
+		minify: shouldMinifyOutput ? "esbuild" : false
 	},
-	// ✅ 生产环境使用 esbuild 压缩
-	esbuild: isDev ? undefined : {
-		drop: ['console', 'debugger'],
-		legalComments: 'none'
-	},
+	esbuild: shouldMinifyOutput
+		? {
+			...(isDev ? {} : { drop: ['console', 'debugger'] }),
+			legalComments: 'none'
+		}
+		: undefined,
 };
 });

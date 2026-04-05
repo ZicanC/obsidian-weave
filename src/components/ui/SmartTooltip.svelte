@@ -4,7 +4,7 @@
    * 提供上下文相关的帮助信息和操作指导
    */
   
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import EnhancedIcon from './EnhancedIcon.svelte';
 
   interface TooltipAction {
@@ -55,7 +55,7 @@
   let triggerElement: HTMLElement;
   let tooltipElement = $state<HTMLElement>();
   let isVisible = $state(false);
-  let actualPlacement = $state(placement);
+  let actualPlacement = $state(untrack(() => placement));
   let showTimer: NodeJS.Timeout | null = null;
   let hideTimer: NodeJS.Timeout | null = null;
 

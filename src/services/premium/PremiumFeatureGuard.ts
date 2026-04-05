@@ -13,6 +13,7 @@ import type { LicenseInfo } from '../../utils/licenseManager';
 export const PREMIUM_FEATURES = {
   GRID_VIEW: 'grid-view',
   KANBAN_VIEW: 'kanban-view',
+  TIMELINE_VIEW: 'timeline-view',
   AI_ASSISTANT: 'ai-assistant',
   INCREMENTAL_READING: 'incremental-reading',
   BATCH_PARSING: 'batch-parsing',
@@ -41,6 +42,11 @@ export const FEATURE_METADATA: Record<string, {
     name: '看板视图',
     description: '看板式管理，按状态分类显示',
     icon: 'columns'
+  },
+  [PREMIUM_FEATURES.TIMELINE_VIEW]: {
+    name: '时间线视图',
+    description: '按时间线浏览卡片，快速回看内容脉络',
+    icon: 'history'
   },
   [PREMIUM_FEATURES.AI_ASSISTANT]: {
     name: 'AI智能助手',
@@ -280,7 +286,6 @@ export class PremiumFeatureGuard {
  * 默认导出单例实例获取方法
  */
 export default PremiumFeatureGuard;
-
 
 
 

@@ -22,7 +22,7 @@
     shouldShowTutorialHint,
     type GlobalTutorialHintId
   } from '../../services/tutorial/GlobalTutorialHints';
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   // 导入卡片关系工具函数
   import { getDerivationMethodName } from '../../utils/card-relation-helpers';
   import { openLinkWithExistingLeaf } from '../../utils/workspace-navigation';
@@ -355,7 +355,7 @@
   // 检测卡片是否有来源文档（用于图谱联动指示器）
   let hasSourceFile = $derived(!!sourceInfo.sourceFile);
   const sourceLocateOverlay = getSourceLocateOverlayService();
-  const sourceNavigationService = plugin ? new SourceNavigationService(plugin.app) : null;
+  const sourceNavigationService = untrack(() => (plugin ? new SourceNavigationService(plugin.app) : null));
 
   function showMarkdownSourceOverlay(openedLeaf: any, candidates: string[], fallbackEl?: HTMLElement | null) {
     if (!plugin || !sourceNavigationService) return;

@@ -14,8 +14,9 @@ import { vaultStorage } from '../../utils/vault-local-storage';
   import BouncingBallsLoader from "../ui/BouncingBallsLoader.svelte";
   import CreateQuestionBankModal from "../modals/CreateQuestionBankModal.svelte";
   import TestModeSelectionModal from "../modals/TestModeSelectionModal.svelte";
-  import { QuestionBankAnalyticsModalObsidian } from "../modals/QuestionBankAnalyticsModalObsidian";
-  import { Notice, Menu } from "obsidian";
+import { QuestionBankAnalyticsModalObsidian } from "../modals/QuestionBankAnalyticsModalObsidian";
+import { Notice, Menu } from "obsidian";
+import { isInputClozeQuestionContent } from "../../utils/question-bank/input-cloze-utils";
 
   interface Props {
     plugin: WeavePlugin;
@@ -354,15 +355,9 @@ import { vaultStorage } from '../../utils/vault-local-storage';
     return hasQuestion && hasOptions && hasCorrectMark;
   }
 
-  //  挖空题识别（基于现有模式）  
+  //  挖空题识别：仅将输入式挖空计入题库填空题
   function isClozeQuestion(content: string): boolean {
-    if (!content) return false;
-    
-    // 检查Obsidian风格或Anki风格挖空
-    const hasObsidianCloze = /==([^=]+)==/g.test(content);
-    const hasAnkiCloze = /\{\{c\d+::([^}]+)\}\}/g.test(content);
-    
-    return hasObsidianCloze || hasAnkiCloze;
+    return isInputClozeQuestionContent(content);
   }
 
   //  选择题解析（简化版）

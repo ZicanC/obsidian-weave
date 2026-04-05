@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher, onMount, untrack } from 'svelte';
   import { isDarkMode as detectDarkMode, createThemeListener } from '../../utils/theme-detection';
   import { fly, fade, scale } from 'svelte/transition';
   import { quintOut, elasticOut } from 'svelte/easing';
@@ -32,7 +32,7 @@
     remove: string;
   }>();
 
-  let currentSelected = $state(selected || []);
+  let currentSelected = $state(untrack(() => selected ? [...selected] : []));
   let searchValue = $state("");
   let containerEl: HTMLDivElement | null = $state(null);
   let inputEl: HTMLInputElement | null = $state(null);
@@ -40,7 +40,7 @@
   $effect(() => {
     const newSelected = selected || [];
     if (JSON.stringify(newSelected) !== JSON.stringify(currentSelected)) {
-      currentSelected = newSelected;
+      currentSelected = [...newSelected];
     }
   });
 

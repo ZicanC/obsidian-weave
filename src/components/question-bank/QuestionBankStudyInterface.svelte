@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from "svelte";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
   import { Platform, Notice, Menu } from "obsidian";
   import type { WeavePlugin } from "../../main";
   import type { TestSession, TestQuestionRecord, TestMode, QuestionBankResumeBehavior } from "../../types/question-bank-types";
@@ -18,6 +18,8 @@
   import CardEditorContainer from "../study/CardEditorContainer.svelte";
   import CardDebugModal from "../modals/CardDebugModal.svelte";
   import { logger } from "../../utils/logger";
+  import { detectClozeModeFromContent } from "../../utils/cloze-mode";
+  import { isInputClozeQuestionContent } from "../../utils/question-bank/input-cloze-utils";
   import { extractBodyContent } from "../../utils/yaml-utils";
   
   // 选择题渲染支持
@@ -65,7 +67,8 @@
   let hasSubmitted = $state(false);
   let statsCollapsed = $state(false);
   let showSidebar = $state(true);
-  let showNavigator = $state(true);  // 题目导航栏显示状态
+  // 题目导航栏显示状态：桌面端默认展开，移动端默认折叠
+  let showNavigator = $state(!Platform.isMobile);
 
   // 撤销功能
   let undoCount = $state(0); // 已使用的撤销次数
@@ -81,7 +84,7 @@
   // 删除确认弹窗状态
   let showDeleteConfirmModal = $state(false);
   let deleteConfirmCardId = $state('');
-  let enableDirectDelete = $state(plugin.settings.enableDirectDelete ?? false);
+  let enableDirectDelete = $state(untrack(() => plugin.settings.enableDirectDelete ?? false));
   let showPriorityModal = $state(false);
   let selectedPriority = $state(2);
   let priorityAnchorElement: HTMLElement | null = $state(null);
@@ -98,6 +101,7 @@
 
   let sidebarContentEl: HTMLDivElement | null = $state(null);
   let sidebarResizeObserver: ResizeObserver | null = $state(null);
+  let questionContentEl: HTMLDivElement | null = $state(null);
 
   //  移动端状态
   const isMobile = Platform.isMobile;
@@ -175,6 +179,125 @@
     }
     return null;
   });
+
+  const isInputClozeQuestion = $derived.by(() =>
+    !choiceQuestionDerived
+      && !!currentQuestion?.question.content
+      && isInputClozeQuestionContent(currentQuestion.question.content)
+  );
+
+  const currentQuestionClozeMode = $derived.by(() =>
+    currentQuestion?.question.content
+      ? detectClozeModeFromContent(currentQuestion.question.content)
+      : 'reveal'
+  );
+
+  const currentQuestionTypeLabel = $derived.by(() => {
+    if (choiceQuestionDerived?.isMultipleChoice) {
+      return '多选题';
+    }
+
+    if (choiceQuestionDerived) {
+      return '单选题';
+    }
+
+    if (isInputClozeQuestion) {
+      return '输入填空题';
+    }
+
+    return '题目';
+  });
+
+  const inputClozeQuestionHint = $derived.by(() => {
+    if (!isInputClozeQuestion) {
+      return '';
+    }
+
+    if (isPureExamMode) {
+      return '请直接在空格中输入答案并提交。系统会完成判定后立即进入下一题，不在当前题显示标准答案。';
+    }
+
+    return '请直接在空格中输入答案并提交。提交后会在当前题显示对错和标准答案。';
+  });
+
+  const clozeUserAnswers = $derived.by(() => {
+    if (Array.isArray(userAnswer)) {
+      return userAnswer;
+    }
+
+    if (typeof userAnswer === 'string' && userAnswer.trim()) {
+      return [userAnswer];
+    }
+
+    return [];
+  });
+
+  function hasSubmissionAnswer(
+    answer: string | string[] | null,
+    treatAsInputCloze = false
+  ): boolean {
+    if (!answer) {
+      return false;
+    }
+
+    if (Array.isArray(answer)) {
+      return treatAsInputCloze
+        ? answer.some(value => value.trim().length > 0)
+        : answer.length > 0;
+    }
+
+    return answer.trim().length > 0;
+  }
+
+  const hasAnswerForSubmit = $derived.by(() =>
+    hasSubmissionAnswer(userAnswer, isInputClozeQuestion)
+  );
+
+  function collectInputClozeAnswersFromDom(): string[] {
+    if (!questionContentEl) {
+      return Array.isArray(userAnswer) ? userAnswer : [];
+    }
+
+    return Array.from(
+      questionContentEl.querySelectorAll<HTMLInputElement>('input[data-cloze-input="true"]')
+    ).map((input) => input.value ?? '');
+  }
+
+  function handleQuestionContentInput(event: Event) {
+    if (!isInputClozeQuestion || hasSubmitted) {
+      return;
+    }
+
+    const target = event.target;
+    if (!(target instanceof HTMLInputElement) || target.dataset.clozeInput !== 'true') {
+      return;
+    }
+
+    userAnswer = collectInputClozeAnswersFromDom();
+  }
+
+  function handleQuestionRenderComplete(container: HTMLElement) {
+    if (!isInputClozeQuestion) {
+      return;
+    }
+
+    const inputElements = Array.from(
+      container.querySelectorAll<HTMLInputElement>('input[data-cloze-input="true"]')
+    );
+
+    if (isPureExamMode && hasSubmitted) {
+      inputElements.forEach((input) => {
+        input.readOnly = true;
+        input.disabled = true;
+      });
+      return;
+    }
+
+    inputElements.forEach((input) => {
+      input.readOnly = false;
+      input.disabled = false;
+    });
+  }
 
   // 初始化会话
   async function initSession() {
@@ -267,14 +390,26 @@
 
   // 提交答案
   async function handleSubmitAnswer() {
-    if (!sessionManager || !currentQuestion || hasSubmitted || !userAnswer) {
+    if (!sessionManager || !currentQuestion || hasSubmitted) {
       return;
     }
 
     try {
+      let answerToSubmit: string | string[] | null = userAnswer;
+      if (isInputClozeQuestion) {
+        answerToSubmit = collectInputClozeAnswersFromDom();
+        userAnswer = answerToSubmit;
+      }
+
+      if (!hasSubmissionAnswer(answerToSubmit, isInputClozeQuestion)) {
+        return;
+      }
+
+      const normalizedAnswerToSubmit = answerToSubmit as string | string[];
+
       const result = await sessionManager.submitAnswer({
         questionId: currentQuestion.questionId,
-        answer: userAnswer,
+        answer: normalizedAnswerToSubmit,
         timeSpent: elapsedSeconds
       });
 
@@ -284,7 +419,7 @@
       // 确保UI能正确显示答题结果和解析内容
       if (currentQuestion) {
         currentQuestion.isCorrect = result.isCorrect;
-        currentQuestion.userAnswer = userAnswer;
+        currentQuestion.userAnswer = normalizedAnswerToSubmit;
         currentQuestion.submittedAt = new Date().toISOString();
         // 触发响应式更新
         currentQuestion = { ...currentQuestion };
@@ -1069,8 +1204,8 @@
     //  设置移动端回调
     if (isMobile && viewInstance) {
       viewInstance.setMobileMenuCallback(handleShowMobileMenu);
-      viewInstance.setToggleStatsBarCallback(() => { showMobileStatsBar = !showMobileStatsBar; });
-      viewInstance.setToggleNavigatorCallback(() => { showNavigator = !showNavigator; });
+      viewInstance.setToggleStatsBarCallback(toggleMobileStatsBar);
+      viewInstance.setToggleNavigatorCallback(toggleNavigatorPanel);
       logger.debug('[QuestionBankStudyInterface] 移动端回调已设置');
     }
   });
@@ -1125,6 +1260,26 @@
     showCardDebug = true;
   }
 
+  function toggleMobileStatsBar() {
+    const nextExpanded = !showMobileStatsBar;
+    showMobileStatsBar = nextExpanded;
+
+    // 移动端互斥：展开统计栏时，收起题目导航
+    if (isMobile && nextExpanded) {
+      showNavigator = false;
+    }
+  }
+
+  function toggleNavigatorPanel() {
+    const nextExpanded = !showNavigator;
+    showNavigator = nextExpanded;
+
+    // 移动端互斥：展开题目导航时，收起统计栏
+    if (isMobile && nextExpanded) {
+      showMobileStatsBar = false;
+    }
+  }
+
   //  显示移动端多功能菜单
   function handleShowMobileMenu() {
     if (!currentQuestion) return;
@@ -1149,8 +1304,8 @@
       onChangePriority: handleChangePriority,
       onOpenDetailedView: handleOpenDetailedView,
       onOpenCardDebug: handleOpenCardDebug,
-      onToggleStatsBar: () => { showMobileStatsBar = !showMobileStatsBar; },
-      onToggleNavigator: () => { showNavigator = !showNavigator; }, //  切换题目导航栏
+      onToggleStatsBar: toggleMobileStatsBar,
+      onToggleNavigator: toggleNavigatorPanel, //  切换题目导航栏
       onQuestionOrderChange: handleQuestionOrderChange,
       onNavColumnModeChange: handleNavColumnModeChange,
       onDirectDeleteToggle: (enabled) => { enableDirectDelete = enabled; }
@@ -1194,7 +1349,7 @@
             showSidebar = !showSidebar;
           }
         }}
-        onToggleNavigator={isPureExamMode ? undefined : () => showNavigator = !showNavigator}
+        onToggleNavigator={isPureExamMode ? undefined : toggleNavigatorPanel}
         mode={currentSession.mode}
         {remainingTime}
         {isPaused}
@@ -1215,25 +1370,19 @@
         />
       {/if}
 
-      <!--  移动端题目导航弹出层 - 简洁网格设计 -->
+      <!--  移动端题目导航下拉面板（与统计栏一致，向下展开） -->
       {#if isMobile && showNavigator && currentSession}
-        <div class="mobile-navigator-overlay" role="presentation">
-          <button
-            type="button"
-            class="mobile-navigator-backdrop"
-            aria-label="关闭题目导航"
-            onclick={() => showNavigator = false}
-          ></button>
-          <div class="mobile-nav-grid-panel" role="dialog" aria-modal="true" tabindex="-1">
+        <div class="mobile-navigator-dropdown" role="region" aria-label="题目导航">
+          <div class="mobile-nav-dropdown-panel">
             <div class="mobile-nav-grid-scroll">
               <div class="mobile-nav-grid">
                 {#each currentSession.questions as record, index}
-                  {@const status = index === (sessionManager?.getCurrentIndex() || 0) 
-                    ? 'current' 
-                    : record.isCorrect === true 
-                      ? 'correct' 
-                      : record.isCorrect === false 
-                        ? 'wrong' 
+                  {@const status = index === (sessionManager?.getCurrentIndex() || 0)
+                    ? 'current'
+                    : record.isCorrect === true
+                      ? 'correct'
+                      : record.isCorrect === false
+                        ? 'wrong'
                         : 'unanswered'}
                   <button
                     class="mobile-nav-cell {status}"
@@ -1313,13 +1462,12 @@
                currentQuestion.question.difficulty === 'medium' ? '中等' : '困难'}
             </span>
           {/if}
-          {#if isMultipleChoice(currentQuestion.question)}
-            <span class="question-type">多选题</span>
-          {:else}
-            <span class="question-type">单选题</span>
-          {/if}
+          <span class="question-type">{currentQuestionTypeLabel}</span>
         </div>
-        <div class="question-content">
+        {#if isInputClozeQuestion}
+          <div class="question-hint">{inputClozeQuestionHint}</div>
+        {/if}
+        <div class="question-content" bind:this={questionContentEl} oninput={handleQuestionContentInput}>
           {#if choiceQuestionDerived}
             <CardContentView
               plugin={plugin}
@@ -1333,6 +1481,11 @@
               {plugin}
               content={extractStem(currentQuestion.question.content)}
               sourcePath={currentQuestion.question.sourceFile || ''}
+              enableClozeProcessing={true}
+              showClozeAnswers={isInputClozeQuestion && hasSubmitted && !isPureExamMode}
+              clozeMode={currentQuestionClozeMode}
+              clozeUserAnswers={clozeUserAnswers}
+              onRenderComplete={handleQuestionRenderComplete}
             />
           {/if}
         </div>
@@ -1351,7 +1504,7 @@
             onSingleSelect={handleSingleChoiceSelect}
             onMultipleToggle={handleMultipleChoiceToggle}
           />
-        {:else}
+        {:else if !isInputClozeQuestion}
           <!-- 降级渲染：使用旧版本解析，统一使用ChoiceOptionRenderer保持样式一致 -->
           {#each parseOptions(currentQuestion.question.content) as option}
             {@const isMultiple = isMultipleChoice(currentQuestion.question)}
@@ -1428,7 +1581,7 @@
                 type="button"
                 class="content-nav-btn clickable-icon"
                 class:active={showNavigator}
-                onclick={() => showNavigator = !showNavigator}
+                onclick={toggleNavigatorPanel}
                 aria-label={showNavigator ? "隐藏题目导航" : "显示题目导航"}
                 title={showNavigator ? "隐藏题目导航" : "显示题目导航"}
               >
@@ -1489,7 +1642,7 @@
             <!-- 题目导航折叠按钮 -->
             <button
               class="nav-toggle-btn"
-              onclick={() => showNavigator = !showNavigator}
+              onclick={toggleNavigatorPanel}
               title={showNavigator ? '隐藏题目导航' : '显示题目导航'}
             >
               <EnhancedIcon name={showNavigator ? 'panel-left-close' : 'panel-left-open'} size={20} />
@@ -1512,7 +1665,7 @@
           <div class="footer-center-actions">
             <QuestionBankActionSection
               hasSubmitted={hasSubmitted}
-              hasAnswer={!!userAnswer && (Array.isArray(userAnswer) ? userAnswer.length > 0 : true)}
+              hasAnswer={hasAnswerForSubmit}
               isLastQuestion={progress.current === progress.total}
               onSubmit={handleSubmitAnswer}
               onNext={handleNextQuestion}
@@ -1833,6 +1986,17 @@
     display: flex;
     gap: 0.75rem;
     margin-bottom: 1rem;
+  }
+
+  .question-hint {
+    margin-bottom: 1rem;
+    padding: 0.75rem 0.9rem;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--interactive-accent) 9%, var(--weave-question-bank-panel-bg));
+    border: 1px solid color-mix(in srgb, var(--interactive-accent) 16%, var(--background-modifier-border));
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.6;
   }
 
   .difficulty-badge,
@@ -2333,16 +2497,22 @@
   }
 
   :global(body.is-mobile) .question-bank-study-interface-overlay {
-    /* 移动端使用 relative 定位，让内容自然流动在 Obsidian 视图容器内 */
-    position: relative;
+    /* 与记忆学习界面一致：通过容器底部避让 Obsidian 底栏 */
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: var(
+      --weave-workspace-bottom-offset,
+      var(--weave-modal-bottom, env(safe-area-inset-bottom, 0px))
+    );
     width: 100%;
-    height: 100%;
+    height: auto;
     padding: 0;
     /* 移除背景遮罩，避免覆盖 Obsidian UI */
     background: transparent;
     backdrop-filter: none;
     z-index: 1;
-    /*  关键：不使用 fixed/absolute，让 Obsidian 管理顶部/底部栏的避让 */
     overflow: hidden;
   }
 
@@ -2404,58 +2574,35 @@
     display: none !important;
   }
 
-  /*  移动端题目导航弹出层样式 - 简洁网格设计 */
-  .mobile-navigator-overlay {
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    z-index: var(--weave-z-overlay);
-    display: flex;
-    align-items: flex-start;
-    justify-content: flex-start;
-    animation: fadeIn 0.2s ease;
-    padding: 0.5rem;
+  /*  移动端题目导航下拉面板 */
+  .mobile-navigator-dropdown {
+    margin: 8px 12px;
+    animation: mobileNavigatorDropdownIn 0.2s ease-out;
+    flex-shrink: 0;
   }
 
-  .mobile-navigator-backdrop {
-    position: absolute;
-    inset: 0;
-    border: none;
-    background: transparent;
-    padding: 0;
-    cursor: default;
-  }
-
-  @keyframes fadeIn {
-    from { opacity: 0; }
-    to { opacity: 1; }
-  }
-
-  /*  简洁网格面板 */
-  .mobile-nav-grid-panel {
-    background: var(--weave-question-bank-page-bg);
+  .mobile-nav-dropdown-panel {
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
     border-radius: 12px;
-    max-height: 70%;
-    max-width: calc(100% - 1rem);
-    display: flex;
-    flex-direction: column;
-    animation: slideDown 0.25s ease;
     overflow: hidden;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
   }
 
-  @keyframes slideDown {
-    from { opacity: 0; transform: translateY(-10px); }
-    to { opacity: 1; transform: translateY(0); }
+  @keyframes mobileNavigatorDropdownIn {
+    from {
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 
   .mobile-nav-grid-scroll {
     overflow-y: auto;
     padding: 0.75rem;
-    max-height: 100%;
+    max-height: 220px;
   }
 
   /*  网格布局 - 每行6个 */
@@ -2511,46 +2658,6 @@
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
   }
 
-  .mobile-navigator-title {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--text-normal);
-  }
-
-  .mobile-navigator-close {
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    padding: 0.25rem;
-    border-radius: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .mobile-navigator-close:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-  }
-
-  .mobile-navigator-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0.5rem;
-    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 1rem);
-  }
-
-  .mobile-navigator-content :global(.question-navigator) {
-    width: 100%;
-    height: auto;
-    padding: 0.5rem;
-  }
-
-  .mobile-navigator-content :global(.grid-container) {
-    grid-template-columns: repeat(5, 1fr) !important;
-  }
-
   /* 手机端隐藏导航栏和侧边栏 */
   :global(body.is-phone) .navigator-sidebar,
   :global(body.is-phone) .sidebar-content {
@@ -2573,8 +2680,6 @@
   :global(body.is-phone) .study-footer {
     background: var(--weave-question-bank-page-bg);
     padding: 0.5rem 0;
-    /*  底部留出足够间距，避免被Obsidian底部导航栏覆盖 */
-    padding-bottom: calc(var(--safe-area-inset-bottom, 0px) + 48px);
     margin: 0;
     border: none;
   }

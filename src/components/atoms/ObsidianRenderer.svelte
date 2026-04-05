@@ -12,6 +12,7 @@
     enableClozeProcessing?: boolean;
     showClozeAnswers?: boolean;
     clozeMode?: import('../../utils/cloze-mode').ClozeMode;
+    clozeUserAnswers?: string[] | null;
     card?: any; // 卡片对象
     studyInstance?: any; // 渐进式挖空学习实例
     activeClozeOrdinal?: number; // 当前激活的挖空序号（1-based）
@@ -26,6 +27,7 @@
     enableClozeProcessing = false,
     showClozeAnswers = false,
     clozeMode = 'reveal',
+    clozeUserAnswers = null,
     card,
     studyInstance, // 渐进式挖空学习实例
     activeClozeOrdinal, // 渐进式挖空序号
@@ -44,6 +46,9 @@
     clozeMode === 'input' &&
     activeClozeOrdinal === undefined &&
     !(studyInstance && typeof studyInstance === 'object' && 'activeClozeOrd' in studyInstance)
+  );
+  const normalizedClozeUserAnswers = $derived.by(() =>
+    Array.isArray(clozeUserAnswers) ? clozeUserAnswers : []
   );
 
   function getClozeAriaLabel(shouldReveal: boolean, hint?: string | null): string {
@@ -64,9 +69,103 @@
       .toLowerCase();
   }
 
-  function computeClozeInputWidth(answerText: string, userAnswer: string): string {
-    const contentLength = Math.max(answerText.length, userAnswer.length, 3);
-    return `${Math.min(Math.max(contentLength + 1, 4), 28)}ch`;
+  let clozeTextMeasureCanvas: HTMLCanvasElement | null = null;
+
+  function getClozeTextMeasureContext(): CanvasRenderingContext2D | null {
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    clozeTextMeasureCanvas ??= document.createElement('canvas');
+    return clozeTextMeasureCanvas.getContext('2d');
+  }
+
+  function buildMeasurementFont(styles: CSSStyleDeclaration): string {
+    if (styles.font && styles.font.trim()) {
+      return styles.font;
+    }
+
+    const lineHeight = styles.lineHeight && styles.lineHeight !== 'normal'
+      ? `/${styles.lineHeight}`
+      : '';
+
+    return [
+      styles.fontStyle || 'normal',
+      styles.fontVariant || 'normal',
+      styles.fontWeight || '400',
+      `${styles.fontSize || '16px'}${lineHeight}`,
+      styles.fontFamily || 'sans-serif'
+    ].join(' ');
+  }
+
+  function measureClozeTextWidth(text: string, inputEl?: HTMLInputElement): number {
+    const sample = text || ' ';
+    const fallbackWidth = Math.max(Array.from(sample).length * 18, 48);
+
+    if (!inputEl || typeof window === 'undefined') {
+      return fallbackWidth;
+    }
+
+    const context = getClozeTextMeasureContext();
+    if (!context) {
+      return fallbackWidth;
+    }
+
+    const styles = window.getComputedStyle(inputEl);
+    context.font = buildMeasurementFont(styles);
+
+    const letterSpacing = parseFloat(styles.letterSpacing);
+    const letterSpacingWidth = Number.isFinite(letterSpacing)
+      ? Math.max(0, Array.from(sample).length - 1) * letterSpacing
+      : 0;
+
+    return context.measureText(sample).width + letterSpacingWidth;
+  }
+
+  function resolveClozeInputMaxWidth(inputEl?: HTMLInputElement): number {
+    if (!inputEl || typeof window === 'undefined') {
+      return 520;
+    }
+
+    const viewportLimit = Math.max(window.innerWidth - 96, 160);
+    const nearestContentContainer =
+      inputEl.closest('.question-content, .explanation-content, .markdown-rendered, .markdown-preview-view')
+      || inputEl.parentElement?.parentElement;
+
+    const containerWidth = nearestContentContainer instanceof HTMLElement
+      ? nearestContentContainer.getBoundingClientRect().width
+      : 0;
+    const containerLimit = containerWidth > 0 ? Math.max(containerWidth - 24, 160) : 520;
+
+    return Math.min(520, viewportLimit, containerLimit);
+  }
+
+  function computeClozeInputWidth(
+    answerText: string,
+    userAnswer: string,
+    inputEl?: HTMLInputElement
+  ): string {
+    const contentWidth = Math.max(
+      measureClozeTextWidth(answerText, inputEl),
+      measureClozeTextWidth(userAnswer, inputEl),
+      measureClozeTextWidth('填空', inputEl)
+    );
+
+    let horizontalChromeWidth = 22;
+    if (inputEl && typeof window !== 'undefined') {
+      const styles = window.getComputedStyle(inputEl);
+      const paddingWidth = parseFloat(styles.paddingLeft) + parseFloat(styles.paddingRight);
+      const borderWidth = parseFloat(styles.borderLeftWidth) + parseFloat(styles.borderRightWidth);
+      horizontalChromeWidth = (Number.isFinite(paddingWidth) ? paddingWidth : 0)
+        + (Number.isFinite(borderWidth) ? borderWidth : 0)
+        + 18;
+    }
+
+    const width = Math.min(
+      Math.max(contentWidth + horizontalChromeWidth, 56),
+      resolveClozeInputMaxWidth(inputEl)
+    );
+    return `${Math.ceil(width)}px`;
   }
 
   function resetClozeStateClasses(markEl: HTMLElement): void {
@@ -102,13 +201,16 @@
     inputEl.setAttribute('autocorrect', 'off');
     inputEl.setAttribute('autocapitalize', 'off');
     inputEl.setAttribute('aria-label', hint ? `输入答案，提示：${hint}` : '输入答案');
-    inputEl.style.width = computeClozeInputWidth(answerText, userAnswer);
     inputEl.addEventListener('input', () => {
       markEl.setAttribute('data-user-answer', inputEl.value);
-      inputEl.style.width = computeClozeInputWidth(answerText, inputEl.value);
+      inputEl.style.width = computeClozeInputWidth(answerText, inputEl.value, inputEl);
     });
 
     markEl.appendChild(inputEl);
+    inputEl.style.width = computeClozeInputWidth(answerText, userAnswer, inputEl);
+    requestAnimationFrame(() => {
+      inputEl.style.width = computeClozeInputWidth(answerText, inputEl.value, inputEl);
+    });
   }
 
   function renderClozeAsReveal(markEl: HTMLElement, shouldShow: boolean): void {
@@ -526,6 +628,7 @@
     markElements.forEach((mark, index) => {
       const markEl = mark as HTMLElement;
       const answerText = markEl.textContent || '';
+      const userAnswer = normalizedClozeUserAnswers[index] || '';
       const previousHandler = (markEl as HTMLElement & { _weaveClozeClickHandler?: EventListener })._weaveClozeClickHandler;
       if (previousHandler) {
         markEl.removeEventListener('click', previousHandler);
@@ -534,6 +637,11 @@
       markEl.classList.add('weave-cloze-mark');
       markEl.setAttribute('data-cloze-answer', answerText);
       markEl.setAttribute('data-cloze-index', String(index));
+      if (userAnswer) {
+        markEl.setAttribute('data-user-answer', userAnswer);
+      } else {
+        markEl.removeAttribute('data-user-answer');
+      }
 
       if (!isInputClozeMode) {
         const clickHandler: EventListener = (e) => {
@@ -939,6 +1047,7 @@
 
   :global(.weave-cloze-input) {
     min-width: 4ch;
+    max-width: min(32rem, calc(100vw - 6rem));
     padding: 2px 8px;
     border-radius: 6px;
     border: 1.5px dashed color-mix(in srgb, var(--interactive-accent, #3b82f6) 70%, transparent);
@@ -947,6 +1056,7 @@
     font: inherit;
     line-height: 1.4;
     text-align: center;
+    box-sizing: border-box;
     outline: none;
     transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   }

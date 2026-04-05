@@ -10,6 +10,7 @@
   import type { WeavePlugin } from "../../main";
   import { tr } from '../../utils/i18n';
   import { Notice } from "obsidian";
+  import { untrack } from 'svelte';
   import { openLinkWithExistingLeaf } from '../../utils/workspace-navigation';
   import { getSourceLocateOverlayService } from '../../services/ui/SourceLocateOverlayService';
   import { SourceNavigationService } from '../../services/ui/SourceNavigationService';
@@ -190,7 +191,7 @@
   // 多功能信息键
   let showMultiInfoMenu = $state(false);
   const sourceLocateOverlay = getSourceLocateOverlayService();
-  const sourceNavigationService = plugin ? new SourceNavigationService(plugin.app) : null;
+  const sourceNavigationService = untrack(() => (plugin ? new SourceNavigationService(plugin.app) : null));
   let multiInfoButtonElement: HTMLElement | null = $state(null);
 
   function showMarkdownSourceOverlay(openedLeaf: any, candidates: string[], fallbackEl?: HTMLElement | null) {

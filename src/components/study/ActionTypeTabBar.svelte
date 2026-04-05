@@ -105,4 +105,16 @@
   .tab-btn:hover .count-badge {
     transform: scale(1.05);
   }
+
+  @media (max-width: 768px) {
+    .tab-btn {
+      border: none;
+      box-shadow: none;
+    }
+
+    .tab-btn.active {
+      border: none;
+      box-shadow: none;
+    }
+  }
 </style>

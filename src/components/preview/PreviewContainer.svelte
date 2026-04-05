@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import type { Card } from '../../data/types';
   import { CardType as DataCardType } from '../../data/types';
   import type { EventRef, TFile } from 'obsidian';
@@ -88,7 +88,7 @@
   const metadataService = getCardMetadataService();
   let displayPriority = $derived(card ? (metadataService.getCardPriority(card) ?? card.priority) : undefined);
   let lastShowAnswer = $state(false);
-  let lastAnswerControls = $state(enableAnswerControls);
+  let lastAnswerControls = $state(untrack(() => enableAnswerControls));
   let lastCardContent = $state<string | null>(null);
   let lastRefreshTrigger = $state(0); // 跟踪上次的刷新触发器值
 
@@ -776,6 +776,10 @@
 
 <style>
   .weave-preview-container {
+    --weave-sticker-top: 20px;
+    --weave-sticker-size: 68px;
+    --weave-sticker-gap: 12px;
+    --weave-sticker-right-start: 24px;
     width: 100%;
     /*  移除边框和背景，避免嵌套 */
     background: transparent;
@@ -845,13 +849,17 @@
 
   /* 优先级便签纸样式 */
   .priority-sticky-note {
+    --weave-sticker-slot: 0;
     --weave-sticky-paper: var(--weave-surface-background, var(--background-primary));
     --weave-sticky-surface: var(--weave-elevated-background, var(--background-secondary));
     position: absolute;
-    top: 20px;
-    right: 24px;
-    width: 68px;
-    height: 68px;
+    top: var(--weave-sticker-top);
+    right: calc(
+      var(--weave-sticker-right-start) +
+      (var(--weave-sticker-slot) * (var(--weave-sticker-size) + var(--weave-sticker-gap)))
+    );
+    width: var(--weave-sticker-size);
+    height: var(--weave-sticker-size);
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -876,8 +884,8 @@
     top: -7px;
     left: 50%;
     transform: translateX(-50%);
-    width: 48px;
-    height: 16px;
+    width: calc(var(--weave-sticker-size) * 0.7);
+    height: calc(var(--weave-sticker-size) * 0.235);
     background: color-mix(in srgb, var(--weave-sticky-paper) 68%, transparent);
     border-radius: 2px;
     backdrop-filter: blur(4px);
@@ -1129,6 +1137,10 @@
   /* 响应式设计 */
   @media (max-width: 768px) {
     .weave-preview-container {
+      --weave-sticker-top: 12px;
+      --weave-sticker-size: 60px;
+      --weave-sticker-gap: 10px;
+      --weave-sticker-right-start: 16px;
       border-radius: var(--weave-radius-md, 0.5rem);
     }
 
@@ -1162,14 +1174,6 @@
       font-size: 0.8rem;
     }
 
-    /* 移动端便签纸缩小 */
-    .priority-sticky-note {
-      width: 60px;
-      height: 60px;
-      top: 12px;
-      right: 16px;
-    }
-
     .sticky-number {
       font-size: 1.5rem;
     }
@@ -1178,20 +1182,16 @@
       font-size: 0.6rem;
     }
 
-    .priority-sticky-note::before {
-      width: 40px;
-      height: 14px;
-      top: -6px;
-    }
+    .priority-sticky-note::before { top: -6px; }
   }
 
   /* 超小屏幕进一步缩小 */
   @media (max-width: 480px) {
-    .priority-sticky-note {
-      width: 50px;
-      height: 50px;
-      top: 8px;
-      right: 8px;
+    .weave-preview-container {
+      --weave-sticker-top: 8px;
+      --weave-sticker-size: 50px;
+      --weave-sticker-gap: 8px;
+      --weave-sticker-right-start: 8px;
     }
 
     .sticky-number {
@@ -1202,11 +1202,7 @@
       font-size: 0.55rem;
     }
 
-    .priority-sticky-note::before {
-      width: 32px;
-      height: 12px;
-      top: -5px;
-    }
+    .priority-sticky-note::before { top: -5px; }
   }
 
   /* ==================== Obsidian 移动端适配 ==================== */

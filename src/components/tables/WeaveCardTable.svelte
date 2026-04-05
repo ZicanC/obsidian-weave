@@ -472,15 +472,25 @@
   }
 
   // 构建回调函数对象
-  const callbacks: TableRowCallbacks = {
-    onEdit,
-    onDelete,
-    onTagsUpdate,
-    onPriorityUpdate,
-    onTempFileEdit,
-    onView,
-    onJumpToSource
-  };
+  let callbacks: TableRowCallbacks = $derived.by(() => ({
+    onEdit: (cardId) => onEdit(cardId),
+    onDelete: (cardId) => onDelete(cardId),
+    onTagsUpdate: onTagsUpdate
+      ? (cardId, tags) => onTagsUpdate(cardId, tags)
+      : undefined,
+    onPriorityUpdate: onPriorityUpdate
+      ? (cardId, priority) => onPriorityUpdate(cardId, priority)
+      : undefined,
+    onTempFileEdit: onTempFileEdit
+      ? (cardId) => onTempFileEdit(cardId)
+      : undefined,
+    onView: onView
+      ? (cardId) => onView(cardId)
+      : undefined,
+    onJumpToSource: onJumpToSource
+      ? (card) => onJumpToSource(card)
+      : undefined
+  }));
 
   // 🔧 性能优化：移除虚拟滚动，使用分页
   // 虚拟滚动与分页冲突，已经通过分页限制了显示数量

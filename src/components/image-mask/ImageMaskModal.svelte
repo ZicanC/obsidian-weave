@@ -8,7 +8,7 @@
  * 布局：头部标题 + 中间编辑区 + 底部工具栏（绘制工具 + 操作按钮）
  */
 
-import { onMount } from 'svelte';
+import { onMount, untrack } from 'svelte';
 import MaskEditorSVG from './MaskEditorSVG.svelte';
 import EnhancedIcon from '../ui/EnhancedIcon.svelte';
 import type { App, TFile } from 'obsidian';
@@ -32,7 +32,7 @@ let {
 
 // 状态
 let maskEditor = $state<any>(null);
-let currentMaskData = $state<MaskData | null>(initialMaskData);
+let currentMaskData = $state<MaskData | null>(untrack(() => initialMaskData));
 let hasChanges = $state(false);
 let currentTool = $state<'rect' | 'circle' | null>(null);
 let maskCount = $state(0);
@@ -938,4 +938,3 @@ onMount(() => {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
 }
 </style>
-

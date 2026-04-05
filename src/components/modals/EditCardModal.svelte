@@ -7,7 +7,7 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
 
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { WeavePlugin } from '../../main';
   import type { Card } from '../../data/types';
   import type { EmbeddableEditorManager } from '../../services/editor/EmbeddableEditorManager';
@@ -54,10 +54,10 @@
   }: Props = $props();
 
   //  使用预加载的数据（无需异步加载，数据已准备就绪）
-  let decks = $state<any[]>(preloadedDecks);
+  let decks = $state<any[]>(untrack(() => preloadedDecks));
   
   // 当前选择的牌组
-  let selectedDeckId = $state(card.deckId);
+  let selectedDeckId = $state(untrack(() => card.deckId));
 
   let selectedDeckNames = $state<string[]>([]);
 
@@ -294,4 +294,3 @@
     white-space: nowrap;
   }
 </style>
-

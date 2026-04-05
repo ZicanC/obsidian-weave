@@ -69,6 +69,7 @@
   let searchHistory = $state<string[]>([]);
   let menuShown = $state(false);
   let showDropdown = $state(false);
+  let activeMenu: Menu | null = null;
 
   // 搜索选项定义
   const baseSearchOptions = [
@@ -105,6 +106,7 @@
   function handleClickOutside(e: MouseEvent) {
     if (containerRef && !containerRef.contains(e.target as Node)) {
       showDropdown = false;
+      closeActiveMenu();
     }
   }
 
@@ -170,18 +172,64 @@
     checkAndShowSuggestions();
   }
 
-  // 检测并显示建议
-  function checkAndShowSuggestions() {
-    if (!inputRef) return;
-    
+  function getCurrentSearchToken(): string {
+    if (!inputRef) return '';
+
     const cursorPos = inputRef.selectionStart || 0;
     const textBeforeCursor = value.slice(0, cursorPos);
-    
-    // 检测最后一个词是否是搜索前缀
     const words = textBeforeCursor.split(/\s+/);
-    const lastWord = words[words.length - 1];
-    
-    if (lastWord.endsWith('tag:')) {
+    return words[words.length - 1] ?? '';
+  }
+
+  function getSuggestionQuery(prefix: string): string {
+    const token = getCurrentSearchToken();
+    if (!token.toLowerCase().startsWith(prefix)) {
+      return '';
+    }
+
+    return token
+      .slice(prefix.length)
+      .trim()
+      .replace(/^['"]+/, '')
+      .replace(/['"]+$/, '');
+  }
+
+  function getFilteredStringSuggestions(values: string[], query: string): string[] {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const uniqueValues = Array.from(
+      new Map(
+        values
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0)
+          .map((item) => [item.toLocaleLowerCase(), item] as const)
+      ).values()
+    );
+
+    if (!normalizedQuery) {
+      return uniqueValues;
+    }
+
+    const startsWithMatches: string[] = [];
+    const containsMatches: string[] = [];
+
+    uniqueValues.forEach((item) => {
+      const normalizedItem = item.toLocaleLowerCase();
+      if (normalizedItem.startsWith(normalizedQuery)) {
+        startsWithMatches.push(item);
+      } else if (normalizedItem.includes(normalizedQuery)) {
+        containsMatches.push(item);
+      }
+    });
+
+    return [...startsWithMatches, ...containsMatches];
+  }
+
+  // 检测并显示建议
+  function checkAndShowSuggestions() {
+    const lastWord = getCurrentSearchToken();
+    const normalizedWord = lastWord.toLowerCase();
+
+    if (normalizedWord.startsWith('tag:')) {
       showTagSuggestions();
     } else if (lastWord.endsWith('deck:')) {
       showDeckSuggestions();
@@ -209,15 +257,32 @@
       showDateSuggestions('due');
     } else if (lastWord.endsWith('yaml:')) {
       showYamlSuggestions();
+    } else {
+      closeActiveMenu();
     }
+  }
+
+  function closeActiveMenu() {
+    if (!activeMenu) return;
+
+    const menu = activeMenu;
+    activeMenu = null;
+    menuShown = false;
+    menu.hide();
+    menu.close();
   }
 
   function showMenuSafe(menu: Menu) {
     if (!containerRef) return;
+    closeActiveMenu();
+    activeMenu = menu;
     menuShown = true;
     const rect = containerRef.getBoundingClientRect();
     menu.onHide(() => {
-      menuShown = false;
+      if (activeMenu === menu) {
+        activeMenu = null;
+        menuShown = false;
+      }
     });
     menu.showAtPosition({ x: rect.left, y: rect.bottom + 2 });
   }
@@ -391,21 +456,32 @@
 
   // 显示标签建议
   function showTagSuggestions() {
-    if (!containerRef || menuShown) return;
+    if (!containerRef) return;
+
+    const matchedTags = getFilteredStringSuggestions(availableTags, getSuggestionQuery('tag:'));
     const menu = new Menu();
     (menu as any).app = app;
     menu.addItem((item) => {
-      item.setTitle('标签');
+      item.setTitle(`标签 (${matchedTags.length}/${availableTags.length})`);
       item.setDisabled(true);
     });
-    availableTags.slice(0, 20).forEach((tag) => {
+
+    if (matchedTags.length === 0) {
       menu.addItem((item) => {
-        item.setTitle(tag);
-        item.onClick(() => {
-          replaceLastWord(tag);
+        item.setTitle('没有匹配的标签');
+        item.setDisabled(true);
+      });
+    } else {
+      matchedTags.forEach((tag) => {
+        menu.addItem((item) => {
+          item.setTitle(tag);
+          item.onClick(() => {
+            replaceLastWord(tag);
+          });
         });
       });
-    });
+    }
+
     showMenuSafe(menu);
   }
 
@@ -527,6 +603,7 @@
 
   // 清除搜索
   function handleClear() {
+    closeActiveMenu();
     value = '';
     onClear?.();
     onSearch?.('');
@@ -598,6 +675,7 @@
       addToHistory(value);
       showDropdown = false;
     } else if (e.key === 'Escape') {
+      closeActiveMenu();
       showDropdown = false;
       inputRef?.blur();
     } else if (e.key === ':') {

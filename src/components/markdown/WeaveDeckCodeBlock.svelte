@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { Menu } from 'obsidian';
   import DeckGridCard from '../deck-views/DeckGridCard.svelte';
   import ChineseElegantDeckCard from '../deck-views/ChineseElegantDeckCard.svelte';
@@ -23,7 +23,7 @@
   let error = $state('');
   let title = $state('');
   let renderableDecks = $state<RenderableDeckCard[]>([]);
-  let deckCardStyle = $state<DeckCardStyle>((plugin.settings.deckCardStyle as DeckCardStyle) || 'default');
+  let deckCardStyle = $state<DeckCardStyle>(untrack(() => (plugin.settings.deckCardStyle as DeckCardStyle) || 'default'));
   let cardSize = $state<'small' | 'medium' | 'large'>('medium');
   const premiumGuard = PremiumFeatureGuard.getInstance();
   let isPremium = $state(get(premiumGuard.isPremiumActive));

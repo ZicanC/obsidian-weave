@@ -5,6 +5,7 @@
   @version 3.0.0
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Notice } from 'obsidian';
   import { tr } from '../../../utils/i18n';
   import { logger } from '../../../utils/logger';
@@ -24,18 +25,20 @@
   let { plugin, group, onSave, onCancel }: Props = $props();
 
   // 表单状态
-  let name = $state(group?.name || '');
-  let matchPriority = $state(group?.matchPriority || 100);
-  let tags = $state<string[]>(group?.matchAnyTags || []);
+  let name = $state(untrack(() => group?.name || ''));
+  let matchPriority = $state(untrack(() => group?.matchPriority || 100));
+  let tags = $state<string[]>(untrack(() => group?.matchAnyTags ? [...group.matchAnyTags] : []));
   let tagInput = $state('');
   let showTagSuggestions = $state(false);
 
   // 匹配源配置
-  let useYamlTags = $state(group?.matchSource?.yamlTags ?? true);
-  let useInlineTags = $state(group?.matchSource?.inlineTags ?? true);
-  let customProperties = $state<string[]>(group?.matchSource?.customProperties ?? []);
+  let useYamlTags = $state(untrack(() => group?.matchSource?.yamlTags ?? true));
+  let useInlineTags = $state(untrack(() => group?.matchSource?.inlineTags ?? true));
+  let customProperties = $state<string[]>(
+    untrack(() => group?.matchSource?.customProperties ? [...group.matchSource.customProperties] : [])
+  );
   let customPropInput = $state('');
-  let showCustomProps = $state((group?.matchSource?.customProperties?.length ?? 0) > 0);
+  let showCustomProps = $state(untrack(() => (group?.matchSource?.customProperties?.length ?? 0) > 0));
 
   // 从库中收集已有标签
   let existingTags = $state<string[]>([]);

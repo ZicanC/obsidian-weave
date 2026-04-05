@@ -50,37 +50,8 @@
     return `background: ${colorScheme.infoBar.background}; color: ${colorScheme.infoBar.textColor};`;
   });
 
-  // 触摸追踪变量（用于区分点击和滑动）
-  let touchStartX = 0;
-  let touchStartY = 0;
-  const SWIPE_THRESHOLD = 10; // 移动超过10px视为滑动
-
   // 处理点击事件
   function handleClick() {
-    onStudy();
-  }
-
-  // 处理触摸开始（记录起始位置）
-  function handleTouchStart(event: TouchEvent) {
-    const touch = event.touches[0];
-    touchStartX = touch.clientX;
-    touchStartY = touch.clientY;
-  }
-
-  // 处理触摸事件（移动端优化）
-  function handleTouchEnd(event: TouchEvent) {
-    // 检测是否为滑动操作
-    const touch = event.changedTouches[0];
-    const deltaX = Math.abs(touch.clientX - touchStartX);
-    const deltaY = Math.abs(touch.clientY - touchStartY);
-    
-    // 如果移动距离超过阈值，视为滑动，不触发学习
-    if (deltaX > SWIPE_THRESHOLD || deltaY > SWIPE_THRESHOLD) {
-      return;
-    }
-    
-    // 防止触发 onclick 导致双重调用
-    event.preventDefault();
     onStudy();
   }
 
@@ -93,20 +64,8 @@
   // 处理菜单按钮点击
   function handleMenuClick(event: MouseEvent) {
     event.preventDefault();
+    event.stopPropagation();
     onMenu(event);
-  }
-
-  // 处理菜单按钮触摸（移动端）
-  function handleMenuTouchEnd(event: TouchEvent) {
-    event.preventDefault();
-    // 创建一个模拟的 MouseEvent 传递给 onMenu
-    const touch = event.changedTouches[0];
-    const mouseEvent = new MouseEvent('click', {
-      clientX: touch.clientX,
-      clientY: touch.clientY,
-      bubbles: false
-    });
-    onMenu(mouseEvent);
   }
 
   // 处理键盘事件
@@ -124,8 +83,6 @@
     if (event.defaultPrevented) return;
     handleClick();
   }}
-  ontouchstart={handleTouchStart}
-  ontouchend={handleTouchEnd}
   onkeydown={handleKeyDown}
   oncontextmenu={handleContextMenu}
   role="button"
@@ -141,7 +98,6 @@
     <button 
       class="menu-btn"
       onclick={handleMenuClick}
-      ontouchend={handleMenuTouchEnd}
       aria-label={t('decks.card.moreActions')}
       title={t('decks.card.moreActions')}
     >
@@ -176,6 +132,8 @@
 
 <style>
   .deck-grid-card {
+    width: 100%;
+    min-width: 0;
     height: 220px;
     border-radius: 12px;
     overflow: hidden;
@@ -184,6 +142,7 @@
     cursor: pointer;
     display: flex;
     flex-direction: column;
+    touch-action: manipulation;
   }
 
   .deck-grid-card:hover {
@@ -241,6 +200,7 @@
     backdrop-filter: blur(8px);
     transition: all 0.2s;
     opacity: 0;
+    touch-action: manipulation;
   }
 
   .deck-grid-card:hover .menu-btn {
@@ -274,6 +234,11 @@
     z-index: 1;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
     word-break: break-word;
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* 下方信息条 */
@@ -292,6 +257,8 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    row-gap: 4px;
+    flex-wrap: wrap;
     flex: 1;
     justify-content: center;
   }
@@ -380,5 +347,80 @@
   :global(body.is-tablet) .deck-grid-card {
     height: 200px;
   }
-</style>
 
+  @container deck-card (max-width: 360px) {
+    .deck-grid-card {
+      height: 188px;
+      border-radius: 10px;
+    }
+
+    .card-main {
+      padding: 22px 16px;
+    }
+
+    .deck-title {
+      font-size: 20px;
+    }
+
+    .card-info-bar {
+      height: auto;
+      min-height: 46px;
+      padding: 8px 14px;
+    }
+
+    .info-center {
+      gap: 8px 12px;
+    }
+
+    .stat-number {
+      font-size: 14px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+    }
+
+    .menu-btn {
+      opacity: 1;
+    }
+  }
+
+  @container deck-card (max-width: 280px) {
+    .deck-grid-card {
+      height: 170px;
+      border-radius: 10px;
+    }
+
+    .card-main {
+      padding: 16px 12px;
+    }
+
+    .deck-title {
+      font-size: 18px;
+    }
+
+    .card-info-bar {
+      min-height: 42px;
+      padding: 6px 10px;
+    }
+
+    .info-center {
+      gap: 6px 10px;
+    }
+
+    .stat-number {
+      font-size: 13px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+    }
+
+    .menu-btn {
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
+    }
+  }
+</style>

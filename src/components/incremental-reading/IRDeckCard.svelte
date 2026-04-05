@@ -57,31 +57,7 @@
     return 'overload';
   });
 
-  // 触摸追踪变量
-  let touchStartX = 0;
-  let touchStartY = 0;
-  const SWIPE_THRESHOLD = 10;
-
   function handleClick() {
-    onStudy();
-  }
-
-  function handleTouchStart(event: TouchEvent) {
-    const touch = event.touches[0];
-    touchStartX = touch.clientX;
-    touchStartY = touch.clientY;
-  }
-
-  function handleTouchEnd(event: TouchEvent) {
-    const touch = event.changedTouches[0];
-    const deltaX = Math.abs(touch.clientX - touchStartX);
-    const deltaY = Math.abs(touch.clientY - touchStartY);
-    
-    if (deltaX > SWIPE_THRESHOLD || deltaY > SWIPE_THRESHOLD) {
-      return;
-    }
-    
-    event.preventDefault();
     onStudy();
   }
 
@@ -92,18 +68,8 @@
 
   function handleMenuClick(event: MouseEvent) {
     event.preventDefault();
+    event.stopPropagation();
     onMenu(event);
-  }
-
-  function handleMenuTouchEnd(event: TouchEvent) {
-    event.preventDefault();
-    const touch = event.changedTouches[0];
-    const mouseEvent = new MouseEvent('click', {
-      clientX: touch.clientX,
-      clientY: touch.clientY,
-      bubbles: false
-    });
-    onMenu(mouseEvent);
   }
 
   function handleKeyDown(event: KeyboardEvent) {
@@ -121,8 +87,6 @@
     if (event.defaultPrevented) return;
     handleClick();
   }}
-  ontouchstart={handleTouchStart}
-  ontouchend={handleTouchEnd}
   onkeydown={handleKeyDown}
   oncontextmenu={handleContextMenu}
   role="button"
@@ -139,7 +103,6 @@
   <button 
     class="menu-btn"
     onclick={handleMenuClick}
-    ontouchend={handleMenuTouchEnd}
     aria-label="更多操作"
     title="更多操作"
   >
@@ -196,6 +159,8 @@
 <style>
   .ir-deck-card {
     position: relative;
+    width: 100%;
+    min-width: 0;
     height: 220px;
     border-radius: 16px;
     overflow: hidden;
@@ -204,6 +169,7 @@
     cursor: pointer;
     display: flex;
     flex-direction: column;
+    touch-action: manipulation;
   }
 
   .ir-deck-card:hover {
@@ -279,6 +245,7 @@
     backdrop-filter: blur(8px);
     transition: all 0.2s;
     opacity: 0;
+    touch-action: manipulation;
   }
 
   .ir-deck-card:hover .menu-btn {
@@ -329,12 +296,15 @@
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
+    gap: 12px;
   }
 
   /* 底部统计信息栏 */
   .stats-bar {
     display: flex;
     gap: 20px;
+    row-gap: 8px;
+    flex-wrap: wrap;
     color: rgba(255, 255, 255, 0.9);
     font-size: 13px;
   }
@@ -518,6 +488,98 @@
 
     .percentage-text {
       font-size: 12px;
+    }
+  }
+
+  @container deck-card (max-width: 360px) {
+    .ir-deck-card {
+      height: 180px;
+      border-radius: 14px;
+    }
+
+    .card-content {
+      padding: 18px 18px;
+    }
+
+    .card-title {
+      font-size: 21px;
+    }
+
+    .card-footer {
+      gap: 10px;
+    }
+
+    .stats-bar {
+      gap: 12px 16px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+    }
+
+    .stat-value {
+      font-size: 14px;
+    }
+
+    .progress-ring {
+      width: 42px;
+      height: 42px;
+    }
+
+    .percentage-text {
+      font-size: 10px;
+    }
+
+    .menu-btn {
+      opacity: 1;
+    }
+  }
+
+  @container deck-card (max-width: 280px) {
+    .ir-deck-card {
+      height: 162px;
+      border-radius: 12px;
+    }
+
+    .card-content {
+      padding: 14px 14px;
+    }
+
+    .card-title {
+      font-size: 18px;
+    }
+
+    .card-footer {
+      gap: 8px;
+      align-items: center;
+    }
+
+    .stats-bar {
+      gap: 10px 12px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+    }
+
+    .stat-value {
+      font-size: 13px;
+    }
+
+    .progress-ring {
+      width: 36px;
+      height: 36px;
+    }
+
+    .percentage-text {
+      font-size: 9px;
+    }
+
+    .menu-btn {
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
     }
   }
 </style>

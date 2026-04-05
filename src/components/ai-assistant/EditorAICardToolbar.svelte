@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import type { WeavePlugin } from '../../main';
   import type { PromptTemplate, AIProvider, GenerationConfig, GenerationProgress, GeneratedCard } from '../../types/ai-types';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
@@ -30,34 +30,39 @@
   let textareaElement = $state<HTMLTextAreaElement | undefined>(undefined);
 
   // 从持久化设置中恢复AI制卡配置
-  const aiAssistantPreferences = plugin.getAIAssistantPreferences();
-  const saved = aiAssistantPreferences.savedGenerationConfig;
-  let generationConfig = $state<GenerationConfig>({
-    templateId: '',
-    promptTemplate: '',
-    cardCount: saved?.cardCount ?? 10,
-    difficulty: saved?.difficulty ?? 'medium',
-    typeDistribution: saved?.typeDistribution ?? { qa: 50, cloze: 30, choice: 20 },
-    provider: (aiAssistantPreferences.lastUsedProvider || plugin.settings.aiConfig?.defaultProvider || 'openai') as AIProvider,
-    model: aiAssistantPreferences.lastUsedModel || '',
-    temperature: saved?.temperature ?? 0.7,
-    maxTokens: saved?.maxTokens ?? 2000,
-    imageGeneration: {
-      enabled: false,
-      strategy: 'none',
-      imagesPerCard: 0,
-      placement: 'question'
-    },
-    templates: {
-      qa: 'official-qa',
-      choice: 'official-choice',
-      cloze: 'official-cloze'
-    },
-    autoTags: saved?.autoTags ?? [],
-    enableHints: saved?.enableHints ?? true
-  });
+  function createInitialGenerationConfig(): GenerationConfig {
+    const aiAssistantPreferences = plugin.getAIAssistantPreferences();
+    const saved = aiAssistantPreferences.savedGenerationConfig;
 
-  const generationService = new AICardGenerationService(plugin);
+    return {
+      templateId: '',
+      promptTemplate: '',
+      cardCount: saved?.cardCount ?? 10,
+      difficulty: saved?.difficulty ?? 'medium',
+      typeDistribution: { ...(saved?.typeDistribution ?? { qa: 50, cloze: 30, choice: 20 }) },
+      provider: (aiAssistantPreferences.lastUsedProvider || plugin.settings.aiConfig?.defaultProvider || 'openai') as AIProvider,
+      model: aiAssistantPreferences.lastUsedModel || '',
+      temperature: saved?.temperature ?? 0.7,
+      maxTokens: saved?.maxTokens ?? 2000,
+      imageGeneration: {
+        enabled: false,
+        strategy: 'none',
+        imagesPerCard: 0,
+        placement: 'question'
+      },
+      templates: {
+        qa: 'official-qa',
+        choice: 'official-choice',
+        cloze: 'official-cloze'
+      },
+      autoTags: [...(saved?.autoTags ?? [])],
+      enableHints: saved?.enableHints ?? true
+    };
+  }
+
+  let generationConfig = $state<GenerationConfig>(untrack(() => createInitialGenerationConfig()));
+
+  const generationService = untrack(() => new AICardGenerationService(plugin));
 
   // 提示词
   let officialPrompts = $derived<PromptTemplate[]>(

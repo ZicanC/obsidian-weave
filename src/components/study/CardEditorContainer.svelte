@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import type { Card } from "../../data/types";
   import { CardType } from "../../data/types";
   import type { EmbeddableEditorManager } from "../../services/editor/EmbeddableEditorManager";
@@ -54,7 +54,7 @@
   let editorInitialized = $state(false);
   let editCleanupFn: (() => void) | null = $state(null);
   let plainTextEditorEl: HTMLTextAreaElement | null = $state(null);
-  let currentContent = $state(getEditableSourceContent(card));
+  let currentContent = $state(untrack(() => getEditableSourceContent(card)));
   let isClozeModeUpdating = $state(false);
 
   const localEditorSessionId = `weave-study-session-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -864,4 +864,3 @@
   }
 
 </style>
-

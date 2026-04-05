@@ -520,6 +520,11 @@
     return `${getKindText(source.kind)} · ${source.label}`;
   }
 
+  function getCurrentRangeLabel(): string {
+    const current = quickRangeOptions.find(option => option.value === selectedDays);
+    return current?.label ?? `${selectedDays} 天`;
+  }
+
   function showSourceMenu(event: MouseEvent): void {
     const menu = new Menu();
 
@@ -548,6 +553,26 @@
             });
         });
       }
+    }
+
+    menu.showAtMouseEvent(event);
+  }
+
+  function showRangeMenu(event: MouseEvent): void {
+    const menu = new Menu();
+
+    for (const option of quickRangeOptions) {
+      menu.addItem((item) => {
+        item
+          .setTitle(option.label)
+          .setIcon('calendar')
+          .setChecked(selectedDays === option.value)
+          .onClick(() => {
+            if (selectedDays === option.value) return;
+            selectedDays = option.value;
+            void loadAnalytics();
+          });
+      });
     }
 
     menu.showAtMouseEvent(event);
@@ -661,21 +686,18 @@
             </button>
           </label>
 
-          <div class="quick-range-buttons">
-            {#each quickRangeOptions as option}
-              <button
-                type="button"
-                class="time-range-btn"
-                class:active={selectedDays === option.value}
-                onclick={() => {
-                  selectedDays = option.value;
-                  void loadAnalytics();
-                }}
-              >
-                {option.label}
-              </button>
-            {/each}
-          </div>
+          <label class="range-select-wrap">
+            <span class="toolbar-label">时间范围</span>
+            <button
+              type="button"
+              class="range-menu-trigger"
+              onclick={(event) => showRangeMenu(event)}
+              title="选择时间范围"
+            >
+              <span class="range-menu-text">{getCurrentRangeLabel()}</span>
+              <ObsidianIcon name="chevron-down" size={14} />
+            </button>
+          </label>
         </div>
 
         {#if activeTab === 'activity' && snapshot?.monitoringSummary}
@@ -777,6 +799,7 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    min-height: 0;
     padding: 18px 18px 16px;
     background: linear-gradient(
       180deg,
@@ -872,6 +895,15 @@
     min-width: 280px;
   }
 
+  .range-select-wrap {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    min-width: 180px;
+    margin-left: auto;
+  }
+
   .toolbar-label {
     font-size: 12px;
     font-weight: 600;
@@ -898,12 +930,40 @@
     transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
 
+  .range-menu-trigger {
+    min-width: 140px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 10px;
+    min-height: 34px;
+    border-radius: 9px;
+    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 86%, transparent);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+
   .source-menu-trigger:hover {
     border-color: color-mix(in srgb, var(--interactive-accent) 38%, var(--background-modifier-border));
     background: color-mix(in srgb, var(--background-modifier-hover) 74%, transparent);
   }
 
+  .range-menu-trigger:hover {
+    border-color: color-mix(in srgb, var(--interactive-accent) 38%, var(--background-modifier-border));
+    background: color-mix(in srgb, var(--background-modifier-hover) 74%, transparent);
+  }
+
   .source-menu-trigger:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus);
+    outline-offset: 1px;
+  }
+
+  .range-menu-trigger:focus-visible {
     outline: 2px solid var(--background-modifier-border-focus);
     outline-offset: 1px;
   }
@@ -914,41 +974,10 @@
     white-space: nowrap;
   }
 
-  .quick-range-buttons {
-    display: flex;
-    gap: 6px;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .time-range-btn {
-    padding: 7px 11px;
-    min-height: 34px;
-    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 84%, transparent);
-    border-radius: 9px;
-    background: var(--background-primary);
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-  }
-
-  .time-range-btn:hover {
-    color: var(--text-normal);
-    border-color: color-mix(in srgb, var(--interactive-accent) 38%, var(--background-modifier-border));
-    background: color-mix(in srgb, var(--background-modifier-hover) 70%, transparent);
-  }
-
-  .time-range-btn.active {
-    color: var(--text-on-accent);
-    background: var(--interactive-accent);
-    border-color: var(--interactive-accent);
-  }
-
-  .time-range-btn:focus-visible {
-    outline: 2px solid var(--background-modifier-border-focus);
-    outline-offset: 1px;
+  .range-menu-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .monitoring-note {
@@ -964,6 +993,11 @@
   .activity-overview-panel {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
     gap: 10px;
   }
 
@@ -1094,8 +1128,14 @@
     justify-content: flex-start;
     flex-wrap: nowrap;
     overflow-x: auto;
-    scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--text-muted) 26%, transparent) transparent;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .tabs-header.mobile .tabs-nav::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
 
   .tabs-header.mobile .tab-btn {
@@ -1105,9 +1145,10 @@
   }
 
   .toolbar.mobile .toolbar-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    align-items: end;
+    gap: 8px;
   }
 
   .toolbar.mobile .source-select-wrap {
@@ -1118,19 +1159,22 @@
     gap: 6px;
   }
 
+  .toolbar.mobile .range-select-wrap {
+    min-width: 0;
+    width: 100%;
+    margin-left: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
   .toolbar.mobile .source-menu-trigger {
     min-width: 0;
     width: 100%;
   }
 
-  .toolbar.mobile .quick-range-buttons {
-    width: 100%;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    justify-content: stretch;
-  }
-
-  .toolbar.mobile .time-range-btn {
+  .toolbar.mobile .range-menu-trigger {
+    min-width: 0;
     width: 100%;
   }
 

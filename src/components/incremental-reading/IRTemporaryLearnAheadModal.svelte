@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
 
   interface Props {
@@ -21,7 +21,7 @@
   }: Props = $props();
 
   let showContent = $state(false);
-  let days = $state(initialDays);
+  let days = $state(untrack(() => initialDays));
 
   function handleInput(event: Event) {
     const value = parseInt((event.target as HTMLInputElement).value, 10);

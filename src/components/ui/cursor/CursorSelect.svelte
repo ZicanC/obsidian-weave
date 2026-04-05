@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { DesignTokens } from '../../design/tokens';
 
   // 选项类型定义
@@ -56,7 +57,9 @@
   let isOpen = $state(false);
   let focused = $state(false);
   let searchQuery = $state('');
-  let selectedValues = $state<(string | number)[]>(multiple ? (Array.isArray(value) ? value : []) : []);
+  let selectedValues = $state<(string | number)[]>(
+    untrack(() => multiple ? (Array.isArray(value) ? [...value] : []) : [])
+  );
   let selectElement: HTMLSelectElement;
   let dropdownElement: HTMLDivElement;
 

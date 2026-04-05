@@ -253,13 +253,13 @@
       <button class="month-nav next" onclick={() => changeMonth(1)}>
         <ObsidianIcon name="chevron-right" size={16} />
       </button>
+    </div>
 
-      <div class="history-filter">
-        <button class="today-btn" onclick={goToToday} title="跳转到今天">
-          <ObsidianIcon name="calendar" size={14} />
-          今天
-        </button>
-      </div>
+    <div class="history-filter">
+      <button class="today-btn" onclick={goToToday} title="跳转到今天">
+        <ObsidianIcon name="calendar" size={14} />
+        今天
+      </button>
     </div>
 
     <div class="date-selector" bind:this={dateSelectionContainer}>
@@ -340,18 +340,11 @@
   .month-selector {
     display: flex;
     align-items: center;
-    justify-content: flex-start;
-    margin-bottom: 16px;
-    gap: 12px;
-    flex-wrap: nowrap;
-    overflow: hidden;
-  }
-
-  .month-selector .history-filter {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
+    justify-content: stretch;
+    margin-bottom: 10px;
     gap: 8px;
+    flex-wrap: nowrap;
+    min-width: 0;
   }
 
   .today-btn {
@@ -396,7 +389,10 @@
   }
 
   .month-tabs {
-    display: flex;
+    flex: 1;
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
   }
 
@@ -404,12 +400,19 @@
     background: transparent;
     border: none;
     color: var(--text-muted);
-    padding: 8px 16px;
+    padding: 8px 0;
     border-radius: 20px;
     cursor: pointer;
     font-size: 13px;
     font-weight: 500;
     transition: all 0.2s;
+    text-align: center;
+  }
+
+  .history-filter {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 12px;
   }
 
   .month-tab:hover {
@@ -607,14 +610,53 @@
   }
 
   @media (max-width: 768px) {
-    .month-selector {
-      flex-wrap: wrap;
+    .history-tab {
+      padding: 12px;
     }
 
-    .month-selector .history-filter {
-      width: 100%;
-      margin-left: 0;
-      justify-content: flex-end;
+    .calendar-container {
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+
+    .month-selector {
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .month-nav {
+      width: 32px;
+      min-width: 32px;
+      height: 32px;
+      padding: 6px;
+    }
+
+    .month-tabs {
+      gap: 6px;
+    }
+
+    .month-tab {
+      padding: 8px 0;
+      font-size: 14px;
+    }
+
+    .history-filter {
+      margin-bottom: 10px;
+    }
+
+    .today-btn {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .date-selector {
+      padding: 0 2px;
+    }
+
+    .date-item {
+      min-width: 64px;
+      min-height: 52px;
+      padding: 8px 6px 7px;
     }
 
     .test-item {

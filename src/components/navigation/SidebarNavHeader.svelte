@@ -14,12 +14,13 @@
    * @version 1.3.0 - 卡片管理页面圆点改为视图切换
    */
   import { AbstractInputSuggest, Menu, Notice, type App } from 'obsidian';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { get } from 'svelte/store';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import CardSearchInput from '../search/CardSearchInput.svelte';
   import { PremiumFeatureGuard, PREMIUM_FEATURES } from '../../services/premium/PremiumFeatureGuard';
+  import { openWeaveMainMenu } from '../../utils/weave-main-menu';
   import { addWeaveNavigationItems } from '../../utils/weave-navigation-menu';
 
   // 牌组学习页面的筛选类型
@@ -238,7 +239,7 @@
   let showSidebarCardSearch = $state(false); 
   let aiSelectedFileName = $state('');
   let aiHistoryCount = $state(0);
-  let aiPromptInputValue = $state(aiCustomPrompt);
+  let aiPromptInputValue = $state(untrack(() => aiCustomPrompt));
   let aiSelectedPromptId = $state('');
   let aiSelectedPromptName = $state('');
   let aiPromptSuggestions = $state<AIPromptSuggestion[]>([]);
@@ -313,6 +314,26 @@
   }
 
   function handleMenuClick(evt: MouseEvent) {
+    openWeaveMainMenu({
+      currentPage,
+      isInSidebarMode,
+      navigationVisibility,
+      cardDataSource,
+      currentView,
+      tableViewMode: cardTableViewMode,
+      gridLayoutMode: cardGridLayoutMode,
+      kanbanLayoutMode: cardKanbanLayoutMode,
+      irTypeFilter: cardIRTypeFilter,
+      documentFilterMode: cardDocumentFilterMode,
+      currentActiveDocument: cardCurrentActiveDocument,
+      enableCardLocationJump: cardEnableLocationJump,
+      event: evt,
+      onNavigate,
+      onCardDataSourceChange,
+      onViewChange
+    });
+    return;
+
     // 创建 Obsidian 原生菜单
     const menu = new Menu();
     addWeaveNavigationItems(menu, currentPage, onNavigate);
@@ -397,11 +418,11 @@
         }
       });
 
-      if (shouldShowPremiumEntry(PREMIUM_FEATURES.GRID_VIEW) || currentView === 'grid') {
+      if (shouldShowPremiumEntry(PREMIUM_FEATURES.TIMELINE_VIEW) || currentView === 'grid') {
         const gridLocked = !premiumGuard.canUseFeature(PREMIUM_FEATURES.GRID_VIEW);
         menu.addItem((item) => {
           item
-            .setTitle(getPremiumEntryTitle('时间线视图', PREMIUM_FEATURES.GRID_VIEW))
+            .setTitle(getPremiumEntryTitle('时间线视图', PREMIUM_FEATURES.TIMELINE_VIEW))
             .setIcon('history')
             .setChecked(currentView === 'grid' && cardGridLayoutMode === 'timeline')
             .onClick(() => {
@@ -918,7 +939,8 @@
             class:active={currentView === 'grid' && cardGridLayoutMode === 'timeline'}
             class:is-hidden-slot={currentView !== 'grid'}
             onclick={() => emitCardManagementToolbarAction('grid-layout-timeline')}
-            aria-label="时间线布局"
+            aria-label={getPremiumEntryTitle('时间线布局', PREMIUM_FEATURES.TIMELINE_VIEW)}
+            title={getPremiumEntryTitle('时间线布局', PREMIUM_FEATURES.TIMELINE_VIEW)}
           >
             <EnhancedIcon name="history" size={16} />
           </button>
@@ -1834,4 +1856,3 @@
     -webkit-box-orient: vertical;
   }
 </style>
-

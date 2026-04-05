@@ -3,6 +3,7 @@
   渲染分组内的卡片列表，支持拖拽
 -->
 <script lang="ts">
+  import { untrack } from 'svelte';
   import type { Card } from "../../data/types";
   import type { WeavePlugin } from "../../main";
   import GridCard from "../cards/GridCard.svelte";
@@ -63,7 +64,7 @@
   }: Props = $props();
 
   // 当前显示数量
-  let visibleCount = $state(initialVisibleCount);
+  let visibleCount = $state(untrack(() => initialVisibleCount));
 
   // 可见卡片
   const visibleCards = $derived(cards.slice(0, visibleCount));

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   /**
    * Content-Only 架构迁移模态框
    * 
@@ -26,7 +27,7 @@
   let createBackup = $state(true);
   let removeFields = $state(true);
   
-  const migration = new ContentOnlyMigration(plugin);
+  const migration = untrack(() => new ContentOnlyMigration(plugin));
   
   /**
    * 步骤1：验证数据

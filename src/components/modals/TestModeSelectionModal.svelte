@@ -1008,7 +1008,7 @@ function getEstimatedTime(): string {
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: var(--space-sm);
   min-height: auto;
   position: relative;
@@ -1040,10 +1040,13 @@ function getEstimatedTime(): string {
 :global(body.is-mobile) .header-center {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  flex: 1;
+  justify-content: center;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 112px);
   min-width: 0;
-  padding-right: 36px; /* 为关闭按钮留出空间 */
+  pointer-events: none;
 }
 
 :global(body.is-mobile) .header-right {
@@ -1062,10 +1065,30 @@ function getEstimatedTime(): string {
 :global(body.is-mobile) .bank-name {
   font-size: 0.875rem;
   color: var(--text-muted);
+  text-align: center;
+  margin: 0 auto;
+  display: block;
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:global(body.is-mobile) .close-button {
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
+  background: transparent;
+}
+
+:global(body.is-mobile) .close-button:hover,
+:global(body.is-mobile) .close-button:active,
+:global(body.is-mobile) .close-button:focus,
+:global(body.is-mobile) .close-button:focus-visible {
+  background: transparent;
+  box-shadow: none;
+  outline: none;
 }
 
 /* 移动端内容区域统一样式 */

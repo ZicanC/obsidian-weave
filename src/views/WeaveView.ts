@@ -8,6 +8,16 @@ import {
 	getViewSurfaceTokens,
 	toggleViewLocation,
 } from "../utils/view-location-utils";
+import {
+	type WeaveCardDataSource,
+	type WeaveCardViewType,
+	type WeaveGridLayoutMode,
+	type WeaveIRTypeFilter,
+	type WeaveKanbanLayoutMode,
+	type WeaveTableViewMode,
+	openWeaveMainMenu,
+} from "../utils/weave-main-menu";
+import { computeMobileHeaderCenterTop } from "../utils/mobile-header-center";
 
 export const VIEW_TYPE_WEAVE = "weave-view";
 
@@ -19,14 +29,41 @@ export class WeaveView extends ItemView {
 	private pageChangeHandler: ((event: Event) => void) | null = null;
 	private aiSelectionStateHandler: ((event: Event) => void) | null = null;
 	private layoutChangeRef: EventRef | null = null;
+	private mobileHeaderCenterComponent: unknown | null = null;
+	private mobileHeaderCenterHost: HTMLElement | null = null;
+	private mobileHeaderCenterAlignmentCleanup: (() => void) | null = null;
+	private mobileHeaderCenterAlignmentRaf = 0;
+	private mainMenuAction: HTMLElement | null = null;
 	private aiFileAction: HTMLElement | null = null;
 	private aiPromptAction: HTMLElement | null = null;
 	private aiGenerateAction: HTMLElement | null = null;
+	private cardViewChangeHandler: ((event: Event) => void) | null = null;
+	private cardDataSourceChangeHandler: ((event: Event) => void) | null = null;
+	private cardToolbarStateHandler: ((event: Event) => void) | null = null;
 	private aiSelectionState = {
 		hasCards: false,
 		selectedCount: 0,
 		totalCount: 0,
 		isAllSelected: false,
+	};
+	private currentCardView: WeaveCardViewType = "table";
+	private currentCardDataSource: WeaveCardDataSource = "memory";
+	private cardToolbarState: {
+		tableViewMode: WeaveTableViewMode;
+		gridLayoutMode: WeaveGridLayoutMode;
+		kanbanLayoutMode: WeaveKanbanLayoutMode;
+		irTypeFilter: WeaveIRTypeFilter;
+		documentFilterMode: "all" | "current";
+		currentActiveDocument: string | null;
+		enableCardLocationJump: boolean;
+	} = {
+		tableViewMode: "basic",
+		gridLayoutMode: "fixed",
+		kanbanLayoutMode: "comfortable",
+		irTypeFilter: "all",
+		documentFilterMode: "all",
+		currentActiveDocument: null,
+		enableCardLocationJump: false,
 	};
 
 	constructor(leaf: WorkspaceLeaf, plugin: WeavePlugin) {
@@ -80,6 +117,7 @@ export class WeaveView extends ItemView {
 		this.applySurfaceContext();
 		this.layoutChangeRef = this.app.workspace.on("layout-change", () => {
 			this.applySurfaceContext();
+			void this.mountMobileHeaderCenter();
 		});
 
 		//  性能优化：异步非阻塞加载
@@ -94,6 +132,11 @@ export class WeaveView extends ItemView {
 	private setupMobileHeaderActions(): void {
 		if (!Platform.isMobile) return;
 
+		void this.mountMobileHeaderCenter();
+
+		this.mainMenuAction = this.addAction("menu", "打开菜单", () => {
+			this.openMobileMainMenu();
+		});
 		this.aiFileAction = this.addAction("folder-open", "选择文件", () => {
 			this.dispatchAIToolbarAction("file", this.aiFileAction);
 		});
@@ -129,13 +172,148 @@ export class WeaveView extends ItemView {
 				isAllSelected: Boolean(detail.isAllSelected),
 			};
 		};
+		this.cardViewChangeHandler = (event: Event) => {
+			const view = (event as CustomEvent<string>).detail;
+			if (view === "table" || view === "grid" || view === "kanban") {
+				this.currentCardView = view;
+			}
+		};
+		this.cardDataSourceChangeHandler = (event: Event) => {
+			const source = (event as CustomEvent<string>).detail;
+			if (
+				source === "memory" ||
+				source === "questionBank" ||
+				source === "incremental-reading"
+			) {
+				this.currentCardDataSource = source;
+			}
+		};
+		this.cardToolbarStateHandler = (event: Event) => {
+			const detail = (
+				event as CustomEvent<{
+					tableViewMode?: WeaveTableViewMode;
+					gridLayout?: WeaveGridLayoutMode;
+					kanbanLayoutMode?: WeaveKanbanLayoutMode;
+					irTypeFilter?: WeaveIRTypeFilter;
+					documentFilterMode?: "all" | "current";
+					currentActiveDocument?: string | null;
+					enableCardLocationJump?: boolean;
+					dataSource?: WeaveCardDataSource;
+				}>
+			).detail;
+			if (!detail) return;
+
+			if (detail.tableViewMode) {
+				this.cardToolbarState.tableViewMode = detail.tableViewMode;
+			}
+			if (detail.gridLayout) {
+				this.cardToolbarState.gridLayoutMode = detail.gridLayout;
+			}
+			if (detail.kanbanLayoutMode) {
+				this.cardToolbarState.kanbanLayoutMode = detail.kanbanLayoutMode;
+			}
+			if (detail.irTypeFilter) {
+				this.cardToolbarState.irTypeFilter = detail.irTypeFilter;
+			}
+			if (detail.documentFilterMode) {
+				this.cardToolbarState.documentFilterMode = detail.documentFilterMode;
+			}
+			if ("currentActiveDocument" in detail) {
+				this.cardToolbarState.currentActiveDocument = detail.currentActiveDocument ?? null;
+			}
+			if (typeof detail.enableCardLocationJump === "boolean") {
+				this.cardToolbarState.enableCardLocationJump = detail.enableCardLocationJump;
+			}
+			if (
+				detail.dataSource === "memory" ||
+				detail.dataSource === "questionBank" ||
+				detail.dataSource === "incremental-reading"
+			) {
+				this.currentCardDataSource = detail.dataSource;
+			}
+		};
 
 		window.addEventListener("Weave:page-changed", this.pageChangeHandler as EventListener);
 		window.addEventListener(
 			"Weave:ai-selection-state-change",
 			this.aiSelectionStateHandler as EventListener
 		);
+		window.addEventListener("Weave:card-view-change", this.cardViewChangeHandler as EventListener);
+		window.addEventListener(
+			"Weave:card-data-source-change",
+			this.cardDataSourceChangeHandler as EventListener
+		);
+		window.addEventListener(
+			"Weave:card-management-toolbar-state",
+			this.cardToolbarStateHandler as EventListener
+		);
 		this.updateMobileHeaderActionsVisibility();
+	}
+
+	private openMobileMainMenu(): void {
+		const menuEvent = this.createHeaderMenuMouseEvent(this.mainMenuAction);
+		const pageMenuRequest = new CustomEvent<{
+			page: string;
+			event: MouseEvent;
+			source: "native-header";
+		}>("Weave:request-main-interface-menu", {
+			cancelable: true,
+			detail: {
+				page: this.currentPage,
+				event: menuEvent,
+				source: "native-header",
+			},
+		});
+		const handledByPage = !window.dispatchEvent(pageMenuRequest);
+		if (handledByPage) {
+			return;
+		}
+
+		openWeaveMainMenu({
+			currentPage: this.currentPage,
+			leaf: this.leaf,
+			navigationVisibility: this.plugin.settings.navigationVisibility,
+			cardDataSource: this.currentCardDataSource,
+			currentView: this.currentCardView,
+			tableViewMode: this.cardToolbarState.tableViewMode,
+			gridLayoutMode: this.cardToolbarState.gridLayoutMode,
+			kanbanLayoutMode: this.cardToolbarState.kanbanLayoutMode,
+			irTypeFilter: this.cardToolbarState.irTypeFilter,
+			documentFilterMode: this.cardToolbarState.documentFilterMode,
+			currentActiveDocument: this.cardToolbarState.currentActiveDocument,
+			enableCardLocationJump: this.cardToolbarState.enableCardLocationJump,
+			event: menuEvent,
+			anchorEl: this.mainMenuAction,
+			onNavigate: (pageId) => {
+				this.currentPage = pageId;
+				window.dispatchEvent(new CustomEvent("Weave:navigate", { detail: pageId }));
+			},
+			onCardDataSourceChange: (source) => {
+				this.currentCardDataSource = source;
+			},
+			onViewChange: (view) => {
+				this.currentCardView = view;
+			},
+		});
+	}
+
+	private createHeaderMenuMouseEvent(anchorEl: HTMLElement | null): MouseEvent {
+		const rect = anchorEl?.getBoundingClientRect();
+		const clientX = rect
+			? Math.round(rect.left + rect.width / 2)
+			: Math.round(window.innerWidth / 2);
+		const clientY = rect
+			? Math.round(rect.bottom + 8)
+			: Math.max(96, Math.round(window.innerHeight / 2));
+
+		return new MouseEvent("click", {
+			bubbles: true,
+			cancelable: true,
+			clientX,
+			clientY,
+			screenX: clientX,
+			screenY: clientY,
+		});
 	}
 
 	private dispatchAIToolbarAction(
@@ -172,6 +350,177 @@ export class WeaveView extends ItemView {
 			if (!action) continue;
 			action.style.display = visible ? "" : "none";
 		}
+
+		this.scheduleMobileHeaderCenterAlignment();
+	}
+
+	private resolveMobileHeaderHost(): HTMLElement | null {
+		if (!(this.containerEl instanceof HTMLElement)) {
+			return null;
+		}
+
+		this.containerEl.dataset.weaveMobileNativeHeader = "true";
+		const viewHeader = this.containerEl.querySelector(".view-header");
+		if (!(viewHeader instanceof HTMLElement)) {
+			return null;
+		}
+
+		let host =
+			this.mobileHeaderCenterHost instanceof HTMLElement
+				? this.mobileHeaderCenterHost
+				: (viewHeader.querySelector(".weave-mobile-header-center-host") as HTMLElement | null);
+
+		if (!(host instanceof HTMLElement)) {
+			host = document.createElement("div");
+			host.className = "weave-mobile-header-center-host";
+		}
+
+		if (host.parentElement !== viewHeader) {
+			viewHeader.appendChild(host);
+		}
+
+		this.mobileHeaderCenterHost = host;
+		this.ensureMobileHeaderCenterAlignment(viewHeader, host);
+		this.scheduleMobileHeaderCenterAlignment();
+		return host;
+	}
+
+	private getMobileHeaderAlignmentCandidates(
+		viewHeader: HTMLElement,
+		host: HTMLElement
+	): HTMLElement[] {
+		const candidates = new Set<HTMLElement>();
+		const selectors = [".clickable-icon", ".view-action", "button"];
+
+		for (const selector of selectors) {
+			for (const node of viewHeader.querySelectorAll(selector)) {
+				if (!(node instanceof HTMLElement)) continue;
+				if (host.contains(node)) continue;
+				if (!node.isConnected) continue;
+
+				const computedStyle = window.getComputedStyle(node);
+				if (
+					computedStyle.display === "none" ||
+					computedStyle.visibility === "hidden" ||
+					computedStyle.opacity === "0"
+				) {
+					continue;
+				}
+
+				const rect = node.getBoundingClientRect();
+				if (rect.width <= 0 || rect.height <= 0) continue;
+				if (rect.bottom <= 0 || rect.top >= window.innerHeight) continue;
+
+				candidates.add(node);
+			}
+		}
+
+		return [...candidates];
+	}
+
+	private alignMobileHeaderCenterHost(): void {
+		this.mobileHeaderCenterAlignmentRaf = 0;
+
+		const host = this.mobileHeaderCenterHost;
+		const viewHeader = host?.parentElement;
+		if (!(host instanceof HTMLElement) || !(viewHeader instanceof HTMLElement)) {
+			return;
+		}
+
+		const headerRect = viewHeader.getBoundingClientRect();
+		const candidateRects = this.getMobileHeaderAlignmentCandidates(viewHeader, host).map((element) =>
+			element.getBoundingClientRect()
+		);
+		const top = computeMobileHeaderCenterTop(headerRect, candidateRects);
+
+		if (typeof top === "number") {
+			host.style.top = `${Math.round(top)}px`;
+		} else {
+			host.style.removeProperty("top");
+		}
+	}
+
+	private scheduleMobileHeaderCenterAlignment(): void {
+		if (this.mobileHeaderCenterAlignmentRaf !== 0) {
+			return;
+		}
+
+		this.mobileHeaderCenterAlignmentRaf = window.requestAnimationFrame(() => {
+			this.alignMobileHeaderCenterHost();
+		});
+	}
+
+	private ensureMobileHeaderCenterAlignment(viewHeader: HTMLElement, host: HTMLElement): void {
+		if (this.mobileHeaderCenterAlignmentCleanup) {
+			this.mobileHeaderCenterAlignmentCleanup();
+			this.mobileHeaderCenterAlignmentCleanup = null;
+		}
+
+		const scheduleAlignment = () => {
+			this.scheduleMobileHeaderCenterAlignment();
+		};
+
+		const resizeObserver =
+			typeof ResizeObserver !== "undefined"
+				? new ResizeObserver(() => {
+						scheduleAlignment();
+				  })
+				: null;
+		const mutationObserver =
+			typeof MutationObserver !== "undefined"
+				? new MutationObserver(() => {
+						scheduleAlignment();
+				  })
+				: null;
+
+		resizeObserver?.observe(viewHeader);
+		mutationObserver?.observe(viewHeader, {
+			subtree: true,
+			childList: true,
+			attributes: true,
+			attributeFilter: ["class", "style", "hidden", "aria-hidden"],
+		});
+		mutationObserver?.observe(document.body, {
+			attributes: true,
+			attributeFilter: ["class", "style"],
+		});
+
+		window.addEventListener("resize", scheduleAlignment);
+		window.addEventListener("orientationchange", scheduleAlignment);
+		window.visualViewport?.addEventListener("resize", scheduleAlignment);
+		window.visualViewport?.addEventListener("scroll", scheduleAlignment);
+
+		this.mobileHeaderCenterAlignmentCleanup = () => {
+			resizeObserver?.disconnect();
+			mutationObserver?.disconnect();
+			window.removeEventListener("resize", scheduleAlignment);
+			window.removeEventListener("orientationchange", scheduleAlignment);
+			window.visualViewport?.removeEventListener("resize", scheduleAlignment);
+			window.visualViewport?.removeEventListener("scroll", scheduleAlignment);
+		};
+
+		void host;
+	}
+
+	private async mountMobileHeaderCenter(): Promise<void> {
+		const host = this.resolveMobileHeaderHost();
+		if (!host) return;
+		if (!Platform.isMobile || this.mobileHeaderCenterComponent) return;
+
+		try {
+			const { mount } = await import("svelte");
+			const { default: Component } = await import(
+				"../components/navigation/WeaveMobileHeaderCenter.svelte"
+			);
+
+			host.empty();
+			this.mobileHeaderCenterComponent = mount(Component, {
+				target: host,
+			});
+			this.scheduleMobileHeaderCenterAlignment();
+		} catch (error) {
+			logger.error("[WeaveView] 挂载移动端原生顶栏圆点失败:", error);
+		}
 	}
 
 	onPaneMenu(menu: Menu, source: string): void {
@@ -180,8 +529,8 @@ export class WeaveView extends ItemView {
 		if (!Platform.isMobile) return;
 
 		if (this.currentPage === "ai-assistant") {
-			menu.addSeparator();
 			if (this.aiSelectionState.hasCards) {
+				menu.addSeparator();
 				menu.addItem((item) => {
 					const shouldDeselect = this.aiSelectionState.isAllSelected;
 					item
@@ -196,42 +545,6 @@ export class WeaveView extends ItemView {
 						});
 				});
 			}
-			menu.addItem((item) => {
-				item
-					.setTitle("历史记录")
-					.setIcon("history")
-					.onClick(() => {
-						window.dispatchEvent(
-							new CustomEvent("Weave:ai-toolbar-action", {
-								detail: { action: "history" },
-							})
-						);
-					});
-			});
-			menu.addItem((item) => {
-				item
-					.setTitle("选择模型")
-					.setIcon("cpu")
-					.onClick(() => {
-						window.dispatchEvent(
-							new CustomEvent("Weave:ai-toolbar-action", {
-								detail: { action: "provider" },
-							})
-						);
-					});
-			});
-			menu.addItem((item) => {
-				item
-					.setTitle("AI制卡配置")
-					.setIcon("settings")
-					.onClick(() => {
-						window.dispatchEvent(
-							new CustomEvent("Weave:ai-toolbar-action", {
-								detail: { action: "config" },
-							})
-						);
-					});
-			});
 		}
 
 		menu.addSeparator();
@@ -392,6 +705,35 @@ export class WeaveView extends ItemView {
 			this.layoutChangeRef = null;
 		}
 
+		if (this.mobileHeaderCenterComponent) {
+			try {
+				const { unmount } = await import("svelte");
+				void unmount(this.mobileHeaderCenterComponent);
+				this.mobileHeaderCenterComponent = null;
+			} catch (error) {
+				logger.error("[WeaveView] 移动端顶栏圆点组件销毁失败:", error);
+			}
+		}
+
+		if (this.mobileHeaderCenterAlignmentCleanup) {
+			this.mobileHeaderCenterAlignmentCleanup();
+			this.mobileHeaderCenterAlignmentCleanup = null;
+		}
+		if (this.mobileHeaderCenterAlignmentRaf !== 0) {
+			window.cancelAnimationFrame(this.mobileHeaderCenterAlignmentRaf);
+			this.mobileHeaderCenterAlignmentRaf = 0;
+		}
+
+		if (this.mobileHeaderCenterHost?.parentNode) {
+			this.mobileHeaderCenterHost.parentNode.removeChild(this.mobileHeaderCenterHost);
+		}
+		this.mobileHeaderCenterHost = null;
+		delete this.containerEl.dataset.weaveMobileNativeHeader;
+		this.mainMenuAction = null;
+		this.aiFileAction = null;
+		this.aiPromptAction = null;
+		this.aiGenerateAction = null;
+
 		//  安全销毁组件
 		if (this.component) {
 			try {
@@ -416,6 +758,24 @@ export class WeaveView extends ItemView {
 				this.aiSelectionStateHandler as EventListener
 			);
 			this.aiSelectionStateHandler = null;
+		}
+		if (this.cardViewChangeHandler) {
+			window.removeEventListener("Weave:card-view-change", this.cardViewChangeHandler as EventListener);
+			this.cardViewChangeHandler = null;
+		}
+		if (this.cardDataSourceChangeHandler) {
+			window.removeEventListener(
+				"Weave:card-data-source-change",
+				this.cardDataSourceChangeHandler as EventListener
+			);
+			this.cardDataSourceChangeHandler = null;
+		}
+		if (this.cardToolbarStateHandler) {
+			window.removeEventListener(
+				"Weave:card-management-toolbar-state",
+				this.cardToolbarStateHandler as EventListener
+			);
+			this.cardToolbarStateHandler = null;
 		}
 	}
 }

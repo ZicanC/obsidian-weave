@@ -7,7 +7,7 @@
   import { logger } from '../../utils/logger';
   import { EpubLinkService } from '../../services/epub/EpubLinkService';
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import type { WeavePlugin } from '../../main';
   import type { Card } from '../../data/types';
   import { CardType } from '../../data/types';
@@ -77,11 +77,11 @@
   let inlineCardEditorInstance: any = $state();
 
   //  使用预加载的数据（无需异步加载，数据已准备就绪）
-  let decks = $state<any[]>(preloadedDecks);
-  let templates = $state<any[]>(preloadedTemplates);
+  let decks = $state<any[]>(untrack(() => preloadedDecks));
+  let templates = $state<any[]>(untrack(() => preloadedTemplates));
   
   // 当前选择的牌组
-  let selectedDeckId = $state(card.deckId);
+  let selectedDeckId = $state(untrack(() => card.deckId));
   let selectedDeckNames = $state<string[]>([]);
   //  模板ID固定为official-qa（题型由MD格式自动识别，无需用户选择）
   let selectedTemplateId = $state('official-qa');
@@ -671,4 +671,3 @@
     background: var(--background-modifier-active-hover);
   }
 </style>
-

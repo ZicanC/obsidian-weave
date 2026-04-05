@@ -19,7 +19,7 @@
   import OptimizationResultModal from '../../modals/OptimizationResultModal.svelte';
   
   // Svelte mount
-  import { mount } from 'svelte';
+  import { mount, untrack } from 'svelte';
   
   // 真实优化服务
   import { PersonalizationManager } from '../../../algorithms/optimization/PersonalizationManager';
@@ -32,7 +32,7 @@
 
   let { plugin, showSiblingDispersionAfterBasic = false }: Props = $props();
   // 直接引用 plugin.settings，避免 $state 代理导致修改无法同步回 plugin.settings
-  let settings = plugin.settings;
+  let settings = untrack(() => plugin.settings);
   
   // 响应式历史记录引用，用于触发UI更新
   let optimizationHistory = $state(settings.fsrsParams.optimizationHistory || []);

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import type { WeavePlugin } from "../main";
   import type { WeaveDataStorage } from "../data/storage";
   import type { FSRS } from "../algorithms/fsrs";
@@ -54,14 +54,19 @@
   let themeSurfaceCleanup: (() => void) | null = null;
   let mobileViewportCleanup: (() => void) | null = null;
   let nativeTooltipCleanup: (() => void) | null = null;
+
+  function createNavigationVisibilitySnapshot() {
+    return {
+      deckStudy: true,
+      cardManagement: true,
+      incrementalReading: true,
+      aiAssistant: true,
+      ...(plugin.settings.navigationVisibility ?? {})
+    };
+  }
   
   // 导航可见性本地响应式状态
-  let navigationVisibility = $state(plugin.settings.navigationVisibility || {
-    deckStudy: true,
-    cardManagement: true,
-    incrementalReading: true,
-    aiAssistant: true
-  });
+  let navigationVisibility = $state(untrack(() => createNavigationVisibilitySnapshot()));
 
   // 插件配置模态窗状态
   let showPluginConfigModal = $state<string | null>(null);
@@ -446,9 +451,29 @@
     min-height: 0;
   }
 
-  :global(body.is-mobile) :global(.workspace-leaf-content[data-type="weave-view"] .view-header-title-container),
-  :global(body.is-phone) :global(.workspace-leaf-content[data-type="weave-view"] .view-header-title-container) {
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title-container),
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title-parent),
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title-wrapper),
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title),
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-breadcrumb),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title-container),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title-parent),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title-wrapper),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-title),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-header-breadcrumb) {
     display: none !important;
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+  }
+
+  :global(body.is-mobile .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-content),
+  :global(body.is-phone .workspace-leaf-content[data-type="weave-view"][data-weave-mobile-native-header="true"] .view-content) {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
   }
 
   /* 🗑️ 功能移除提示样式 */

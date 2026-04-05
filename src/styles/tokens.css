@@ -66,11 +66,20 @@
   --weave-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
 
   /* Z-index */
-  --weave-z-dropdown: 1000;
+  --weave-z-float: 100;
+  --weave-z-sticky: 200;
+  --weave-z-overlay: 1000;
   --weave-z-modal-backdrop: 1040;
   --weave-z-modal: 1050;
+  --weave-z-menu: 1200;
+  --weave-z-dropdown: 1600;
+  --weave-z-popup: 2000;
   --weave-z-popover: 1060;
   --weave-z-tooltip: 1070;
+  --weave-z-toast: 3000;
+  --weave-z-loading: 9999;
+  --weave-z-top: 10000;
+  --weave-z-max: 999999;
 
   /* Breakpoints */
   --breakpoint-mobile: 768px;

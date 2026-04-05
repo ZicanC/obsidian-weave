@@ -75,6 +75,7 @@
   // 处理菜单按钮点击
   function handleMenuClick(event: MouseEvent) {
     event.preventDefault();
+    event.stopPropagation();
     onMenu(event);
   }
 
@@ -160,6 +161,8 @@
 
 <style>
   .question-bank-grid-card {
+    width: 100%;
+    min-width: 0;
     height: 220px;
     border-radius: 12px;
     overflow: hidden;
@@ -168,6 +171,7 @@
     cursor: pointer;
     display: flex;
     flex-direction: column;
+    touch-action: manipulation;
   }
 
   .question-bank-grid-card.empty {
@@ -230,6 +234,7 @@
     backdrop-filter: blur(8px);
     transition: all 0.2s;
     opacity: 0;
+    touch-action: manipulation;
   }
 
   .question-bank-grid-card:hover .menu-btn {
@@ -263,6 +268,11 @@
     z-index: 1;
     text-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
     word-break: break-word;
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   /* 空题库标记 */
@@ -312,6 +322,8 @@
     display: flex;
     align-items: center;
     gap: 12px;
+    row-gap: 4px;
+    flex-wrap: wrap;
     flex: 1;
     justify-content: center;
   }
@@ -365,6 +377,82 @@
 
     .stat-label {
       font-size: 10px;
+    }
+  }
+
+  @container deck-card (max-width: 360px) {
+    .question-bank-grid-card {
+      height: 188px;
+      border-radius: 10px;
+    }
+
+    .card-main {
+      padding: 22px 16px;
+    }
+
+    .bank-title {
+      font-size: 20px;
+    }
+
+    .card-info-bar {
+      height: auto;
+      min-height: 46px;
+      padding: 8px 14px;
+    }
+
+    .info-center {
+      gap: 8px 12px;
+    }
+
+    .stat-number {
+      font-size: 14px;
+    }
+
+    .stat-label {
+      font-size: 11px;
+    }
+
+    .menu-btn {
+      opacity: 1;
+    }
+  }
+
+  @container deck-card (max-width: 280px) {
+    .question-bank-grid-card {
+      height: 170px;
+      border-radius: 10px;
+    }
+
+    .card-main {
+      padding: 16px 12px;
+    }
+
+    .bank-title {
+      font-size: 18px;
+    }
+
+    .card-info-bar {
+      min-height: 42px;
+      padding: 6px 10px;
+    }
+
+    .info-center {
+      gap: 6px 10px;
+    }
+
+    .stat-number {
+      font-size: 13px;
+    }
+
+    .stat-label {
+      font-size: 10px;
+    }
+
+    .menu-btn {
+      top: 8px;
+      right: 8px;
+      width: 28px;
+      height: 28px;
     }
   }
 </style>

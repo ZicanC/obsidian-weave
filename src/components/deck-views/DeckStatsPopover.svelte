@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { tr } from '../../utils/i18n';
 
   interface Props {
@@ -31,7 +31,7 @@
   let t = $derived($tr);
 
   let popoverElement: HTMLDivElement;
-  let adjustedPosition = $state({ x: position.x, y: position.y });
+  let adjustedPosition = $state(untrack(() => ({ x: position.x, y: position.y })));
 
   // 计算已掌握卡片数
   const masteredCards = $derived(totalCards - (newCards + learningCards + reviewCards));
@@ -386,4 +386,3 @@
     }
   }
 </style>
-

@@ -81,6 +81,7 @@
   let deckSelectorOpen = $state(false); // 下拉菜单是否打开
   
   // 时间范围展开状态：'quick' | 'custom' | null（互斥显示）
+  let filterPanelOpen = $state(false);
   let expandedRange = $state<'quick' | 'custom' | null>('quick');
   let deckCardsMap = $state<Map<string, Card[]>>(new Map()); // 牌组ID -> 卡片列表
   let showGlobalLoad = $state(false); // 是否显示全局负荷（所有卡片）
@@ -250,6 +251,14 @@
     const diffTime = endDate.getTime() - startDate.getTime();
     const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
     return diffDays;
+  });
+
+  const rangeSummaryText = $derived.by(() => {
+    const quickMatch = quickRangeOptions.find((option) => option.value === currentQuickRange);
+    if (quickMatch) return quickMatch.label;
+    const start = `${startDate.getMonth() + 1}/${startDate.getDate()}`;
+    const end = `${endDate.getMonth() + 1}/${endDate.getDate()}`;
+    return `${start}-${end}`;
   });
 
   // 🎨 获取当前主题颜色
@@ -535,24 +544,7 @@
           return html;
         }
       },
-      legend: {
-        data: ['预测保持率', '实际保持率', '风险阈值'],
-        bottom: 20,
-        textStyle: {
-          color: colors.textColor,
-          fontSize: 13
-        },
-        itemGap: 20,
-        icon: 'roundRect',
-        itemWidth: 14,
-        itemHeight: 14
-      },
-      grid: {
-        left: isMobile ? 30 : 45,
-        right: isMobile ? 10 : 40,
-        top: isMobile ? 25 : 40,
-        bottom: isMobile ? 60 : 80
-      },
+      grid: createRetentionChartGrid(isMobile, false),
       xAxis: {
         type: 'category',
         data: data.map(d => d.date),
@@ -655,7 +647,6 @@
       ]
     };
 
-    applyRetentionChartLayout(option, colors, isMobile);
     retentionChart.setOption(option);
 
     // 点击事件
@@ -1083,7 +1074,7 @@
         }
       },
       grid: {
-        left: isMobile ? 30 : 45,
+        left: isMobile ? 20 : 32,
         right: isMobile ? 10 : 40,
         top: isMobile ? 25 : 40,
         bottom: isMobile ? 60 : 80,
@@ -1564,7 +1555,7 @@
         top: isMobile ? 25 : 40,
         right: isMobile ? 8 : 20,
         bottom: isMobile ? 40 : 60,
-        left: isMobile ? 25 : 40,
+        left: isMobile ? 16 : 28,
         containLabel: true
       },
       xAxis: {
@@ -1771,7 +1762,17 @@
 
   // 切换时间范围展开状态
   function toggleRangePanel(panel: 'quick' | 'custom') {
-    expandedRange = expandedRange === panel ? null : panel;
+    expandedRange = panel;
+  }
+
+  function toggleRangeEditor() {
+    if (filterPanelOpen) {
+      filterPanelOpen = false;
+      return;
+    }
+    const quickMatch = quickRangeOptions.some((option) => option.value === currentQuickRange);
+    filterPanelOpen = true;
+    expandedRange = quickMatch ? 'quick' : 'custom';
   }
 
   // 处理自定义日期变化
@@ -2053,11 +2054,7 @@
           onclick={(e) => { e.preventDefault(); switchTab('retention'); }}
           title="记忆率曲线图"
         >
-          {#if isMobile}
-            <ObsidianIcon name="trending-up" size={18} />
-          {:else}
-            记忆率曲线图
-          {/if}
+          {isMobile ? '记忆率' : '记忆率曲线图'}
         </button>
         <button 
           type="button"
@@ -2066,11 +2063,7 @@
           onclick={(e) => { e.preventDefault(); switchTab('quantity'); }}
           title="卡片数量变化双轴图"
         >
-          {#if isMobile}
-            <ObsidianIcon name="bar-chart-2" size={18} />
-          {:else}
-            卡片数量变化双轴图
-          {/if}
+          {isMobile ? '数量变化' : '卡片数量变化双轴图'}
         </button>
         <button 
           type="button"
@@ -2079,11 +2072,7 @@
           onclick={(e) => { e.preventDefault(); switchTab('timing'); }}
           title="复习时机分析图"
         >
-          {#if isMobile}
-            <ObsidianIcon name="clock" size={18} />
-          {:else}
-            复习时机分析图
-          {/if}
+          {isMobile ? '复习时机' : '复习时机分析图'}
         </button>
         <button 
           type="button"
@@ -2092,11 +2081,7 @@
           onclick={(e) => { e.preventDefault(); switchTab('difficulty'); }}
           title="难度-标签矩阵图"
         >
-          {#if isMobile}
-            <ObsidianIcon name="grid" size={18} />
-          {:else}
-            难度-标签矩阵图
-          {/if}
+          {isMobile ? '难度矩阵' : '难度-标签矩阵图'}
         </button>
         <button 
           type="button"
@@ -2105,104 +2090,111 @@
           onclick={(e) => { e.preventDefault(); switchTab('loadForecast'); }}
           title="负荷预测"
         >
-          {#if isMobile}
-            <ObsidianIcon name="activity" size={18} />
-          {:else}
-            负荷预测
-          {/if}
+          负荷预测
         </button>
       </div>
       
     </div>
     
-    <!-- 时间范围选择器 - 可折叠互斥显示 -->
+    <!-- 时间范围选择器 - 摘要条 + 范围面板 -->
     <div class="toolbar" class:mobile={isMobile}>
-      <div class="range-toggle-buttons">
+      <div class="filter-summary-row">
         {#if allDecks.length > 1}
           <button 
-            class="range-toggle-btn deck-select-btn"
+            class="summary-btn"
             onclick={(e) => showDeckMenu(e)}
           >
-            <ObsidianIcon name="folder" size={14} />
-            <span>{selectedDeckIds.size}/{allDecks.length}</span>
+            <span class="summary-label">牌组</span>
+            <span class="summary-value">{selectedDeckIds.size}/{allDecks.length}</span>
             <ObsidianIcon name="chevron-down" size={12} />
           </button>
         {/if}
         <button 
-          class="range-toggle-btn"
-          class:active={expandedRange === 'quick'}
-          onclick={() => toggleRangePanel('quick')}
+          class="summary-btn"
+          onclick={() => toggleRangeEditor()}
         >
-          <ObsidianIcon name="zap" size={14} />
-          <span>快捷范围</span>
-          <ObsidianIcon name={expandedRange === 'quick' ? 'chevron-up' : 'chevron-down'} size={12} />
-        </button>
-        <button 
-          class="range-toggle-btn"
-          class:active={expandedRange === 'custom'}
-          onclick={() => toggleRangePanel('custom')}
-        >
-          <ObsidianIcon name="calendar-range" size={14} />
-          <span>自定义范围</span>
-          <ObsidianIcon name={expandedRange === 'custom' ? 'chevron-up' : 'chevron-down'} size={12} />
+          <span class="summary-label">范围</span>
+          <span class="summary-value">{rangeSummaryText}</span>
+          <ObsidianIcon name={filterPanelOpen ? 'chevron-up' : 'chevron-down'} size={12} />
         </button>
         {#if activeTab === 'loadForecast'}
           <button 
-            class="range-toggle-btn"
+            class="summary-btn"
             onclick={(e) => showDataSourceMenu(e)}
           >
-            <ObsidianIcon name={showGlobalLoad ? 'globe' : 'layers'} size={14} />
-            <span>{showGlobalLoad ? '全局' : '牌组'}</span>
+            <span class="summary-label">数据源</span>
+            <span class="summary-value">{showGlobalLoad ? '全局' : '牌组'}</span>
             <ObsidianIcon name="chevron-down" size={12} />
           </button>
         {/if}
       </div>
-      
-      {#if expandedRange === 'quick'}
-        <div class="range-panel">
-          <div class="quick-range-buttons">
-            {#each quickRangeOptions as option}
-              <button 
-                class="time-range-btn"
-                class:active={currentQuickRange === option.value}
-                onclick={() => handleQuickRangeChange(option.value)}
-              >
-                {isMobile ? option.mobileLabel : option.label}
-              </button>
-            {/each}
+
+      {#if filterPanelOpen}
+        <div class="filter-panel">
+          <div class="range-toggle-buttons">
+            <button 
+              class="range-toggle-btn"
+              class:active={expandedRange === 'quick'}
+              onclick={() => toggleRangePanel('quick')}
+            >
+              <span>快捷范围</span>
+            </button>
+            <button 
+              class="range-toggle-btn"
+              class:active={expandedRange === 'custom'}
+              onclick={() => toggleRangePanel('custom')}
+            >
+              <span>自定义范围</span>
+            </button>
           </div>
-        </div>
-      {/if}
-      
-      {#if expandedRange === 'custom'}
-        <div class="range-panel">
-          <div class="date-inputs">
-            <input 
-              type="date" 
-              class="date-input"
-              value={formatDateForInput(startDate)}
-              max={formatDateForInput(endDate)}
-              onchange={(e) => {
-                startDate = new Date(e.currentTarget.value);
-                handleDateChange();
-              }}
-            />
-            <span class="date-separator">至</span>
-            <input 
-              type="date" 
-              class="date-input"
-              value={formatDateForInput(endDate)}
-              min={formatDateForInput(startDate)}
-              max={formatDateForInput(today)}
-              onchange={(e) => {
-                endDate = new Date(e.currentTarget.value);
-                handleDateChange();
-              }}
-            />
-            {#if !isMobile}
-              <span class="days-indicator">（{selectedDays}天）</span>
-            {/if}
-          </div>
+          
+          {#if expandedRange === 'quick'}
+            <div class="range-panel">
+              <div class="quick-range-buttons">
+                {#each quickRangeOptions as option}
+                  <button 
+                    class="time-range-btn"
+                    class:active={currentQuickRange === option.value}
+                    onclick={() => handleQuickRangeChange(option.value)}
+                  >
+                    {isMobile ? option.mobileLabel : option.label}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+          
+          {#if expandedRange === 'custom'}
+            <div class="range-panel">
+              <div class="date-inputs">
+                <input 
+                  type="date" 
+                  class="date-input"
+                  value={formatDateForInput(startDate)}
+                  max={formatDateForInput(endDate)}
+                  onchange={(e) => {
+                    startDate = new Date(e.currentTarget.value);
+                    handleDateChange();
+                  }}
+                />
+                <span class="date-separator">至</span>
+                <input 
+                  type="date" 
+                  class="date-input"
+                  value={formatDateForInput(endDate)}
+                  min={formatDateForInput(startDate)}
+                  max={formatDateForInput(today)}
+                  onchange={(e) => {
+                    endDate = new Date(e.currentTarget.value);
+                    handleDateChange();
+                  }}
+                />
+                {#if !isMobile}
+                  <span class="days-indicator">（{selectedDays}天）</span>
+                {/if}
+              </div>
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
@@ -2225,21 +2217,43 @@
     
     <!-- 图表容器 - 使用CSS控制显示隐藏，避免DOM销毁 -->
     {#if hasCards}
-      <div class="chart-container" 
-           class:hidden={activeTab !== 'retention'}
-           bind:this={retentionChartRef}></div>
-      <div class="chart-container" 
-           class:hidden={activeTab !== 'quantity'}
-           bind:this={quantityChartRef}></div>
-      <div class="chart-container" 
-           class:hidden={activeTab !== 'timing'}
-           bind:this={timingChartRef}></div>
-      <div class="chart-container" 
-           class:hidden={activeTab !== 'difficulty'}
-           bind:this={difficultyChartRef}></div>
-      <div class="chart-container" 
-           class:hidden={activeTab !== 'loadForecast'}
-           bind:this={loadForecastChartRef}></div>
+      <div class="chart-section">
+        <div class="chart-container" 
+             class:hidden={activeTab !== 'retention'}
+             bind:this={retentionChartRef}></div>
+        <div class="chart-container" 
+             class:hidden={activeTab !== 'quantity'}
+             bind:this={quantityChartRef}></div>
+        <div class="chart-container" 
+             class:hidden={activeTab !== 'timing'}
+             bind:this={timingChartRef}></div>
+        <div class="chart-container" 
+             class:hidden={activeTab !== 'difficulty'}
+             bind:this={difficultyChartRef}></div>
+        <div class="chart-container" 
+             class:hidden={activeTab !== 'loadForecast'}
+             bind:this={loadForecastChartRef}></div>
+
+        {#if activeTab === 'retention' && selectedDeckIds.size <= 1}
+          <div class="retention-indicator-panel">
+            <div class="retention-indicator-item">
+              <span class="indicator-line indicator-line--predicted"></span>
+              <span class="indicator-title">预测保持率</span>
+              <span class="indicator-desc">模型估算趋势</span>
+            </div>
+            <div class="retention-indicator-item">
+              <span class="indicator-line indicator-line--actual"></span>
+              <span class="indicator-title">实际保持率</span>
+              <span class="indicator-desc">复习记录结果</span>
+            </div>
+            <div class="retention-indicator-item">
+              <span class="indicator-line indicator-line--risk"></span>
+              <span class="indicator-title">风险阈值</span>
+              <span class="indicator-desc">低于 80% 提示</span>
+            </div>
+          </div>
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -2254,8 +2268,8 @@
       var(--background-primary) 72%,
       var(--background-secondary) 100%
     );
-    padding: 18px;
-    gap: 8px;
+    padding: 12px;
+    gap: 6px;
   }
   
   /* 标签页头部（导航 + 牌组选择器） */
@@ -2264,30 +2278,37 @@
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
   }
   
   /* 标签页导航 */
   .tabs-nav {
     display: flex;
-    background: var(--background-secondary);
-    border-radius: 10px;
-    padding: 4px;
+    background: var(--background-primary);
+    border-radius: 8px;
+    padding: 2px;
     gap: 4px;
-    border: 1px solid var(--background-modifier-border);
     max-width: 100%;
     overflow-x: auto;
-    scrollbar-width: thin;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .tabs-nav::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
   }
   
   .tab-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 7px 14px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: transparent;
+    justify-content: center;
+    padding: 7px 12px;
+    border: none;
+    border-radius: 6px;
+    background: var(--background-primary);
     color: var(--text-muted);
     font-size: 12.5px;
     font-weight: 500;
@@ -2299,27 +2320,76 @@
   
   .tab-btn:hover {
     color: var(--text-normal);
-    background: var(--background-modifier-hover);
-    border-color: var(--background-modifier-border);
+    background: var(--background-primary);
   }
   
   .tab-btn.active {
     background: var(--background-primary);
-    color: var(--text-normal);
-    border-color: var(--background-modifier-border);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.12);
+    color: var(--interactive-accent);
+    font-weight: 600;
   }
 
   .toolbar {
     display: flex;
     flex-direction: column;
-    gap: 12px;
-    margin-bottom: 6px;
-    padding: 14px 16px;
-    background: var(--background-secondary);
+    gap: 10px;
+    margin-bottom: 4px;
+    padding: 12px 14px;
+    background: var(--background-primary);
     border-radius: 12px;
-    border: 1px solid var(--background-modifier-border);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .filter-summary-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .summary-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 6px 10px;
+    max-width: 100%;
+    border: none;
+    border-radius: 8px;
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.16s ease;
+  }
+
+  .summary-btn:hover {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
+  }
+
+  .summary-label {
+    color: var(--text-faint);
+    font-size: 11px;
+  }
+
+  .summary-value {
+    color: var(--text-normal);
+    font-size: 12px;
+    font-weight: 600;
+    max-width: 128px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .filter-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--background-modifier-border);
+    animation: rangePanelIn 0.16s ease;
   }
 
   .range-toggle-buttons {
@@ -2332,35 +2402,42 @@
     display: flex;
     align-items: center;
     gap: 6px;
+    justify-content: center;
     padding: 7px 11px;
     min-height: 34px;
     font-size: 12.5px;
     font-weight: 500;
     background: var(--background-primary);
     color: var(--text-muted);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
+    border: none;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.16s ease;
   }
 
   .range-toggle-btn:hover {
-    background: var(--background-modifier-hover);
+    background: var(--background-primary);
     color: var(--text-normal);
-    border-color: var(--background-modifier-border-hover, var(--background-modifier-border));
-    transform: translateY(-1px);
   }
 
   .range-toggle-btn.active {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent, white);
-    border-color: var(--interactive-accent);
-    box-shadow: 0 4px 12px rgba(var(--interactive-accent-rgb), 0.22);
+    background: var(--background-primary);
+    color: var(--interactive-accent);
+    font-weight: 600;
   }
 
   .range-panel {
-    padding-top: 4px;
-    animation: rangePanelIn 0.16s ease;
+    padding-top: 2px;
+  }
+
+  .chart-section {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    margin-top: 2px;
+    padding-top: 8px;
+    border-top: 1px solid var(--background-modifier-border);
   }
 
   @keyframes rangePanelIn {
@@ -2422,8 +2499,8 @@
     font-weight: 500;
     background: var(--background-primary);
     color: var(--text-muted);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 8px;
+    border: none;
+    border-radius: 6px;
     cursor: pointer;
     transition: all 0.16s ease;
     min-width: 56px;
@@ -2431,35 +2508,32 @@
   }
 
   .time-range-btn:hover {
-    background: var(--background-modifier-hover);
+    background: var(--background-primary);
     color: var(--text-normal);
-    border-color: var(--interactive-accent);
   }
 
   .time-range-btn.active {
-    background: var(--interactive-accent);
-    color: var(--text-on-accent);
-    border-color: var(--interactive-accent);
-    box-shadow: 0 4px 10px rgba(var(--interactive-accent-rgb), 0.24);
+    background: var(--background-primary);
+    color: var(--interactive-accent);
+    font-weight: 600;
   }
 
   .time-range-btn.active:hover {
-    background: var(--interactive-accent-hover);
-    border-color: var(--interactive-accent-hover);
+    background: var(--background-primary);
   }
 
   .chart-container {
     flex: 1;
     width: 100%;
     min-height: 500px;
-    border-radius: 14px;
+    border-radius: 10px;
     background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    padding: 10px 8px;
+    border: none;
+    padding: 4px 0;
     cursor: default;
     user-select: none;
     position: relative;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.14);
+    box-shadow: none;
   }
   
   .chart-container:active {
@@ -2468,6 +2542,60 @@
   
   .chart-container.hidden {
     display: none;
+  }
+
+  .retention-indicator-panel {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: nowrap;
+    gap: 8px;
+    margin-top: 8px;
+    padding: 8px;
+    border-radius: 10px;
+    background: var(--background-secondary);
+  }
+
+  .retention-indicator-item {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--background-primary);
+  }
+
+  .indicator-line {
+    width: 22px;
+    height: 0;
+    border-top: 2px solid transparent;
+  }
+
+  .indicator-line--predicted {
+    border-top-color: #667eea;
+  }
+
+  .indicator-line--actual {
+    border-top-color: #4facfe;
+  }
+
+  .indicator-line--risk {
+    border-top-color: #f5576c;
+    border-top-style: dashed;
+  }
+
+  .indicator-title {
+    font-size: 12px;
+    color: var(--text-normal);
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .indicator-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.2;
   }
   
   /* 滚轮提示样式 */
@@ -2555,23 +2683,45 @@
   
   .tabs-header.mobile .tabs-nav {
     width: 100%;
-    justify-content: space-around;
+    justify-content: flex-start;
     gap: 4px;
   }
   
   .tabs-header.mobile .tab-btn {
-    padding: 8px 11px;
-    min-width: 40px;
+    padding: 8px 10px;
+    min-width: max-content;
     display: flex;
     align-items: center;
     justify-content: center;
+    font-size: 12px;
   }
   
   /* 移动端工具栏 */
   .toolbar.mobile {
     padding: 10px;
   }
-  
+
+  .toolbar.mobile .filter-summary-row {
+    gap: 6px;
+  }
+
+  .toolbar.mobile .summary-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: space-between;
+    padding: 6px 8px;
+  }
+
+  .toolbar.mobile .summary-value {
+    max-width: 92px;
+    font-size: 11.5px;
+  }
+
+  .toolbar.mobile .filter-panel {
+    gap: 8px;
+    padding-top: 6px;
+  }
+
   .toolbar.mobile .quick-range-buttons {
     width: 100%;
     display: flex;
@@ -2614,24 +2764,44 @@
     font-size: 13px;
     padding-left: 2px;
   }
-  
+
   /* 移动端图表容器 */
   @media (max-width: 768px) {
     .deck-analytics-modal {
-      padding: 8px;
+      padding: 4px;
     }
     
     .chart-container {
       min-height: 320px;
+      padding: 2px 0;
     }
     
     .toolbar {
       padding: 10px;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
     }
 
     .range-toggle-buttons {
       flex-wrap: wrap;
+    }
+
+    .retention-indicator-panel {
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 6px;
+      margin-top: 6px;
+    }
+
+    .retention-indicator-item {
+      min-width: calc(50% - 3px);
+    }
+
+    .indicator-title {
+      font-size: 11.5px;
+    }
+
+    .indicator-desc {
+      font-size: 10.5px;
     }
   }
 </style>

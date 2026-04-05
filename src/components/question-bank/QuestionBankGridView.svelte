@@ -35,9 +35,6 @@ import { logger } from '../../utils/logger';
     (plugin.settings.deckCardStyle as DeckCardStyle) || 'default'
   );
 
-  // 🆕 检测是否在侧边栏（容器宽度较窄）
-  let containerRef: HTMLElement | null = $state(null);
-  let isCompactMode = $state(false);
 
   // 状态管理
   let questionBankTree = $state<DeckTreeNode[]>([]);
@@ -262,18 +259,6 @@ import { logger } from '../../utils/logger';
   onMount(() => {
     loadQuestionBankTree();
     
-    // 🆕 检测容器宽度，决定是否使用紧凑模式
-    if (containerRef) {
-      const resizeObserver = new ResizeObserver((entries) => {
-        for (const entry of entries) {
-          isCompactMode = entry.contentRect.width < 500;
-        }
-      });
-      resizeObserver.observe(containerRef);
-      isCompactMode = containerRef.clientWidth < 500;
-      
-      return () => resizeObserver.disconnect();
-    }
   });
 
   onDestroy(() => {
@@ -418,7 +403,7 @@ import { logger } from '../../utils/logger';
 
 </script>
 
-<div class="question-bank-grid-view" bind:this={containerRef}>
+<div class="question-bank-grid-view">
   {#if isLoading}
     <!-- 加载动画 -->
     <div class="loading-container">
@@ -437,13 +422,13 @@ import { logger } from '../../utils/logger';
         {@const colorScheme = getColorSchemeForDeck(bank.id)}
         {@const colorVariant = ((index % 4) + 1) as 1 | 2 | 3 | 4}
         
-        {#if deckCardStyle === 'chinese-elegant'}
+        <div class="deck-card-shell">
+          {#if deckCardStyle === 'chinese-elegant'}
           <!-- 典雅风格卡片 -->
           <QuestionBankElegantCard
             {bank}
             {stats}
             {colorVariant}
-            compact={isCompactMode}
             onTest={() => handleStartTest(bank.id)}
             onMenu={(e) => showBankMenu(e, bank.id)}
           />
@@ -456,7 +441,8 @@ import { logger } from '../../utils/logger';
             onTest={() => handleStartTest(bank.id)}
             onMenu={(e) => showBankMenu(e, bank.id)}
           />
-        {/if}
+          {/if}
+        </div>
       {/each}
     </div>
   {:else}
@@ -479,6 +465,8 @@ import { logger } from '../../utils/logger';
 
 <style>
   .question-bank-grid-view {
+    --weave-deck-card-min-width: 320px;
+    --weave-deck-grid-gap: 20px;
     flex: 1;
     min-height: 0;
     display: flex;
@@ -486,6 +474,8 @@ import { logger } from '../../utils/logger';
     padding: 0;
     overflow-y: auto;
     background: var(--background-primary);
+    container-type: inline-size;
+    container-name: question-bank-grid;
   }
 
   /* 加载容器 */
@@ -498,9 +488,16 @@ import { logger } from '../../utils/logger';
 
   .cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-    gap: 24px;
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--weave-deck-card-min-width)), 1fr));
+    gap: var(--weave-deck-grid-gap);
     padding: 8px 0;
+    container-type: inline-size;
+  }
+
+  .deck-card-shell {
+    min-width: 0;
+    container-type: inline-size;
+    container-name: deck-card;
   }
 
   /* 模式占位符样式 */
@@ -528,10 +525,21 @@ import { logger } from '../../utils/logger';
   }
 
   /* 响应式 */
-  @media (max-width: 768px) {
+  @container question-bank-grid (max-width: 1100px) {
+    .question-bank-grid-view {
+      --weave-deck-card-min-width: 280px;
+      --weave-deck-grid-gap: 18px;
+    }
+  }
+
+  @container question-bank-grid (max-width: 760px) {
+    .question-bank-grid-view {
+      --weave-deck-card-min-width: 100%;
+      --weave-deck-grid-gap: 12px;
+    }
+
     .cards-grid {
-      grid-template-columns: 1fr;
-      gap: 16px;
+      padding: 4px 0;
     }
 
     .mode-placeholder {
@@ -544,17 +552,13 @@ import { logger } from '../../utils/logger';
     }
   }
 
-  @media (min-width: 769px) and (max-width: 1200px) {
-    .cards-grid {
-      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-      gap: 20px;
+  @container question-bank-grid (max-width: 420px) {
+    .question-bank-grid-view {
+      --weave-deck-grid-gap: 8px;
     }
-  }
 
-  @media (min-width: 1201px) {
     .cards-grid {
-      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
-      gap: 24px;
+      padding: 2px 0;
     }
   }
 

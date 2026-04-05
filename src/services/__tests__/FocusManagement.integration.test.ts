@@ -12,7 +12,6 @@ import { FocusStack } from '../../utils/focus-manager/FocusStack';
 import { FocusTrapManager } from '../../utils/focus-manager/FocusTrapManager';
 import { RequestCoalescer } from '../../utils/focus-manager/RequestCoalescer';
 import { KeyboardMonitor } from '../../utils/focus-manager/KeyboardMonitor';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 describe('FocusManagement Integration Tests', () => {
   let container: HTMLElement;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { logger } from '../../utils/logger';
 
   import type { FilterConfig, FilterGroup, FilterCondition, SavedFilter } from "../../types/filter-types";
@@ -29,9 +30,8 @@
     onClose 
   }: Props = $props();
 
-  // 筛选配置状态
-  let filterConfig = $state<FilterConfig>(
-    initialConfig || {
+  function createDefaultFilterConfig(): FilterConfig {
+    return {
       groups: [{
         id: `group-${Date.now()}`,
         logic: 'AND',
@@ -44,8 +44,25 @@
         }]
       }],
       globalLogic: 'AND'
+    };
+  }
+
+  function cloneFilterConfig(config?: FilterConfig): FilterConfig {
+    if (!config) {
+      return createDefaultFilterConfig();
     }
-  );
+
+    return {
+      ...config,
+      groups: config.groups.map((group) => ({
+        ...group,
+        conditions: group.conditions.map((condition) => ({ ...condition }))
+      }))
+    };
+  }
+
+  // 筛选配置状态
+  let filterConfig = $state<FilterConfig>(untrack(() => cloneFilterConfig(initialConfig)));
 
   // 筛选结果统计
   let filteredCount = $state(0);
@@ -171,20 +188,7 @@
 
   // 清除筛选
   function handleClear() {
-    filterConfig = {
-      groups: [{
-        id: `group-${Date.now()}`,
-        logic: 'AND',
-        conditions: [{
-          id: `cond-${Date.now()}`,
-          field: 'status',
-          operator: 'equals',
-          value: 'new',
-          enabled: true
-        }]
-      }],
-      globalLogic: 'AND'
-    };
+    filterConfig = createDefaultFilterConfig();
   }
 
   // 获取启用条件数量
@@ -666,4 +670,3 @@
     }
   }
 </style>
-

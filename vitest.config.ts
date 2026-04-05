@@ -10,14 +10,15 @@ export default defineConfig({
         compatibility: {
           componentApi: 4
         }
-      },
-      hot: false
+      }
     }),
     svelteTesting()
   ],
   test: {
     environment: 'jsdom',
     globals: true,
+    clearMocks: true,
+    restoreMocks: true,
     setupFiles: ['./src/tests/setup.ts', './src/tests/vitest-setup.ts'],
     include: ['src/**/*.{test,spec}.{js,ts}'],
     exclude: ['node_modules', 'dist'],

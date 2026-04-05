@@ -257,6 +257,50 @@
 
   function openPluginMenu(event: MouseEvent) {
     const menu = new Menu();
+
+    if (currentPage === 'ai-assistant') {
+      menu.addItem((item) => {
+        item
+          .setTitle('历史记录')
+          .setIcon('history')
+          .onClick(() => {
+            window.dispatchEvent(
+              new CustomEvent('Weave:ai-toolbar-action', {
+                detail: { action: 'history' }
+              })
+            );
+          });
+      });
+
+      menu.addItem((item) => {
+        item
+          .setTitle('选择模型')
+          .setIcon('cpu')
+          .onClick(() => {
+            window.dispatchEvent(
+              new CustomEvent('Weave:ai-toolbar-action', {
+                detail: { action: 'provider' }
+              })
+            );
+          });
+      });
+
+      menu.addItem((item) => {
+        item
+          .setTitle('AI制卡配置')
+          .setIcon('settings')
+          .onClick(() => {
+            window.dispatchEvent(
+              new CustomEvent('Weave:ai-toolbar-action', {
+                detail: { action: 'config' }
+              })
+            );
+          });
+      });
+
+      menu.addSeparator();
+    }
+
     addWeaveNavigationItems(menu, currentPage, (pageId: WeavePageId) => {
       onNavigate?.(pageId);
     });

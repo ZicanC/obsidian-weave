@@ -401,6 +401,29 @@
       void handleMemoryDeckMenuAction(detail.action, detail.deckId);
     };
     window.addEventListener('Weave:request-memory-deck-action', handleExternalDeckMenuAction as EventListener);
+
+    const handleMainInterfaceMenuRequest = (e: Event) => {
+      const detail = (e as CustomEvent<{
+        page?: string;
+        event?: MouseEvent;
+        source?: string;
+      }>).detail;
+
+      if (detail?.page !== 'deck-study') {
+        return;
+      }
+
+      if (!(detail.event instanceof MouseEvent)) {
+        return;
+      }
+
+      e.preventDefault();
+      void showMobileNavMenuWithObsidianAPI(detail.event);
+    };
+    window.addEventListener(
+      'Weave:request-main-interface-menu',
+      handleMainInterfaceMenuRequest as EventListener
+    );
     
 // 初始化时通知父组件当前筛选状态
     window.dispatchEvent(new CustomEvent('Weave:deck-filter-change', { detail: selectedFilter }));
@@ -415,6 +438,10 @@
       window.removeEventListener('show-view-menu', handleShowViewMenu as EventListener);
       window.removeEventListener('Weave:sidebar-filter-select', handleSidebarFilterSelect as EventListener);
       window.removeEventListener('Weave:request-memory-deck-action', handleExternalDeckMenuAction as EventListener);
+      window.removeEventListener(
+        'Weave:request-main-interface-menu',
+        handleMainInterfaceMenuRequest as EventListener
+      );
     };
   });
 
@@ -521,8 +548,7 @@
     menu.showAtMouseEvent(event);
   }
 
-
-  // 数据刷新
+// 数据刷新
   async function refreshData(showLoading = false) {
     if (showLoading) {
       isLoading = true;

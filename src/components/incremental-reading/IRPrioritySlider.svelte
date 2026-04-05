@@ -8,7 +8,7 @@
   - 与侧边功能栏风格统一
 -->
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, untrack } from 'svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
 
   interface Props {
@@ -29,7 +29,7 @@
     onPreview
   }: Props = $props();
 
-  let localValue = $state(value);
+  let localValue = $state(untrack(() => value));
   let isDragging = $state(false);
 
   // 同步外部值

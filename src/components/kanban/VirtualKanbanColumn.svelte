@@ -7,7 +7,7 @@
    * 实现列内虚拟滚动，支持动态高度测量和拖拽功能
    */
   import { createVirtualizer } from '@tanstack/svelte-virtual';
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   
   import type { Card } from '../../data/types';
   import type { KanbanVirtualizationConfig } from '../../types/virtualization-types';
@@ -60,7 +60,7 @@
   let selectedCards = $state(new Set<string>());
   
   // 初始化高度缓存
-  heightCache = new HeightCacheService(columnConfig.overscan * 50); // 动态缓存大小
+  heightCache = untrack(() => new HeightCacheService(columnConfig.overscan * 50)); // 动态缓存大小
   
   // 创建虚拟化器
   //  使用 $state：因为 virtualizer 变量会被重新赋值（null -> object -> null）

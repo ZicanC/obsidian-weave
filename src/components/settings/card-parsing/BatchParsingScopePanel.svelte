@@ -128,6 +128,9 @@
 
   // 控制文件夹选择器展开状态
   let showIncludeFolderSelector = $state(false);
+  const triggerDebounceInputId = 'batch-parsing-trigger-debounce';
+  const defaultPriorityInputId = 'batch-parsing-default-priority';
+  const maxFilesPerBatchInputId = 'batch-parsing-max-files-per-batch';
   let showExcludeFolderSelector = $state(false);
 </script>
 
@@ -178,8 +181,9 @@
 
   {#if settings.batchParsing.autoTrigger}
     <div class="form-group subsection">
-      <label>防抖延迟（毫秒）</label>
+      <label for={triggerDebounceInputId}>防抖延迟（毫秒）</label>
       <input
+        id={triggerDebounceInputId}
         type="number"
         bind:value={settings.batchParsing.triggerDebounce}
         min="500"
@@ -218,7 +222,7 @@
   
   <!-- 默认牌组选择 -->
   <div class="form-group">
-    <label>默认牌组</label>
+    <div class="field-label">默认牌组</div>
     <div class="hint">
       批量解析创建的卡片将默认添加到此牌组。如果不指定，将使用第一个可用牌组。
     </div>
@@ -238,11 +242,12 @@
   
   <!-- 默认优先级 -->
   <div class="form-group">
-    <label>默认优先级</label>
+    <label for={defaultPriorityInputId}>默认优先级</label>
     <div class="hint">
       批量解析创建的卡片的默认优先级（0-10，0为最低）
     </div>
     <input
+      id={defaultPriorityInputId}
       type="number"
       bind:value={settings.batchParsing.defaultPriority}
       min="0"
@@ -257,7 +262,7 @@
 
   <!-- 包含文件夹 -->
   <div class="form-group">
-    <label>包含的文件夹</label>
+    <div class="field-label">包含的文件夹</div>
     <div class="hint">
       指定需要扫描的文件夹。留空则扫描整个库（除排除列表外）。
     </div>
@@ -316,7 +321,7 @@
 
   <!-- 排除文件夹 -->
   <div class="form-group">
-    <label>排除的文件夹</label>
+    <div class="field-label">排除的文件夹</div>
     <div class="hint">
       指定需要排除的文件夹（不会被扫描）
     </div>
@@ -375,8 +380,9 @@
 
   <!-- 批量处理限制 -->
   <div class="form-group">
-    <label>单次批量处理最大文件数</label>
+    <label for={maxFilesPerBatchInputId}>单次批量处理最大文件数</label>
     <input
+      id={maxFilesPerBatchInputId}
       type="number"
       bind:value={settings.batchParsing.maxFilesPerBatch}
       min="1"
@@ -562,7 +568,8 @@
     transform: translateX(18px);
   }
 
-  label {
+  label,
+  .field-label {
     display: block;
     font-weight: 500;
     margin-bottom: 0.5rem;

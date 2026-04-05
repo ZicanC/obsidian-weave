@@ -2726,14 +2726,26 @@
       <ObsidianIcon name="bar-chart-2" size={16} />
     </button>
     <div class="month-nav">
-      <button class="nav-btn" type="button" onclick={prevMonth} aria-label="上个月">
+      <button
+        class="calendar-tool-btn clickable-icon nav-btn"
+        type="button"
+        onclick={prevMonth}
+        aria-label="上个月"
+        title="上个月"
+      >
         <ObsidianIcon name="chevron-left" size={14} />
       </button>
       <span class="month-label">{monthLabel}</span>
-      <button class="nav-btn" type="button" onclick={nextMonth} aria-label="下个月">
+      <button
+        class="calendar-tool-btn clickable-icon nav-btn"
+        type="button"
+        onclick={nextMonth}
+        aria-label="下个月"
+        title="下个月"
+      >
         <ObsidianIcon name="chevron-right" size={14} />
       </button>
-      <button class="today-btn" type="button" onclick={goToToday}>今天</button>
+      <button class="today-btn clickable-icon" type="button" onclick={goToToday} title="跳转到今天">今天</button>
     </div>
     <button
       class="calendar-tool-btn clickable-icon"
@@ -3055,10 +3067,14 @@
     --weave-ir-sidebar-elevated-background: var(--weave-surface-background, var(--background-primary));
     display: flex;
     flex-direction: column;
+    width: 100%;
+    max-width: 100%;
     height: 100%;
     min-height: 0;
     padding: 12px;
     background: var(--weave-ir-sidebar-surface-background);
+    box-sizing: border-box;
+    container-type: inline-size;
     overflow: hidden;
   }
 
@@ -3068,6 +3084,7 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 12px;
+    min-width: 0;
   }
 
   .calendar-tool-btn {
@@ -3103,52 +3120,47 @@
     gap: 6px;
     flex: 1;
     justify-content: center;
-  }
-
-  .nav-btn {
-    width: 24px;
-    height: 24px;
-    padding: 0;
-    border: none;
-    background: var(--background-modifier-hover);
-    border-radius: 4px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--text-muted);
-  }
-
-  .nav-btn:hover {
-    background: var(--background-modifier-active-hover);
-    color: var(--text-normal);
+    min-width: 0;
   }
 
   .month-label {
+    min-width: 0;
     text-align: center;
     font-size: 13px;
     font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .today-btn {
-    height: 24px;
-    padding: 0 8px;
-    font-size: 11px;
-    line-height: 1;
+    width: auto;
+    min-width: 0;
+    height: var(--clickable-icon-size, 32px);
+    padding: 0 10px;
     border: none;
-    background: var(--background-modifier-hover);
+    background: transparent;
+    box-shadow: none;
     color: var(--text-muted);
-    border-radius: 4px;
+    border-radius: var(--clickable-icon-radius, 4px);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
     display: flex;
     align-items: center;
     justify-content: center;
+    white-space: nowrap;
   }
 
   .today-btn:hover {
-    background: var(--background-modifier-active-hover);
     color: var(--text-normal);
+  }
+
+  .today-btn:focus-visible {
+    outline: 2px solid var(--background-modifier-border-focus, rgba(var(--interactive-accent-rgb), 0.22));
+    outline-offset: 1px;
   }
 
   /* 月历网格 */
@@ -3157,16 +3169,21 @@
     border-radius: 8px;
     padding: 8px;
     margin-bottom: 8px;
+    min-width: 0;
+    overflow: clip;
+    box-sizing: border-box;
   }
 
   .weekdays {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 2px;
     margin-bottom: 4px;
+    min-width: 0;
   }
 
   .weekday {
+    min-width: 0;
     text-align: center;
     font-size: 10px;
     font-weight: 500;
@@ -3180,13 +3197,15 @@
 
   .calendar-grid {
     display: grid;
-    grid-template-columns: repeat(7, 1fr);
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     gap: 2px;
+    min-width: 0;
   }
 
   .day-cell {
     width: 100%;
     aspect-ratio: 1;
+    min-width: 0;
     padding: 0;
     border: none;
     background: transparent;
@@ -3252,6 +3271,90 @@
     gap: 0;
     background: transparent;
     padding: 0;
+    min-width: 0;
+  }
+
+  @container (max-width: 340px) {
+    .ir-calendar-sidebar {
+      padding: 8px;
+    }
+
+    .calendar-header {
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+
+    .calendar-tool-btn {
+      width: 28px;
+      height: 28px;
+    }
+
+    .month-nav {
+      gap: 4px;
+    }
+
+    .month-label {
+      font-size: 12px;
+    }
+
+    .today-btn {
+      height: 28px;
+      padding: 0 6px;
+      font-size: 10px;
+    }
+
+    .calendar-grid-container {
+      padding: 6px;
+      margin-bottom: 6px;
+      border-radius: 6px;
+    }
+
+    .weekday {
+      font-size: 9px;
+      padding: 1px 0;
+    }
+
+    .day-number {
+      font-size: 10px;
+    }
+
+    .heat-dot {
+      width: 5px;
+      height: 5px;
+    }
+  }
+
+  @container (max-width: 280px) {
+    .ir-calendar-sidebar {
+      padding: 6px;
+    }
+
+    .calendar-header {
+      gap: 4px;
+    }
+
+    .calendar-tool-btn {
+      width: 26px;
+      height: 26px;
+    }
+
+    .month-nav {
+      gap: 3px;
+    }
+
+    .month-label {
+      font-size: 11px;
+    }
+
+    .today-btn {
+      height: 26px;
+      padding: 0 5px;
+      font-size: 9px;
+    }
+
+    .calendar-grid-container {
+      padding: 4px;
+    }
   }
 
   .footer-timer-bar {

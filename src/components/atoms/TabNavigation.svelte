@@ -150,6 +150,7 @@
   class:weave-tabs-animated={animated}
   role="tablist"
   aria-orientation={orientation}
+  tabindex="-1"
   bind:this={tabsEl}
   ontouchstart={handleTouchStart}
   ontouchmove={handleTouchMove}
