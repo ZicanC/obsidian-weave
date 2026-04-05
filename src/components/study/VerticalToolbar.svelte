@@ -30,7 +30,6 @@
   import { SourceNavigationService } from '../../services/ui/SourceNavigationService';
   // 导入 AI 助手菜单构建器
   import { AIAssistantMenuBuilder } from '../../services/menu/AIAssistantMenuBuilder';
-  // 已移除 AnkiConnect 支持
 
   interface Props {
     card: Card;
@@ -84,10 +83,6 @@
     onTimerAutoPauseChange?: (seconds: number) => void;
     hintMaxUses?: number;
     onHintMaxUsesChange?: (value: number) => void;
-    //  卡片关联 - 功能已移除，保留接口定义以便将来作为第三方插件实现
-    // onOpenRelationPanel?: () => void;
-    // onOpenRelationGraph?: () => void;
-    // relationCount?: number;
     onPanelOpen?: () => void;
   }
 
@@ -145,10 +140,6 @@
     onGraphLeafChange,
     //  高级功能控制
     isPremium = false,
-    //  卡片关联 - 功能已移除
-    // onOpenRelationPanel,
-    // onOpenRelationGraph,
-    // relationCount = 0,
     timerAutoPauseSeconds = 60,
     onTimerAutoPauseChange,
     hintMaxUses = 5,
@@ -270,10 +261,6 @@
   // 牌组切换功能
   let showDeckMenu = $state(false);
   let deckButtonElement: HTMLElement | null = $state(null);
-  
-  //  关联菜单功能 - 已移除
-  // let showRelationMenu = $state(false);
-  // let relationButtonElement: HTMLElement | null = $state(null);
 
   // 来源菜单功能 - 已合并到多功能信息键
   // let showSourceMenu = $state(false);
@@ -499,25 +486,6 @@
     showDeckMenu = next;
   }
   
-  //  关联功能已移除 - 以下函数已注释
-  // function toggleRelationMenu() {
-  //   showRelationMenu = !showRelationMenu;
-  // }
-  // 
-  // function handleOpenObsidianGraph() {
-  //   if (onGraphLinkToggle) {
-  //     onGraphLinkToggle(true);
-  //   }
-  //   showRelationMenu = false;
-  // }
-  // 
-  // function handleOpenRelationPanel() {
-  //   if (onOpenRelationPanel) {
-  //     onOpenRelationPanel();
-  //   }
-  //   showRelationMenu = false;
-  // }
-
   function handleChangeDeck(deckId: string) {
     if (onChangeDeck) {
       onChangeDeck(deckId);
@@ -1374,9 +1342,6 @@
       <span class="btn-label">{t('toolbar.graphLink')}</span>
     </button>
     
-    <!--  卡片关联菜单 - 功能已移除，将来可作为第三方插件实现 -->
-    
-
     <!-- 牌组切换 -->
     <div class="deck-switcher-container">
       <button
@@ -4307,8 +4272,6 @@ D. 顺序学习算法
     border-color: var(--interactive-accent);
   }
   
-  /*  卡片关联按钮样式 - 功能已移除 */
-
   /* ==================== 三层分离架构 ==================== */
   
   /*  移除 !important：覆盖FloatingMenu的max-width限制使用更具体的选择器 */

@@ -86,12 +86,6 @@ export class StudyView extends ItemView {
 	private mobileMenuCallback: (() => void) | null = null;
 	private toggleStatsCallback: (() => void) | null = null;
 	private toggleProficiencyStatsCallback: (() => void) | null = null; // 学习进度统计栏回调
-	private undoCallback: (() => void) | null = null;
-	private undoShowAnswerCallback: (() => void) | null = null;
-
-	//  移动端按钮状态
-	private undoEnabled = false;
-	private showAnswerState = false;
 
 	//  移动端牌组统计（用于顶部栏显示）
 	private deckStatsText = "";
@@ -204,22 +198,6 @@ export class StudyView extends ItemView {
 	public setToggleProficiencyStatsCallback(callback: () => void): void {
 		this.toggleProficiencyStatsCallback = callback;
 		logger.debug("[StudyView] 展开/折叠学习进度统计栏回调已设置");
-	}
-
-	/**
-	 *  设置撤销回调（由 Svelte 组件调用）
-	 */
-	public setUndoCallback(callback: () => void): void {
-		this.undoCallback = callback;
-		logger.debug("[StudyView] 撤销回调已设置");
-	}
-
-	/**
-	 *  设置返回预览回调（由 Svelte 组件调用）
-	 */
-	public setUndoShowAnswerCallback(callback: () => void): void {
-		this.undoShowAnswerCallback = callback;
-		logger.debug("[StudyView] 返回预览回调已设置");
 	}
 
 	/**
@@ -451,46 +429,6 @@ export class StudyView extends ItemView {
 		}
 	}
 
-	/**
-	 * 更新撤销按钮状态（由 Svelte 组件调用）
-	 */
-	public updateUndoState(enabled: boolean): void {
-		this.undoEnabled = enabled;
-	}
-
-	/**
-	 *  更新显示答案状态（由 Svelte 组件调用）
-	 */
-	public updateShowAnswerState(showAnswer: boolean): void {
-		this.showAnswerState = showAnswer;
-		// 重新添加移动端按钮以更新显示状态
-		if (Platform.isMobile) {
-			this.refreshMobileActions();
-		}
-	}
-
-	/**
-	 *  刷新移动端功能按钮
-	 */
-	private refreshMobileActions(): void {
-		// 清除现有的 actions
-		// 注意：Obsidian API 没有直接清除 actions 的方法
-		// 我们需要在 addMobileActions 中处理状态变化
-	}
-
-	/**
-	 *  添加移动端顶部栏功能按钮
-	 * 按钮顺序（从左到右）：撤销 | 返回预览 | 展开/折叠信息栏 | 菜单
-	 * 注意：返回按钮已移除，用户可使用 Obsidian 原生的标签页关闭功能
-	 */
-	private addMobileActions(): void {
-		// 仅在移动端添加
-		if (!Platform.isMobile) return;
-
-		// 默认添加学习模式按钮
-		this.addStudyModeActions();
-	}
-
 	getViewType(): string {
 		return VIEW_TYPE_STUDY;
 	}
@@ -713,7 +651,7 @@ export class StudyView extends ItemView {
 		}
 
 		//  添加移动端功能按钮到 Obsidian 原生顶部栏
-		this.addMobileActions();
+		this.updateMobileActions();
 
 		//  性能优化：显示加载占位符，异步加载组件
 		this.showLoadingState();
@@ -956,12 +894,6 @@ export class StudyView extends ItemView {
 					queueState: options?.queueState,
 					onClose: () => {
 						this.close();
-					},
-					onPause: () => {
-						this.handlePause();
-					},
-					onResume: () => {
-						this.handleResume();
 					},
 				},
 			});

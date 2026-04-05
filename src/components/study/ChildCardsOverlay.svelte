@@ -6,8 +6,8 @@
 
   interface Props {
     childCards: Card[];
-    regeneratingCardIds?: Set<string>; // 🆕 正在重新生成的卡片ID集合
-    isRegenerating?: boolean; // 🆕 是否正在重新生成
+    regeneratingCardIds?: Set<string>; // 正在重新生成的卡片 ID 集合
+    isRegenerating?: boolean; // 是否正在重新生成
   }
 
   let { childCards, regeneratingCardIds = new Set(), isRegenerating = false }: Props = $props();
@@ -64,7 +64,7 @@
     left: 0;
     right: 0;
     
-    height: 400px; /* 🔧 增加高度以显示更多内容 */
+    height: 400px; /* 增加高度以显示更多内容 */
     
     /* 完全透明背景 */
     background: transparent;

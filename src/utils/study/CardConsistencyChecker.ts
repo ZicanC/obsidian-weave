@@ -77,7 +77,7 @@ export class CardConsistencyChecker {
 
 		// 3. 检测挖空状态
 		const clozeCount = this.getClozeCount(card.content || "");
-		// ✅ V2架构：检查是否为渐进式挖空父卡片
+		// V2 架构：检查是否为渐进式挖空父卡片
 		const hasProgressiveCloze = card.type === CardType.ProgressiveParent;
 		const recordedClozeCount = hasProgressiveCloze
 			? (card as any).progressiveCloze?.totalClozes

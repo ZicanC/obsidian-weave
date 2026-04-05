@@ -174,8 +174,6 @@
     { rating: 3 as Rating, label: t('studyInterface.ratings.good'), color: "#10b981", key: "3" },
     { rating: 4 as Rating, label: t('studyInterface.ratings.easy'), color: "#3b82f6", key: "4" },
   ]);
-
-  // 已移除未使用的模式/建议函数，保持组件精简
 </script>
 
 <div class="rating-section">
@@ -356,9 +354,6 @@
 
   /* 评分建议 */
 /* styles aligned to current design */
-
-  /* 已移除 keyboard-hints 未使用样式 */
-
   /* 无需特殊的浅色模式适配，使用CSS变量自动适配 */
 
   /* 桌面端不进行布局重排，评分按钮始终4列 */

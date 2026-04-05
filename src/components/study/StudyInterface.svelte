@@ -2144,23 +2144,6 @@
         logger.debug('[StudyInterface] 📱 展开/折叠学习进度统计栏回调已设置到 StudyView');
       }
       
-      //  设置撤销回调
-      if (viewInstance && typeof viewInstance.setUndoCallback === 'function') {
-        viewInstance.setUndoCallback(() => {
-          if (undoCount > 0) {
-            handleUndoReview();
-          }
-        });
-        logger.debug('[StudyInterface] 📱 撤销回调已设置到 StudyView');
-      }
-      
-      //  设置返回预览回调
-      if (viewInstance && typeof viewInstance.setUndoShowAnswerCallback === 'function') {
-        viewInstance.setUndoShowAnswerCallback(() => {
-          undoShowAnswer();
-        });
-        logger.debug('[StudyInterface] 📱 返回预览回调已设置到 StudyView');
-      }
     } catch (error) {
       logger.error('Failed to initialize editor manager:', error);
     }
@@ -2320,19 +2303,6 @@
   function updateUndoCount() {
     undoCount = reviewUndoManager.getUndoCount();
   }
-  
-  //  同步 undoCount 和 showAnswer 状态到 StudyView（用于移动端顶部栏按钮）
-  $effect(() => {
-    if (viewInstance && typeof viewInstance.updateUndoState === 'function') {
-      viewInstance.updateUndoState(undoCount > 0);
-    }
-  });
-  
-  $effect(() => {
-    if (viewInstance && typeof viewInstance.updateShowAnswerState === 'function') {
-      viewInstance.updateShowAnswerState(showAnswer);
-    }
-  });
   
   //  同步编辑模式状态到 StudyView（用于移动端顶部栏按钮切换）
   $effect(() => {

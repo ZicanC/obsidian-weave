@@ -48,7 +48,7 @@ export class StudyQueueGenerator {
 
 		for (const card of cards) {
 			try {
-				// ✅ 使用CardInstanceProvider过滤
+				// 使用 CardInstanceProvider 过滤
 				const instances = this.provider.getTodaysInstances(card, { onlyDue });
 
 				if (instances.length === 0) {
@@ -59,7 +59,7 @@ export class StudyQueueGenerator {
 					continue;
 				}
 
-				// ✅ 添加到队列（都是真实Card对象）
+				// 添加到队列（都是真实 Card 对象）
 				queue.push(instances[0]);
 
 				// 统计
@@ -79,7 +79,7 @@ export class StudyQueueGenerator {
       - 普通卡片: ${normalCardCount}
       - 子卡片: ${childCardCount}
       - 队列总数: ${queue.length}
-      ✅ 所有实例都是真实Card对象`);
+      所有实例都是真实 Card 对象`);
 
 		return queue;
 	}
@@ -101,7 +101,7 @@ export class StudyQueueGenerator {
 		}
 	): StudyInstance[] {
 		return queue.filter((_card) => {
-			// ✅ V2：所有instance都是Card对象
+			// V2：所有 instance 都是 Card 对象
 
 			// 类型过滤
 			if (filters.excludeProgressiveCloze && isProgressiveClozeChild(_card)) {
@@ -161,7 +161,7 @@ export class StudyQueueGenerator {
 	sortByPriority(queue: StudyInstance[]): StudyInstance[] {
 		return [...queue].sort((a, b) => {
 			try {
-				// ✅ V2：所有instance都有fsrs属性
+				// V2：所有 instance 都有 fsrs 属性
 				const aFsrs = a.fsrs;
 				const bFsrs = b.fsrs;
 
