@@ -1,12 +1,12 @@
 <script lang="ts">
   /**
    * 牌组模式筛选器
-   * 题库功能改为模式切换
+   * 当前主牌组页使用三种模式切换
    * - memory: 记忆牌组（FSRS学习）
-   * - reading: 增量阅读（未实现，预留）
+   * - incremental-reading: 增量阅读
    * - question-bank: 题库牌组（考试测试）
    * 
-   * 兼容旧版：
+   * `DeckFilter` 仍保留旧值类型，便于读取历史状态：
    * - parent: 父卡片牌组（已废弃，映射到memory）
    * - child: 子卡片牌组（已废弃，映射到memory）
    * - all: 全部牌组（已废弃，映射到memory）
@@ -117,7 +117,7 @@
 
 <style>
   /* ==================== 统一样式（桌面端和移动端相同） ==================== */
-  /*  v0.10.1 - 移除移动端特殊样式，使用统一的 16px 圆点 */
+  /* 移除移动端特殊样式，使用统一的圆点尺寸 */
   .category-filter {
     display: flex;
     align-items: center;
@@ -129,7 +129,7 @@
 
   .category-dot {
     position: relative;
-    width: 20px; /* 🔧 从 16px 调整为 20px，移动端更易识别 */
+    width: 20px; /* 使用 20px 尺寸，移动端更易识别 */
     height: 20px;
     border-radius: 50%;
     border: none;

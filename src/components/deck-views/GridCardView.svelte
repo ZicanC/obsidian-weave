@@ -42,6 +42,16 @@
     onDissolveDeck?: (deckId: string) => void;
   }
 
+  type GridActiveFilter = 'memory' | 'question-bank' | 'incremental-reading';
+
+  function normalizeGridFilter(filter: DeckFilter | undefined): GridActiveFilter {
+    if (filter === 'question-bank' || filter === 'incremental-reading') {
+      return filter;
+    }
+
+    return 'memory';
+  }
+
   let {
     deckTree,
     deckStats,
@@ -90,29 +100,25 @@
     (plugin.settings.deckCardStyle as DeckCardStyle) || 'default'
   );
 
-  let internalFilter = $state<DeckFilter>((() => {
+  let internalFilter = $state<GridActiveFilter>((() => {
     try {
-      const saved = vaultStorage.getItem('weave-deck-mode-filter') as DeckFilter;
-      if (saved && ['memory', 'reading', 'question-bank', 'incremental-reading'].includes(saved)) {
-        return saved;
-      }
-      if (saved && ['parent', 'child', 'all'].includes(saved)) {
-        return 'memory' as DeckFilter;
-      }
+      return normalizeGridFilter(vaultStorage.getItem('weave-deck-mode-filter') as DeckFilter | undefined);
     } catch {}
-    return 'memory' as DeckFilter;
+    return 'memory';
   })());
   
-  const currentFilter = $derived(externalFilter ?? internalFilter);
+  const currentFilter = $derived(normalizeGridFilter(externalFilter ?? internalFilter));
 
   function handleFilterSelect(filter: DeckFilter) {
+    const normalizedFilter = normalizeGridFilter(filter);
+
     if (externalOnFilterSelect) {
       externalOnFilterSelect(filter);
     } else {
-      internalFilter = filter;
-      vaultStorage.setItem('weave-deck-mode-filter', filter);
+      internalFilter = normalizedFilter;
+      vaultStorage.setItem('weave-deck-mode-filter', normalizedFilter);
     }
-    logger.debug('[GridCardView] 鍒囨崲妯″紡绛涢€夊櫒:', filter);
+    logger.debug('[GridCardView] 切换模式筛选器:', normalizedFilter);
   }
 
   // 鎵佸钩鍖栫墝缁勬爲锛堜繚鎸佸眰绾х粨鏋勶級
@@ -130,24 +136,7 @@
   const allDecks = $derived(flattenDeckTree(deckTree));
 
 // 鏍规嵁妯″紡绛涢€夌墝缁勶紙涓?DeckStudyPage 淇濇寔涓€鑷达級
-  const filteredDecks = $derived(() => {
-// 涓夋ā寮忕瓫閫?    // memory: 鏄剧ず鎵€鏈夎蹇嗙墝缁勶紙鐜版湁鐗岀粍绯荤粺锛?    // reading: 澧為噺闃呰锛堝崰浣嶏級
-    // question-bank: 棰樺簱鐗岀粍锛堢敱 QuestionBankListView 缁勪欢澶勭悊锛?    
-    if (currentFilter === 'memory') {
-      return allDecks;
-    } else if (currentFilter === 'reading') {
-      // 澧為噺闃呰妯″紡: 杩斿洖绌烘暟缁勶紙鏄剧ず鍗犱綅绗︼級
-      return [];
-    } else if (currentFilter === 'question-bank') {
-      return [];
-    }
-    
-    if (['parent', 'child', 'all'].includes(currentFilter)) {
-      return allDecks;
-    }
-    
-      return allDecks;
-  });
+  const filteredDecks = $derived(currentFilter === 'memory' ? allDecks : []);
 
   // 鏄剧ず鐗岀粍鑿滃崟锛堝畬鏁寸増锛屼笌DeckStudyPage淇濇寔涓€鑷达級
   function showDeckMenu(event: MouseEvent, deckId: string) {
@@ -236,9 +225,9 @@
 <!-- 鏍规嵁妯″紡鏄剧ず涓嶅悓鍐呭 -->
   {#if currentFilter === 'memory'}
     <!-- 璁板繂鐗岀粍妯″紡 -->
-    {#if filteredDecks().length > 0}
+    {#if filteredDecks.length > 0}
       <div class="cards-grid">
-        {#each filteredDecks() as deck, index (deck.id)}
+        {#each filteredDecks as deck, index (deck.id)}
           {@const stats = deckStats[deck.id] || {
             newCards: 0,
             learningCards: 0,
@@ -284,13 +273,6 @@
         <p class="placeholder-desc">{t('decks.grid.emptyHint')}</p>
       </div>
     {/if}
-  {:else if currentFilter === 'reading'}
-    <!-- Compatibility note: 澧為噺鎽樺綍妯″紡宸插純鐢紝鏄剧ず鎻愮ず淇℃伅 -->
-    <div class="extract-list-wrapper deprecated-notice">
-      <div class="placeholder-icon">--</div>
-      <h2 class="placeholder-title">{t('decks.grid.readingTitle')}</h2>
-      <p class="placeholder-desc">{t('decks.grid.readingDesc')}</p>
-    </div>
   {:else if currentFilter === 'question-bank'}
     <!-- 棰樺簱鐗岀粍妯″紡 - 缃戞牸瑙嗗浘 -->
     <QuestionBankGridView {plugin} />
@@ -414,14 +396,6 @@
     .cards-grid {
       padding: 2px 0;
     }
-  }
-
-  /* 鎽樺綍鍒楄〃瑙嗗浘鍖呰鍣?- 纭繚鎸夐挳闃村奖鏈夎冻澶熺┖闂?*/
-  .extract-list-wrapper {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    padding-top: 8px;  /* 涓烘寜閽笂鏂归槾褰遍鐣欓澶栫┖闂?*/
   }
 
   /*  Obsidian 绉诲姩绔壒瀹氭牱寮?- 鍐呭鍖鸿创杈?*/
