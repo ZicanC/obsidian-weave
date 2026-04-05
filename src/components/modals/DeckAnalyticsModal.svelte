@@ -5,7 +5,7 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, untrack } from 'svelte';
   import { Platform, Menu } from 'obsidian';
   import type { WeavePlugin } from '../../main';
   import type { Card, Deck } from '../../data/types';
@@ -35,6 +35,8 @@
     CanvasRenderer
   ]);
 
+  type AnalyticsTab = 'retention' | 'quantity' | 'timing' | 'difficulty' | 'loadForecast';
+
   interface Props {
     /** 插件实例 */
     plugin: WeavePlugin;
@@ -46,7 +48,7 @@
     cards?: Card[];
     
     /** 初始标签页 */
-    initialTab?: 'retention' | 'quantity' | 'timing' | 'difficulty' | 'loadForecast';
+    initialTab?: AnalyticsTab;
   }
 
   let {
@@ -56,8 +58,8 @@
     initialTab = 'retention'
   }: Props = $props();
 
-  // 标签页状态 - 使用初始标签页
-  let activeTab = $state<'retention' | 'quantity' | 'timing' | 'difficulty' | 'loadForecast'>(initialTab);
+  // 标签页状态：弹窗打开时读取一次初始标签页，后续由组件内切换维护
+  let activeTab = $state<AnalyticsTab>(untrack(() => initialTab));
   
   // 图表容器引用
   let retentionChartRef: HTMLDivElement | null = $state(null);
@@ -1899,7 +1901,7 @@
   }
 
   // 切换标签页
-  function switchTab(tab: 'retention' | 'quantity' | 'timing' | 'difficulty' | 'loadForecast') {
+  function switchTab(tab: AnalyticsTab) {
     activeTab = tab;
     
     // 延迟初始化和调整大小，确保DOM已渲染
