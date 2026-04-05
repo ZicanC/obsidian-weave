@@ -10,7 +10,6 @@
   import type { WeavePlugin } from '../../main';
   import type { Card, Deck } from '../../data/types';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
-  import { LoadBalanceManager } from '../../services/LoadBalanceManager';
   import { LoadStatus } from '../../services/LoadBalanceManager';
   import * as echarts from 'echarts/core';
   import {
@@ -74,13 +73,9 @@
   let loadForecastChart: echarts.ECharts | null = null;
   let themeObserver: MutationObserver | null = null;
   
-  // 📊 负荷管理器实例
-  let loadBalanceManager: LoadBalanceManager | null = null;
-  
-  // 🎯 多牌组选择功能
+  // 多牌组选择
   let allDecks = $state<Deck[]>([]); // 所有可用牌组
   let selectedDeckIds = $state<Set<string>>(new Set()); // 已选中的牌组ID
-  let deckSelectorOpen = $state(false); // 下拉菜单是否打开
   
   // 时间范围展开状态：'quick' | 'custom' | null（互斥显示）
   let filterPanelOpen = $state(false);
@@ -204,13 +199,13 @@
     // timing图表不需要多牌组对比
   }
   
-  // 🔄 时间范围选择状态 - 重新设计为日期范围
+  // 时间范围状态
   const today = new Date();
   const defaultStartDate = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000); // 默认30天前
   
   let startDate = $state(defaultStartDate);
   let endDate = $state(today);
-  let selectedDays = $state(30); // 保持兼容性
+  let selectedDays = $state(30);
   let isUpdating = $state(false);
   let wheelThrottle = false;
   const WHEEL_THROTTLE_MS = 200;
@@ -227,7 +222,7 @@
   // 移动端检测
   const isMobile = Platform.isMobile;
   
-  // 📍 移动端tooltip位置函数 - 偏上显示避免被手指遮挡
+  // 移动端 tooltip 位置函数，偏上显示避免被手指遮挡
   function getMobileTooltipPosition(point: number[], params: any, dom: HTMLElement, rect: any, size: any) {
     if (!isMobile) return null; // 桌面端使用默认位置
     
@@ -263,7 +258,7 @@
     return `${start}-${end}`;
   });
 
-  // 🎨 获取当前主题颜色
+  // 获取当前主题颜色
   function getThemeColors() {
     const isDark = document.body.classList.contains('theme-dark');
     const accentColor = getComputedStyle(document.body).getPropertyValue('--interactive-accent').trim();
@@ -277,7 +272,7 @@
     };
   }
 
-  // 🔧 为单个牌组生成记忆保持率数据（基于日期维度的FSRS预测保持率）
+  // 为单个牌组生成记忆保持率数据（基于日期维度的 FSRS 预测保持率）
   function generateRetentionDataForDeck(deckCards: Card[], days: number): { dates: string[]; retentionData: (number | null)[] } {
     const dates: string[] = [];
     const retentionData: (number | null)[] = [];
@@ -322,7 +317,7 @@
     return { dates, retentionData };
   }
   
-  // � 生成真实记忆保持率数据（基于FSRS）
+  // 生成真实记忆保持率数据（基于 FSRS）
   function generateRetentionData(days: number) {
     const data: Array<{date: string; predicted: number | null; actual: number | null; threshold: number}> = [];
     const today = new Date();
@@ -406,7 +401,7 @@
     const colors = getThemeColors();
     const isMultiDeck = selectedDeckIds.size > 1;
     
-    // 🎯 多牌组对比模式
+    // 多牌组对比模式
     if (isMultiDeck) {
       const selectedDecksArray = Array.from(selectedDeckIds);
       const legendData: string[] = [];
@@ -503,7 +498,7 @@
       return;
     }
     
-    // 📊 单牌组模式（原有逻辑）
+    // 单牌组模式
     const data = generateRetentionData(selectedDays);
 
     const option = {
@@ -673,7 +668,7 @@
     const today = new Date();
     const currentCards = activeCards; // 使用activeCards支持多牌组
     
-    // 📊 如果有真实卡片数据，按状态统计
+    // 如果有真实卡片数据，按状态统计
     if (currentCards && currentCards.length > 0) {
       for (let i = days - 1; i >= 0; i--) {
         const targetDate = new Date(today);
@@ -936,7 +931,7 @@
     const today = new Date();
     const currentCards = activeCards; // 使用activeCards支持多牌组
     
-    // 📊 如果有真实卡片数据，统计复习时机
+    // 如果有真实卡片数据，统计复习时机
     if (currentCards && currentCards.length > 0) {
       for (let i = days - 1; i >= 0; i--) {
         const targetDate = new Date(today);
@@ -1419,7 +1414,7 @@
     });
   }
   
-  // 🔧 基于选中牌组生成负荷预测数据
+  // 基于当前数据源生成负荷预测数据
   function generateLoadForecastData(days: number, useGlobal: boolean = false) {
     // 使用全局数据或选中牌组数据
     const currentCards = useGlobal ? cards : activeCards;
@@ -1477,40 +1472,40 @@
     return forecast;
   }
   
-  // 📊 初始化负荷预测图表
-  async function initLoadForecastChart() {
-    if (!loadForecastChartRef) return;
-
-    // 创建图表实例
-    loadForecastChart = echarts.init(loadForecastChartRef);
-
-    // 🎯 根据showGlobalLoad决定使用全局数据还是选中牌组数据
-    const forecast = generateLoadForecastData(selectedDays, showGlobalLoad);
-    const colors = getThemeColors();
-    
-    let dates: string[];
-    let loads: number[];
-    
-    // 如果没有数据，显示空图表
-    if (forecast.length === 0) {
-      logger.warn('[DeckAnalytics] 负荷预测数据为空');
-      // 生成模拟数据以显示基础图表
-      dates = [];
-      loads = [];
-      for (let i = 0; i < selectedDays; i++) {
-        const date = new Date();
-        date.setDate(date.getDate() + i);
-        dates.push(date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
-        loads.push(0);
-      }
-    } else {
-      // 准备数据
-      dates = forecast.map((f: any) => new Date(f.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
-      loads = forecast.map((f: any) => f.total || 0);
+  function getUpcomingDateLabels(days: number): string[] {
+    const labels: string[] = [];
+    for (let i = 0; i < days; i++) {
+      const date = new Date();
+      date.setDate(date.getDate() + i);
+      labels.push(date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
     }
+    return labels;
+  }
+
+  function getLoadForecastChartSeriesData() {
+    const forecast = generateLoadForecastData(selectedDays, showGlobalLoad);
+
+    if (forecast.length === 0) {
+      return {
+        forecast,
+        dates: getUpcomingDateLabels(selectedDays),
+        loads: Array.from({ length: selectedDays }, () => 0)
+      };
+    }
+
+    return {
+      forecast,
+      dates: forecast.map((item) => new Date(item.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })),
+      loads: forecast.map((item) => item.total || 0)
+    };
+  }
+
+  function createLoadForecastChartOption() {
+    const { forecast, dates, loads } = getLoadForecastChartSeriesData();
+    const colors = getThemeColors();
     const dailyCapacity = plugin.settings.loadBalance?.dailyCapacity || 100;
 
-    const option = {
+    return {
       backgroundColor: 'transparent',
       tooltip: {
         trigger: 'axis',
@@ -1522,13 +1517,12 @@
         formatter: function(params: any) {
           const index = params[0].dataIndex;
           const loadValue = loads[index] || 0;
-          
-          // 如果有预测数据，使用真实数据；否则使用默认值
+
           if (forecast.length > 0 && forecast[index]) {
             const date = forecast[index].date;
             const load = forecast[index];
             const status = getLoadStatusInfo(load.status || LoadStatus.NORMAL);
-            
+
             return `<div style="padding: 8px;">
               <div style="font-weight: 600; margin-bottom: 4px;">${new Date(date).toLocaleDateString('zh-CN', { weekday: 'short', month: 'long', day: 'numeric' })}</div>
               <div style="display: flex; align-items: center; gap: 6px;">
@@ -1538,19 +1532,18 @@
               <div style="color: ${status.color}; margin-top: 4px;">${status.label}</div>
               <div style="color: #999; font-size: 0.9em; margin-top: 4px;">容量：${dailyCapacity} 张/天</div>
             </div>`;
-          } else {
-            // 无数据时的显示
-            const dateStr = dates[index];
-            return `<div style="padding: 8px;">
-              <div style="font-weight: 600; margin-bottom: 4px;">${dateStr}</div>
-              <div style="display: flex; align-items: center; gap: 6px;">
-                <span style="display: inline-block; width: 10px; height: 10px; background: #51cf66; border-radius: 50%;"></span>
-                <span>负荷：${loadValue} 张卡片</span>
-              </div>
-              <div style="color: #51cf66; margin-top: 4px;">负荷低</div>
-              <div style="color: #999; font-size: 0.9em; margin-top: 4px;">容量：${dailyCapacity} 张/天</div>
-            </div>`;
           }
+
+          const dateStr = dates[index];
+          return `<div style="padding: 8px;">
+            <div style="font-weight: 600; margin-bottom: 4px;">${dateStr}</div>
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="display: inline-block; width: 10px; height: 10px; background: #51cf66; border-radius: 50%;"></span>
+              <span>负荷：${loadValue} 张卡片</span>
+            </div>
+            <div style="color: #51cf66; margin-top: 4px;">负荷低</div>
+            <div style="color: #999; font-size: 0.9em; margin-top: 4px;">容量：${dailyCapacity} 张/天</div>
+          </div>`;
         }
       },
       grid: {
@@ -1585,7 +1578,6 @@
                 const status = forecast[params.dataIndex].status || LoadStatus.NORMAL;
                 return getLoadStatusInfo(status).color;
               }
-              // 默认颜色（绿色表示负荷低）
               return '#51cf66';
             }
           },
@@ -1608,76 +1600,28 @@
         }
       ]
     };
-
-    loadForecastChart.setOption(option);
   }
 
-  // 更新负荷预测图表，使用 generateLoadForecastData 而非 loadBalanceManager
-  function updateLoadForecastChart() {
-    if (!loadForecastChart) return;
-    
-    // 使用与initLoadForecastChart相同的数据生成函数
-    const forecast = generateLoadForecastData(selectedDays, showGlobalLoad);
-    const colors = getThemeColors();
-    
-    let dates: string[];
-    let loads: number[];
-    
-    if (forecast.length === 0) {
-      // 生成模拟数据
-      dates = [];
-      loads = [];
-      for (let i = 0; i < selectedDays; i++) {
-        const date = new Date();
-        date.setDate(date.getDate() + i);
-        dates.push(date.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
-        loads.push(0);
-      }
-    } else {
-      dates = forecast.map((f: any) => new Date(f.date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }));
-      loads = forecast.map((f: any) => f.total || 0);
-    }
-    
-    const dailyCapacity = plugin.settings.loadBalance?.dailyCapacity || 100;
+  // 初始化负荷预测图表
+  function initLoadForecastChart() {
+    if (!loadForecastChartRef) return;
 
-    const option = {
-      xAxis: {
-        data: dates
-      },
-      series: [
-        { 
-          data: loads,
-          itemStyle: {
-            color: function(params: any) {
-              if (forecast.length > 0 && forecast[params.dataIndex]) {
-                const status = forecast[params.dataIndex].status || LoadStatus.NORMAL;
-                return getLoadStatusInfo(status).color;
-              }
-              return '#51cf66';
-            }
-          },
-          markLine: {
-            data: [
-              {
-                yAxis: dailyCapacity,
-                label: {
-                  show: true,
-                  formatter: '日容量',
-                  color: colors.textColor
-                },
-                lineStyle: {
-                  color: '#ff6b6b',
-                  type: 'dashed'
-                }
-              }
-            ]
-          }
-        }
-      ]
-    };
-    
+    if (!loadForecastChart) {
+      loadForecastChart = echarts.init(loadForecastChartRef);
+    }
+
+    loadForecastChart.setOption(createLoadForecastChartOption(), true);
+  }
+
+  // 更新负荷预测图表
+  function updateLoadForecastChart() {
+    if (!loadForecastChart) {
+      initLoadForecastChart();
+      return;
+    }
+
     requestAnimationFrame(() => {
-      loadForecastChart?.setOption(option);
+      loadForecastChart?.setOption(createLoadForecastChartOption(), true);
     });
   }
 
@@ -1750,13 +1694,13 @@
       item
         .setTitle('选中牌组')
         .setIcon(!showGlobalLoad ? 'check' : 'layers')
-        .onClick(() => { showGlobalLoad = false; initLoadForecastChart(); })
+        .onClick(() => { showGlobalLoad = false; updateLoadForecastChart(); })
     );
     menu.addItem((item) =>
       item
         .setTitle('全局（所有卡片）')
         .setIcon(showGlobalLoad ? 'check' : 'globe')
-        .onClick(() => { showGlobalLoad = true; initLoadForecastChart(); })
+        .onClick(() => { showGlobalLoad = true; updateLoadForecastChart(); })
     );
     
     menu.showAtMouseEvent(event);
@@ -1861,7 +1805,7 @@
     loadForecastChart?.resize();
   }
 
-  // 🎨 更新所有图表主题
+  // 更新所有图表主题
   function updateChartsTheme() {
     if (retentionChart) {
       retentionChart.dispose();
@@ -1952,7 +1896,7 @@
   }
 
   onMount(() => {
-    // 🎯 加载牌组列表
+    // 加载牌组列表
     loadAllDecks();
     
     // 延迟初始化，确保DOM完全渲染
@@ -1963,7 +1907,7 @@
     }, 100);
     window.addEventListener('resize', handleResize);
 
-    // 🎨 监听主题变化
+    // 监听主题变化
     themeObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
@@ -2211,11 +2155,6 @@
       <span>滚动鼠标滚轮可快速切换快捷范围</span>
     </div>
     {/if}
-    
-    <!-- 数据状态提示已移除 -->
-    
-    <!-- 难度标签页空状态提示已移除 -->
-    
     
     <!-- 图表容器 - 使用CSS控制显示隐藏，避免DOM销毁 -->
     {#if hasCards}
