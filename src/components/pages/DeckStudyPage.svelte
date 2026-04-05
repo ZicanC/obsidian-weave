@@ -114,7 +114,7 @@
   } | undefined>(undefined);
   let noCardsCurrentDeckId = $state<string>('');
 
-  //  牌组分析模态窗状态
+  // 牌组分析模态窗状态
   let deckAnalyticsModalInstance: DeckAnalyticsModalObsidian | null = null;
   let createDeckModalInstance: CreateDeckModalObsidian | null = null;
   let editDeckModalInstance: CreateDeckModalObsidian | null = null;
@@ -140,22 +140,26 @@
   let irDeckTree = $state<DeckTreeNode[]>([]);
   let irDeckStats = $state<Record<string, DeckStats>>({});
   
-// 视图状态，从持久化存储加载，默认使用网格卡片视图
-  let currentView = $state<'classic' | 'kanban' | 'grid'>('grid');
+  type ActiveDeckView = 'kanban' | 'grid';
+  type ActiveDeckFilter = 'memory' | 'question-bank' | 'incremental-reading';
+  type DeckFilterInput = ActiveDeckFilter | 'reading' | 'parent' | 'child' | 'all';
+
+  function parseStoredDeckFilter(value: string | null): ActiveDeckFilter {
+    if (value === 'question-bank' || value === 'incremental-reading') {
+      return value;
+    }
+
+    return 'memory';
+  }
+
+  // 视图状态，从持久化存储加载，默认使用网格卡片视图
+  let currentView = $state<ActiveDeckView>('grid');
   
-// 牌组模式筛选状态
-  // memory: 记忆牌组, question-bank: 考试题组, incremental-reading: 增量阅读
-  // 兼容旧版: parent/child/all 映射到 memory
-  //  同步初始化：从 localStorage 读取，确保首次渲染即为正确值（避免重启后圆点与内容不匹配）
-  let selectedFilter = $state<'memory' | 'question-bank' | 'incremental-reading' | 'parent' | 'child' | 'all'>((() => {
+  // 牌组模式筛选状态
+  // 只保留当前仍可用的筛选值；旧筛选值在读取阶段统一映射到 memory
+  let selectedFilter = $state<ActiveDeckFilter>((() => {
     try {
-      const saved = vaultStorage.getItem('weave-deck-mode-filter');
-      if (saved && ['memory', 'question-bank', 'incremental-reading'].includes(saved)) {
-        return saved as 'memory' | 'question-bank' | 'incremental-reading';
-      }
-      if (saved && ['parent', 'child', 'all'].includes(saved)) {
-        return 'memory';
-      }
+      return parseStoredDeckFilter(vaultStorage.getItem('weave-deck-mode-filter'));
     } catch {}
     return 'memory';
   })());
@@ -243,9 +247,7 @@
     });
   }
 
-  function normalizeDeckFilter(
-    filter: 'memory' | 'question-bank' | 'incremental-reading' | 'parent' | 'child' | 'all'
-  ): 'memory' | 'question-bank' | 'incremental-reading' | 'parent' | 'child' | 'all' {
+  function normalizeDeckFilter(filter: DeckFilterInput): ActiveDeckFilter {
     if (filter === 'question-bank' && premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.QUESTION_BANK)) {
       return 'memory';
     }
@@ -254,7 +256,11 @@
       return 'memory';
     }
 
-    return filter;
+    if (filter === 'question-bank' || filter === 'incremental-reading') {
+      return filter;
+    }
+
+    return 'memory';
   }
 
   $effect(() => {
@@ -280,7 +286,7 @@
     
     // 异步初始化（不阻塞清理函数的返回）
     (async () => {
-      //  selectedFilter 已在状态初始化时同步从 localStorage 恢复，此处无需重复读取
+      // selectedFilter 已在状态初始化时同步从 localStorage 恢复，此处无需重复读取
       
 // 使用插件本地 state/local-storage.json 加载视图偏好
       try {
@@ -288,10 +294,10 @@
         
         // 验证并加载保存的视图
         if (savedView && ['kanban', 'grid'].includes(savedView)) {
-          currentView = savedView as typeof currentView;
+          currentView = savedView as ActiveDeckView;
           window.dispatchEvent(new CustomEvent('Weave:deck-view-change', { detail: currentView }));
         } else if (savedView === 'classic' || savedView === 'timeline' || savedView === 'card') {
-          // 经典列表、时间轴和卡片视图已移除，切换到网格卡片视图
+          // 已移除的旧视图统一回退到网格卡片视图
           currentView = 'grid';
           window.dispatchEvent(new CustomEvent('Weave:deck-view-change', { detail: currentView }));
         } else {
@@ -370,7 +376,7 @@
     
 // 监听侧边栏筛选事件
     const handleSidebarFilterSelect = (e: CustomEvent<string>) => {
-      const filter = e.detail as 'memory' | 'question-bank' | 'incremental-reading';
+      const filter = e.detail as ActiveDeckFilter;
       handleFilterSelect(filter);
     };
     window.addEventListener('Weave:sidebar-filter-select', handleSidebarFilterSelect as EventListener);
@@ -686,19 +692,20 @@
     return deck.metadata?.pairedParentDeck != null;
   }
 
-  function handleFilterSelect(filter: 'memory' | 'reading' | 'question-bank' | 'incremental-reading' | 'parent' | 'child' | 'all') {
-    // 兼容旧版
-    if (['parent', 'child', 'all'].includes(filter)) {
-      selectedFilter = 'memory';
-    } else {
-      // 高级版功能守卫
-      if (premiumGuard.isFeatureRestricted(filter)) {
-        promptFeatureId = filter;
-        showActivationPrompt = true;
-        return;
-      }
-      selectedFilter = filter as 'memory' | 'question-bank' | 'incremental-reading';
+  function handleFilterSelect(filter: DeckFilterInput) {
+    if (filter === 'question-bank' && premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.QUESTION_BANK)) {
+      promptFeatureId = PREMIUM_FEATURES.QUESTION_BANK;
+      showActivationPrompt = true;
+      return;
     }
+
+    if (filter === 'incremental-reading' && premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.INCREMENTAL_READING)) {
+      promptFeatureId = PREMIUM_FEATURES.INCREMENTAL_READING;
+      showActivationPrompt = true;
+      return;
+    }
+
+    selectedFilter = normalizeDeckFilter(filter);
     vaultStorage.setItem('weave-deck-mode-filter', selectedFilter);
     logger.debug('[DeckStudyPage] 切换模式筛选器:', selectedFilter);
     
@@ -836,53 +843,6 @@
     
     menu.showAtMouseEvent(evt);
   }
-  
-// 过滤后的牌组树
-  const filteredDeckTree = $derived(() => {
-    if (currentView !== 'classic') {
-      return deckTree;
-    }
-    
-// 三模式筛选
-    // memory: 显示所有记忆牌组（现有牌组系统）
-    // question-bank: 考试题组（占位，后续阶段实现）
-    // incremental-reading: 增量阅读
-    
-    if (selectedFilter === 'memory') {
-      // 记忆模式: 显示所有牌组（保持现有行为）
-      //  去重处理：确保没有重复的牌组节点
-      const seenIds = new Set<string>();
-      const uniqueTree: DeckTreeNode[] = [];
-      
-      for (const node of deckTree) {
-        if (!seenIds.has(node.deck.id)) {
-          seenIds.add(node.deck.id);
-          uniqueTree.push(node);
-        }
-      }
-      
-      return uniqueTree;
-    } else if (selectedFilter === 'question-bank') {
-      // 题库模式: 暂时返回空数组（占位，后续阶段实现）
-      return [];
-    } else if (selectedFilter === 'incremental-reading') {
-      // 增量阅读模式: 返回空数组，使用专用视图组件
-      return [];
-    }
-    
-    // 默认返回所有牌组（去重）
-    const seenIds = new Set<string>();
-    const uniqueTree: DeckTreeNode[] = [];
-    
-    for (const node of deckTree) {
-      if (!seenIds.has(node.deck.id)) {
-        seenIds.add(node.deck.id);
-        uniqueTree.push(node);
-      }
-    }
-    
-    return uniqueTree;
-  });
   
   // 获取最近学习的牌组ID
   function getRecentlyStudiedDeck(): string | null {
@@ -2485,7 +2445,7 @@
     }
   }
 
-  //  打开牌组分析
+  // 打开牌组分析
   async function openDeckAnalytics(deckId: string) {
     try {
       const deckCards = await dataStorage.getDeckCards(deckId);
