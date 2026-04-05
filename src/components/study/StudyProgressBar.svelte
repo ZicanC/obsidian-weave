@@ -13,7 +13,7 @@
     dataStorage: WeaveDataStorage;
     refreshTrigger?: number; // 用于触发刷新的计数器
     className?: string;
-    //  v2.3: 可选的卡片数组，作为备用数据源（当 deckId 无法获取卡片时使用）
+    // 可选的卡片数组，作为备用数据源（当 deckId 无法获取卡片时使用）
     cards?: Card[];
   }
 
@@ -31,7 +31,7 @@
     //  显式读取 refreshTrigger，建立响应式依赖
     const trigger = refreshTrigger;
     
-    //  v2.3: 优先使用传入的 cards，如果没有则从 dataStorage 加载
+    // 优先使用传入的 cards，如果没有则从 dataStorage 加载
     if (propCards && propCards.length > 0) {
       allDeckCards = propCards;
       isLoading = false;

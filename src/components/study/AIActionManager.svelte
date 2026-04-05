@@ -462,7 +462,7 @@
   }
 </script>
 
-<!-- 🆕 自定义强制背景虚化层 -->
+<!-- 自定义强制背景虚化层 -->
 {#if show && !useObsidianModal}
   <div 
     class="ai-config-backdrop" 

@@ -13,9 +13,7 @@
   // 导入 AI 配置 Store
   import { customActionsForMenu } from '../../stores/ai-config.store';
   import type { AIAction } from '../../types/ai-types';
-  // 导入牌组信息获取工具
-  import { getCardDeckIds } from '../../utils/yaml-utils';
-  // 🔧 v2.3: 使用 CardMetadataService 统一获取卡片元数据（带缓存 + 向后兼容）
+  // 使用 CardMetadataService 统一获取卡片元数据
   import { getCardMetadataService } from '../../services/CardMetadataService';
 
   interface Props {
@@ -126,8 +124,7 @@
     }
   }
 
-  // 获取当前牌组名称
-  // 🔧 v2.3: 使用 CardMetadataService 统一获取牌组名称（带缓存 + 向后兼容）
+  // 使用 CardMetadataService 获取当前牌组名称
   function getCurrentDeckName(): string {
     if (!card) return '未知牌组';
     const service = getCardMetadataService();

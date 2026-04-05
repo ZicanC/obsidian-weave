@@ -86,7 +86,7 @@ export function processClozeText(
 		// 显示答案时，所有挖空都显示内容（移除标记）
 		processedText = processedText.replace(ankiClozeRegex, `<span class="cloze-answer">$2</span>`);
 	} else if (activeClozeOrdinal !== undefined) {
-		// 🆕 渐进式挖空模式：只隐藏当前激活的挖空，其他挖空显示内容但移除标记
+		// 渐进式挖空模式：只隐藏当前激活的挖空，其他挖空显示内容但移除标记
 		processedText = processedText.replace(ankiClozeRegex, (_match, ordStr, content, hint) => {
 			const ord = parseInt(ordStr, 10);
 

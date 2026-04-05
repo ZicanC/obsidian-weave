@@ -89,8 +89,8 @@
   .child-card-mini {
     min-width: 240px;
     max-width: 280px;
-    min-height: 200px; /* 🔧 增加最小高度，让短内容卡片也有合适的高度 */
-    max-height: 360px; /* 🔧 增加最大高度，减少不必要的滚动条 */
+    min-height: 200px; /* 增加最小高度，让短内容卡片也有合适的高度 */
+    max-height: 360px; /* 增加最大高度，减少不必要的滚动条 */
     flex-shrink: 0;
     
     position: relative;
@@ -349,4 +349,3 @@
     border-color: var(--interactive-accent);
   }
 </style>
-

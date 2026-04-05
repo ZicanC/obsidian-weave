@@ -90,9 +90,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 4px; /* 🔧 减少水平内边距，让内容更贴近边框 */
-    background: var(--background-primary); /* 🔧 使用内容区背景色，消除色差 */
-    border-bottom: none; /* 🔧 移除底部边框，无缝融合 */
+    padding: 6px 4px; /* 减少水平内边距，让内容更贴近边框 */
+    background: var(--background-primary); /* 使用内容区背景色，消除色差 */
+    border-bottom: none; /* 移除底部边框，无缝融合 */
     flex-shrink: 0;
   }
 
@@ -102,7 +102,7 @@
   }
 
   .mobile-menu-trigger {
-    width: 44px; /* 🆕 增加到 44px 满足 Apple HIG 触控标准 */
+    width: 44px; /* 使用 44px 触控尺寸 */
     height: 44px;
     border-radius: 6px;
     display: flex;
@@ -110,7 +110,7 @@
     justify-content: center;
     background: transparent;
     border: none;
-    color: var(--interactive-normal); /* 🆕 使用 Obsidian 颜色令牌 */
+    color: var(--interactive-normal); /* 使用 Obsidian 颜色令牌 */
     font-size: 18px;
     cursor: pointer;
     flex-shrink: 0;
@@ -135,7 +135,7 @@
 
   /* 右侧占位符（牌组学习界面无搜索按钮时使用） */
   .mobile-header-spacer {
-    width: 44px; /* 🆕 匹配菜单按钮宽度，保持布局平衡 */
+    width: 44px; /* 匹配菜单按钮宽度，保持布局平衡 */
     flex-shrink: 0;
   }
 

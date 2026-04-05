@@ -129,7 +129,7 @@
   import { getCardMetadata, parseEpubSourceInfo, parseSourceInfo, setCardProperties, getCardDeckIds, createContentWithMetadata } from "../../utils/yaml-utils";
   import { resolveStudySessionDeckId } from "../../utils/study/sessionDeckId";
   import { extractHintMarkdown, extractHintText } from "../../utils/hint-block-utils";
-  //  v2.3: 使用 CardMetadataService 统一获取卡片元数据（带缓存 + 向后兼容）
+  // 使用 CardMetadataService 获取卡片元数据
   import { getCardMetadataService } from "../../services/CardMetadataService";
   
   //  渐进式挖空支持 V2
@@ -2248,7 +2248,7 @@
     return Math.max(0, Math.min(100, ratio * 100));
   });
 
-  //  v2.3: 优先显示点击进入时的牌组名，避免多牌组卡片把标题带偏
+  // 优先显示进入学习时的牌组名，避免多牌组卡片把标题带偏
   let currentDeckName = $derived.by(() => {
     if (forcedDeckName) {
       return forcedDeckName;
@@ -6973,10 +6973,10 @@
   /* 卡片学习容器 - 高度自适应优化，合理间距设计 */
   .card-study-container {
     flex: 1;
-    padding: var(--weave-space-md, 1rem); /* ✅ 恢复合理间距 */
-    overflow: visible; /* ✅ 不滚动容器，让内容自己滚动 */
+    padding: var(--weave-space-md, 1rem); /* 恢复合理间距 */
+    overflow: visible; /* 不滚动容器，让内容自己滚动 */
     display: flex;
-    align-items: stretch; /* ✅ 改为stretch，让子元素填充高度 */
+    align-items: stretch; /* 改为 stretch，让子元素填充高度 */
     justify-content: center; /* 居中显示卡片容器 */
     min-height: 0; /* 允许flex子元素收缩 */
   }
@@ -6985,7 +6985,7 @@
     /* 极简透明容器 - 只负责布局 */
     width: min(100%, 1300px);
     max-width: 100%;
-    height: 100%; /* ✅ 确保填充父容器的全部高度 */
+    height: 100%; /* 确保填充父容器的全部高度 */
     
     /* 移除所有视觉样式 */
     border: none;

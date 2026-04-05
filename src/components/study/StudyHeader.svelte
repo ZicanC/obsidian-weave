@@ -19,7 +19,7 @@
     progressBarRefreshTrigger: number;
     // 多牌组引用信息
     referencedDecks?: Array<{ id: string; name: string }>;
-    //  v2.3: 可选的卡片数组，作为进度条的备用数据源
+    // 可选的卡片数组，作为进度条的备用数据源
     cards?: Card[];
     onToggleStats: () => void;
     onToggleSourceInfo?: () => void;

@@ -79,7 +79,7 @@
     padding: 4px 0;
   }
 
-  /* 🔧 使用 Obsidian 原生列表菜单设计 */
+  /* 使用 Obsidian 原生列表菜单设计 */
   .deck-list-item {
     display: flex;
     align-items: center;

@@ -141,9 +141,9 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 4px; /* 🔧 与牌组学习界面一致 */
-    background: var(--background-primary); /* 🔧 使用内容区背景色，消除色差 */
-    border-bottom: none; /* 🔧 移除底部边框，无缝融合 */
+    padding: 6px 4px; /* 与牌组学习界面一致 */
+    background: var(--background-primary); /* 使用内容区背景色，消除色差 */
+    border-bottom: none; /* 移除底部边框，无缝融合 */
     flex-shrink: 0;
   }
 
@@ -159,7 +159,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    /* 📱 Obsidian clickable-icon 风格：完全透明，无边框无阴影 */
+    /* 使用 Obsidian clickable-icon 风格：完全透明，无边框无阴影 */
     background: transparent;
     border: none;
     box-shadow: none;
@@ -191,7 +191,7 @@
 
   .view-type-dot {
     position: relative;
-    width: 20px; /* 🔧 与 CategoryFilter 保持一致 */
+    width: 20px; /* 与 CategoryFilter 保持一致 */
     height: 20px;
     border-radius: 50%;
     border: none;
@@ -279,7 +279,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    /* 📱 Obsidian clickable-icon 风格：完全透明，无边框无阴影 */
+    /* 使用 Obsidian clickable-icon 风格：完全透明，无边框无阴影 */
     background: transparent;
     border: none;
     box-shadow: none;

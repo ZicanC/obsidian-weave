@@ -162,7 +162,7 @@
     
     logger.debug('[CardEditorContainer] 📱 初始化键盘检测, 初始高度:', baselineHeight);
     
-    //  立即设置初始高度和位置
+    // 立即设置初始高度和位置
     handleKeyboardStateChange(false, baselineHeight, viewport.offsetTop);
     
     const handleResize = () => {
@@ -489,7 +489,7 @@
         keyboardCleanup = setupKeyboardDetection() || null;
       }
 
-      //  关键：当 effect 被销毁（退出编辑/组件卸载）时，确保移除监听
+      // effect 销毁时移除监听，避免残留
       return () => {
         if (keyboardCleanup) {
           keyboardCleanup();
@@ -611,16 +611,16 @@
 <style>
   /* 行内编辑器样式 - 高度自适应优化 */
   .inline-editor-container {
-    flex: 1; /* ✅ 填满可用空间 */
+    flex: 1; /* 填满可用空间 */
     display: flex;
     flex-direction: column;
     position: relative;
     background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
-    overflow: hidden; /* ✅ 由内部编辑器处理滚动 */
-    margin: var(--weave-space-md); /* ✅ 四周留出合适间距 */
-    min-height: 400px; /* ✅ 确保最小显示高度，防止过度收缩 */
+    overflow: hidden; /* 由内部编辑器处理滚动 */
+    margin: var(--weave-space-md); /* 四周留出合适间距 */
+    min-height: 400px; /* 确保最小显示高度，防止过度收缩 */
   }
 
   .embedded-editor-host {
@@ -742,10 +742,10 @@
 
   /* 普通文本编辑器样式 */
   .plain-editor-container {
-    flex: 1; /* ✅ 填满可用空间 */
+    flex: 1; /* 填满可用空间 */
     display: flex;
     flex-direction: column;
-    min-height: 0; /* ✅ 允许收缩 */
+    min-height: 0; /* 允许收缩 */
   }
 
   .plain-text-editor {

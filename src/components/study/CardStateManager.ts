@@ -1,7 +1,6 @@
 import { UnifiedCardType } from "../../types/unified-card-types";
 import { detectCardQuestionType } from "../../utils/card-type-utils";
 import { logger } from "../../utils/logger";
-// v2.2: 导入牌组信息获取工具
 import { getCardDeckIds } from "../../utils/yaml-utils";
 import { getQuestionBankDeckIdsForCard } from "../pages/kanban-card-update";
 
@@ -317,7 +316,7 @@ export class CardStateManager {
 		}
 
 		// 2. 补充：从卡片中提取未在已知牌组列表中的牌组
-		// 🆕 v2.2: 优先从 content YAML 的 we_decks 获取牌组ID
+		// 优先从 content YAML 的 we_decks 获取牌组 ID
 		for (const _card of cards) {
 			const deckIds = this.getDeckGroupKeys(_card).filter((_deckId) => _deckId !== "_none");
 			for (const cardDeckId of deckIds) {

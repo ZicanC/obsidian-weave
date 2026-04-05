@@ -1,9 +1,8 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
   // 静态导入 parseSourceInfo，确保响应式追踪正常
-  // 导入牌组信息获取工具
   import { parseEpubSourceInfo, parseSourceInfo, parseYAMLFromContent, extractBodyContent, getCardDeckIds, getCardDeckNames } from '../../utils/yaml-utils';
-  //  v2.3: 使用 CardMetadataService 统一获取卡片元数据（带缓存 + 向后兼容）
+  // 使用 CardMetadataService 获取卡片元数据
   import { getCardMetadataService } from '../../services/CardMetadataService';
 
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
@@ -493,8 +492,7 @@
     showDeckMenu = false;
   }
 
-  // 获取当前卡片所在牌组的名称
-  //  v2.3: 使用 CardMetadataService 统一获取牌组名称（带缓存 + 向后兼容）
+  // 使用 CardMetadataService 获取当前卡片所在牌组的名称
   function getCurrentDeckName(): string {
     const fallback = t('toolbar.unknownDeck');
     if (!card) return fallback;
@@ -3195,7 +3193,7 @@ D. 顺序学习算法
 <style>
   .vertical-toolbar {
     width: 70px;
-    height: 100%; /* 🔧 填满父容器 */
+    height: 100%; /* 填满父容器 */
     background: var(--background-secondary);
     border-left: 1px solid var(--background-modifier-border);
     display: flex;
@@ -3415,8 +3413,6 @@ D. 顺序学习算法
     }
   }
 
-  /* 紧凑模式下的删除按钮进度环 - 已移除 */
-
   /* 特定按钮样式 */
 
   .edit-btn:hover {
@@ -3427,7 +3423,7 @@ D. 顺序学习算法
     color: var(--weave-error);
   }
 
-  /*  删除按钮样式 */
+  /* 删除按钮样式 */
   .delete-btn {
     transition: color 0.2s ease;
   }
@@ -3454,9 +3450,6 @@ D. 顺序学习算法
     line-height: 1;
     color: inherit;
   }
-
-  /* 下拉菜单样式 */
-  /* 已移除 AnkiConnect 下拉菜单样式 */
 
   /* 桌面端不进行布局重排，工具栏始终保持垂直方向 */
   /* 移动端布局由 :global(body.is-phone) 控制 */
