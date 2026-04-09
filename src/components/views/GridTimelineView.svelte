@@ -4,6 +4,7 @@
   import type { WeavePlugin } from '../../main';
   import LazyGridCard from '../cards/LazyGridCard.svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
+  import { compareGridTimelineEntries } from '../../utils/grid-timeline-utils';
 
   type GridCardAttributeType =
     | 'none'
@@ -32,6 +33,7 @@
     onCardEdit?: (card: Card) => void;
     onCardDelete?: (card: Card) => void;
     onCardView?: (card: Card) => void;
+    onCardConvertToMarkdown?: (card: Card) => void;
     onSourceJump?: (card: Card) => void;
     onCardLongPress?: (card: Card) => void;
     loading?: boolean;
@@ -88,6 +90,7 @@
     onCardEdit,
     onCardDelete,
     onCardView,
+    onCardConvertToMarkdown,
     onSourceJump,
     onCardLongPress,
     loading = false
@@ -162,15 +165,15 @@
   }
 
   function compareTimelineEntries(a: TimelineEntry, b: TimelineEntry): number {
-    if (a.daySortValue !== b.daySortValue) {
-      return b.daySortValue - a.daySortValue;
-    }
-
-    if (a.timestamp !== b.timestamp) {
-      return a.timestamp - b.timestamp;
-    }
-
-    return a.card.uuid.localeCompare(b.card.uuid);
+    return compareGridTimelineEntries({
+      daySortValue: a.daySortValue,
+      timestamp: a.timestamp,
+      uuid: a.card.uuid
+    }, {
+      daySortValue: b.daySortValue,
+      timestamp: b.timestamp,
+      uuid: b.card.uuid
+    });
   }
 
   const timelineEntries = $derived.by(() => (
@@ -466,12 +469,13 @@
                       {attributeType}
                       {isMobile}
                       onClick={onCardClick}
-                      onEdit={onCardEdit}
-                      onDelete={onCardDelete}
-                      onView={onCardView}
-                      onSourceJump={onSourceJump}
-                      onLongPress={onCardLongPress}
-                    />
+                       onEdit={onCardEdit}
+                       onDelete={onCardDelete}
+                       onView={onCardView}
+                       onConvertToMarkdown={onCardConvertToMarkdown}
+                       onSourceJump={onSourceJump}
+                       onLongPress={onCardLongPress}
+                     />
                   </div>
                 </article>
               {/each}
@@ -534,6 +538,9 @@
     --timeline-time-width: 52px;
     --timeline-axis-width: 24px;
     --timeline-column-gap: 6px;
+    --timeline-axis-center-x: calc(
+      var(--timeline-time-width) + var(--timeline-column-gap) + (var(--timeline-axis-width) / 2)
+    );
     --timeline-entry-gap: var(--weave-space-md);
     --timeline-group-gap: var(--weave-space-xl);
     display: flex;
@@ -587,7 +594,7 @@
   .timeline-flow::before {
     content: '';
     position: absolute;
-    left: calc(var(--timeline-time-width) + (var(--timeline-axis-width) / 2));
+    left: var(--timeline-axis-center-x);
     top: 14px;
     bottom: 14px;
     width: 2px;

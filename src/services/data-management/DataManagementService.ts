@@ -57,6 +57,7 @@ import {
 	type DataMigrationReport,
 	UnifiedDataMigrationService,
 } from "../data-migration/UnifiedDataMigrationService";
+import { EpubLinkService } from "../epub/EpubLinkService";
 
 // ===== 类型定义 =====
 
@@ -65,6 +66,7 @@ export type CheckType =
 	| "yaml_migration" // YAML 元数据迁移
 	| "we_decks_fix" // we_decks 牌组ID修复
 	| "we_block_migration" // we_block -> we_source 合并迁移
+	| "epub_source_link_migration" // 旧 EPUB 溯源链接格式迁移
 	| "deprecated_fields" // 弃用字段检测
 	| "card_deck_consistency" // 卡片-牌组一致性
 	| "ir_material_consistency" // 导入材料一致性（增量阅读）
@@ -132,6 +134,7 @@ export const DEFAULT_BATCH_FIX_TYPES: CheckType[] = [
 	"yaml_migration",
 	"we_decks_fix",
 	"we_block_migration",
+	"epub_source_link_migration",
 	"deprecated_fields",
 	"card_deck_consistency",
 ];
@@ -242,6 +245,7 @@ export class DataManagementService {
 			"yaml_migration",
 			"we_decks_fix",
 			"we_block_migration",
+			"epub_source_link_migration",
 			"deprecated_fields",
 			"duplicate_cards",
 			"card_deck_consistency",
@@ -280,6 +284,8 @@ export class DataManagementService {
 				return this.checkDeprecatedFields(cards);
 			case "we_block_migration":
 				return this.checkWeBlockMigration(cards);
+			case "epub_source_link_migration":
+				return this.checkEpubSourceLinkMigration(cards);
 			// redundant_fields 已移除：Content-Only 架构下 type/tags 是从 content YAML 派生的运行时字段
 			case "orphan_cards":
 				return this.checkOrphanCards(cards, decks);
@@ -365,6 +371,8 @@ export class DataManagementService {
 				return this.fixDeprecatedFields(cards);
 			case "we_block_migration":
 				return this.fixWeBlockMigration(cards);
+			case "epub_source_link_migration":
+				return this.fixEpubSourceLinkMigration(cards);
 			case "duplicate_cards":
 				return await this.fixDuplicateCards(cards, decks);
 			case "card_deck_consistency":
@@ -484,6 +492,33 @@ export class DataManagementService {
 				needsMigration.length > 0
 					? `发现 ${needsMigration.length} 张卡片需要合并 we_block 到 we_source`
 					: "we_source 格式正常",
+		};
+	}
+
+	/**
+	 * 检测需要迁移旧 EPUB 溯源链接格式的卡片
+	 */
+	private checkEpubSourceLinkMigration(cards: Card[]): DataCheckResult {
+		const needsMigration: string[] = [];
+		const epubLinkService = new EpubLinkService(this.plugin.app);
+
+		for (const card of cards) {
+			if (!card.content) continue;
+			const migrationResult = epubLinkService.migrateLegacyEpubLinksInContent(card.content);
+			if (migrationResult.changed) {
+				needsMigration.push(card.uuid);
+			}
+		}
+
+		return {
+			type: "epub_source_link_migration",
+			status: needsMigration.length > 0 ? "warning" : "ok",
+			count: needsMigration.length,
+			items: needsMigration,
+			message:
+				needsMigration.length > 0
+					? `发现 ${needsMigration.length} 张卡片包含旧 EPUB 溯源链接格式`
+					: "EPUB 溯源链接格式正常",
 		};
 	}
 
@@ -1009,6 +1044,58 @@ export class DataManagementService {
 
 		return {
 			type: "we_block_migration",
+			success,
+			failed,
+			errors,
+		};
+	}
+
+	/**
+	 * 修复旧 EPUB 溯源链接格式
+	 */
+	private async fixEpubSourceLinkMigration(cards: Card[]): Promise<DataFixResult> {
+		let success = 0;
+		let failed = 0;
+		const errors: Array<{ uuid: string; error: string }> = [];
+		const epubLinkService = new EpubLinkService(this.plugin.app);
+
+		logger.info("[DataManagement] 开始迁移旧 EPUB 溯源链接格式...");
+
+		for (const card of cards) {
+			if (!card.content) continue;
+
+			const migrationResult = epubLinkService.migrateLegacyEpubLinksInContent(card.content);
+			if (!migrationResult.changed) {
+				continue;
+			}
+
+			try {
+				const updatedCard = {
+					...card,
+					content: migrationResult.content,
+					modified: new Date().toISOString(),
+				};
+
+				const result = await this.plugin.dataStorage.saveCard(updatedCard);
+				if (result.success) {
+					success++;
+					logger.debug(
+						`[DataManagement] EPUB 溯源链接迁移成功: ${card.uuid}, updatedLinks=${migrationResult.updatedLinks}`
+					);
+				} else {
+					failed++;
+					errors.push({ uuid: card.uuid, error: result.error || "保存失败" });
+				}
+			} catch (e) {
+				failed++;
+				errors.push({ uuid: card.uuid, error: String(e) });
+			}
+		}
+
+		logger.info(`[DataManagement] EPUB 溯源链接迁移完成: 成功 ${success}, 失败 ${failed}`);
+
+		return {
+			type: "epub_source_link_migration",
 			success,
 			failed,
 			errors,
@@ -2050,6 +2137,7 @@ export class DataManagementService {
 			yaml_migration: "YAML 元数据迁移",
 			we_decks_fix: "we_decks 牌组ID",
 			we_block_migration: "we_block 合并迁移",
+			epub_source_link_migration: "EPUB 溯源链接迁移",
 			deprecated_fields: "弃用字段",
 			card_deck_consistency: "引用式牌组一致性",
 			ir_material_consistency: "导入材料一致性",

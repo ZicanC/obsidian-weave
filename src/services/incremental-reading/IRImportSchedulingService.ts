@@ -1,14 +1,6 @@
-/**
- * 增量阅读导入时间分散调度服务
- *
- * 基于负载率的智能分配算法实现
- *
- * @module services/incremental-reading/IRImportSchedulingService
- * @version 1.0.0
- */
+/** 根据每日负载为导入内容分配阅读日期。 */
 
 import type { ContentBlock } from "../../types/content-split-types";
-// Using native JavaScript date handling instead of date-fns
 import type {
 	DailyLoad,
 	SchedulingConfig,
@@ -33,39 +25,53 @@ export class IRImportSchedulingService {
 		this.loadInfo = loadInfo;
 	}
 
-	/**
-	 * 计算导入分散计划
-	 */
+	/** 计算导入内容的分散计划。 */
 	async calculateScheduling(
 		contentBlocks: ContentBlock[],
 		config: SchedulingConfig,
 		startDate: Date = new Date()
 	): Promise<SchedulingImpact> {
-		const dailyLoads = await this.initializeDailyLoads(config.distributionDays, startDate);
+		const normalizedConfig = this.normalizeConfig(config);
+		const dailyLoads = await this.initializeDailyLoads(
+			normalizedConfig.distributionDays,
+			startDate
+		);
 
-		// 根据策略分配内容块
-		switch (config.strategy) {
+		switch (normalizedConfig.strategy) {
 			case "even":
-				this.distributeEvenly(contentBlocks, dailyLoads, config);
+				this.distributeEvenly(contentBlocks, dailyLoads, normalizedConfig);
 				break;
 			case "balanced":
-				this.distributeBalanced(contentBlocks, dailyLoads, config);
+				this.distributeBalanced(contentBlocks, dailyLoads, normalizedConfig);
 				break;
 			case "front-loaded":
-				this.distributeFrontLoaded(contentBlocks, dailyLoads, config);
+				this.distributeFrontLoaded(contentBlocks, dailyLoads, normalizedConfig);
 				break;
 		}
 
-		// 计算影响指标
 		return this.calculateImpact(dailyLoads, contentBlocks);
 	}
 
-	/**
-	 * 初始化每日负载数据
-	 */
+	/** 归一化导入分散配置，避免空计划或异常负载率。 */
+	private normalizeConfig(config: SchedulingConfig): SchedulingConfig {
+		const distributionDays = Math.max(1, Math.floor(config.distributionDays || 0));
+		const targetLoadRate = Math.max(0, Number.isFinite(config.targetLoadRate) ? config.targetLoadRate : 0);
+
+		return {
+			...config,
+			distributionDays,
+			targetLoadRate,
+		};
+	}
+
+	/** 返回可用于负载计算的每日预算分钟数。 */
+	private getSafeDailyBudgetMinutes(): number {
+		return Math.max(1, this.loadInfo.dailyBudgetMinutes);
+	}
+
+	/** 初始化每一天的已有负载。 */
 	private async initializeDailyLoads(days: number, startDate: Date): Promise<DailyLoad[]> {
 		const loads: DailyLoad[] = [];
-		// Get start of day
 		const today = new Date(startDate);
 		today.setHours(0, 0, 0, 0);
 
@@ -84,17 +90,15 @@ export class IRImportSchedulingService {
 				existingMinutes,
 				newCount: 0,
 				newMinutes: 0,
-				loadRate: existingMinutes / this.loadInfo.dailyBudgetMinutes,
-				isOverloaded: existingMinutes >= this.loadInfo.dailyBudgetMinutes,
+				loadRate: existingMinutes / this.getSafeDailyBudgetMinutes(),
+				isOverloaded: existingMinutes >= this.getSafeDailyBudgetMinutes(),
 			});
 		}
 
 		return loads;
 	}
 
-	/**
-	 * 均分策略：完全平均分布，不看已有负载
-	 */
+	/** 按天数平均分配，不考虑已有负载。 */
 	private distributeEvenly(
 		blocks: ContentBlock[],
 		dailyLoads: DailyLoad[],
@@ -119,20 +123,17 @@ export class IRImportSchedulingService {
 		}
 	}
 
-	/**
-	 * 均衡策略：基于负载率的水位填充算法（推荐默认）
-	 */
+	/** 优先把块分给剩余容量最大的日期。 */
 	private distributeBalanced(
 		blocks: ContentBlock[],
 		dailyLoads: DailyLoad[],
 		config: SchedulingConfig
 	): void {
-		const targetMinutes = this.loadInfo.dailyBudgetMinutes * config.targetLoadRate;
+		const targetMinutes = this.getSafeDailyBudgetMinutes() * config.targetLoadRate;
 
 		for (const block of blocks) {
 			const blockMinutes = this.loadInfo.estimateBlockMinutes(block);
 
-			// 找到剩余容量最大的日期
 			let bestDay: DailyLoad | null = null;
 			let maxSlack = -Infinity;
 
@@ -140,14 +141,12 @@ export class IRImportSchedulingService {
 				const currentTotal = load.existingMinutes + load.newMinutes;
 				const slack = targetMinutes - currentTotal;
 
-				// 如果这天还能装下这个块，并且剩余容量更大
 				if (slack >= blockMinutes && slack > maxSlack) {
 					maxSlack = slack;
 					bestDay = load;
 				}
 			}
 
-			// 如果找不到合适的日期，选择负载最低的
 			if (!bestDay) {
 				bestDay = dailyLoads.reduce((min, load) => {
 					const minTotal = min.existingMinutes + min.newMinutes;
@@ -156,27 +155,23 @@ export class IRImportSchedulingService {
 				});
 			}
 
-			// 分配到选中的日期
 			bestDay.newCount++;
 			bestDay.newMinutes += blockMinutes;
 			this.updateLoadRate(bestDay);
 		}
 
-		// 如果启用每日最低保证，确保每天至少1个
 		if (config.dailyMinimum) {
-			this.ensureDailyMinimum(blocks, dailyLoads, config);
+			this.ensureDailyMinimum(dailyLoads);
 		}
 	}
 
-	/**
-	 * 尽快读策略：在不爆载前提下尽量靠前
-	 */
+	/** 尽量把内容排到更靠前的日期，但不主动冲破目标负载。 */
 	private distributeFrontLoaded(
 		blocks: ContentBlock[],
 		dailyLoads: DailyLoad[],
 		config: SchedulingConfig
 	): void {
-		const targetMinutes = this.loadInfo.dailyBudgetMinutes * config.targetLoadRate;
+		const targetMinutes = this.getSafeDailyBudgetMinutes() * config.targetLoadRate;
 		let blockIndex = 0;
 
 		for (const load of dailyLoads) {
@@ -188,7 +183,6 @@ export class IRImportSchedulingService {
 				const block = blocks[blockIndex];
 				const blockMinutes = this.loadInfo.estimateBlockMinutes(block);
 
-				// 如果加上这个块会超过目标负载，跳到下一天
 				if (dayMinutes + blockMinutes > targetMinutes) {
 					break;
 				}
@@ -202,31 +196,21 @@ export class IRImportSchedulingService {
 			this.updateLoadRate(load);
 		}
 
-		// 处理剩余的块（如果前面的天数都满了）
 		if (blockIndex < blocks.length) {
-			// 分配到负载最低的日期
 			const remainingBlocks = blocks.slice(blockIndex);
 			this.distributeBalanced(remainingBlocks, dailyLoads, config);
 		}
 	}
 
-	/**
-	 * 确保每天至少有1个内容块
-	 */
-	private ensureDailyMinimum(
-		blocks: ContentBlock[],
-		dailyLoads: DailyLoad[],
-		_config: SchedulingConfig
-	): void {
+	/** 尽量保证每天至少有一个新块。 */
+	private ensureDailyMinimum(dailyLoads: DailyLoad[]): void {
 		for (const load of dailyLoads) {
-			if (load.newCount === 0 && blocks.length > 0) {
-				// 从负载最高的日期转移1个块过来
+			if (load.newCount === 0) {
 				const sourceDay = dailyLoads
 					.filter((l) => l.newCount > 1)
 					.sort((a, b) => b.loadRate - a.loadRate)[0];
 
 				if (sourceDay) {
-					// 简化处理：转移估计的平均时间
 					const avgMinutes = sourceDay.newMinutes / sourceDay.newCount;
 					sourceDay.newCount--;
 					sourceDay.newMinutes -= avgMinutes;
@@ -240,22 +224,29 @@ export class IRImportSchedulingService {
 		}
 	}
 
-	/**
-	 * 更新负载率
-	 */
+	/** 刷新某一天的负载率和过载标记。 */
 	private updateLoadRate(load: DailyLoad): void {
 		const totalMinutes = load.existingMinutes + load.newMinutes;
-		load.loadRate = totalMinutes / this.loadInfo.dailyBudgetMinutes;
+		load.loadRate = totalMinutes / this.getSafeDailyBudgetMinutes();
 		load.isOverloaded = load.loadRate >= 1.0;
 	}
 
-	/**
-	 * 计算分散影响评估
-	 */
+	/** 汇总分散计划的影响指标。 */
 	private calculateImpact(
 		dailyLoads: DailyLoad[],
 		_contentBlocks: ContentBlock[]
 	): SchedulingImpact {
+		if (dailyLoads.length === 0) {
+			return {
+				dailyLoads: [],
+				overloadedDays: 0,
+				peakLoadRate: 0,
+				averageLoadRate: 0,
+				totalNewHours: 0,
+				suggestions: [],
+			};
+		}
+
 		const overloadedDays = dailyLoads.filter((l) => l.isOverloaded).length;
 		const peakLoadRate = Math.max(...dailyLoads.map((l) => l.loadRate));
 		const averageLoadRate = dailyLoads.reduce((sum, l) => sum + l.loadRate, 0) / dailyLoads.length;
@@ -263,7 +254,6 @@ export class IRImportSchedulingService {
 
 		const suggestions: string[] = [];
 
-		// 生成建议
 		if (overloadedDays > dailyLoads.length * 0.3) {
 			suggestions.push("建议延长分散天数或降低导入优先级");
 		}
@@ -284,9 +274,7 @@ export class IRImportSchedulingService {
 		};
 	}
 
-	/**
-	 * 应用分散计划到内容块
-	 */
+	/** 把分散计划映射回具体内容块。 */
 	applyScheduling(
 		contentBlocks: ContentBlock[],
 		impact: SchedulingImpact

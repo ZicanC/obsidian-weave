@@ -31,19 +31,7 @@ export class CardConverter {
 			const now = new Date().toISOString();
 			const uuid = generateCardUUID();
 
-			// 优先使用 content 字段，向后兼容 front/back 格式
-			let content: string;
-			if (generatedCard.content) {
-				// 新格式：直接使用content字段
-				content = generatedCard.content;
-			} else if (generatedCard.front || generatedCard.back) {
-				// 旧格式：从front和back构建content（修复分隔符为---div---）
-				const front = generatedCard.front || "";
-				const back = generatedCard.back || "";
-				content = back ? `${front}\n\n---div---\n\n${back}` : front;
-			} else {
-				content = "";
-			}
+			let content = generatedCard.content || "";
 
 			// 在 content 中写入 YAML 元数据（we_source / we_decks）
 			if (content) {
@@ -76,7 +64,7 @@ export class CardConverter {
 			} else {
 				// 降级：使用简单的字段映射
 				logger.warn("[CardConverter] 解析失败，使用降级方案:", parseResult.error);
-				fields = this.mapFieldsFromGeneratedCard(generatedCard);
+				fields = this.mapFieldsFromContent(content, generatedCard.type);
 				parsedMetadata = undefined;
 			}
 
@@ -240,16 +228,15 @@ export class CardConverter {
 	}
 
 	/**
-	 * 从生成的卡片映射字段（向后兼容旧格式）
+	 * 从 content 降级映射字段
 	 */
-	private static mapFieldsFromGeneratedCard(card: GeneratedCard): Record<string, string> {
-		// 如果有content字段，应该使用parseCardContent而不是这个方法
-		// 这个方法仅用于向后兼容旧的front/back格式
+	private static mapFieldsFromContent(
+		content: string,
+		type: GeneratedCard["type"]
+	): Record<string, string> {
+		const { front, back } = this.splitContent(content);
 
-		const front = card.front || "";
-		const back = card.back || "";
-
-		switch (card.type) {
+		switch (type) {
 			case "qa":
 				return {
 					front: front,
@@ -304,19 +291,7 @@ export class CardConverter {
 		const now = new Date().toISOString();
 		const uuid = generateCardUUID();
 
-		// 优先使用 content 字段，向后兼容 front/back 格式
-		let content: string;
-		if (generatedCard.content) {
-			// 新格式：直接使用content字段
-			content = generatedCard.content;
-		} else if (generatedCard.front || generatedCard.back) {
-			// 旧格式：从front和back构建content（修复分隔符为---div---）
-			const front = generatedCard.front || "";
-			const back = generatedCard.back || "";
-			content = back ? `${front}\n\n---div---\n\n${back}` : front;
-		} else {
-			content = "";
-		}
+		const content = generatedCard.content || "";
 
 		// 使用新的解析器解析Markdown内容为fields
 		const parseResult = this.parseCardContent(content, generatedCard.type);
@@ -331,7 +306,7 @@ export class CardConverter {
 		} else {
 			// 降级：使用简单的字段映射
 			logger.warn("[CardConverter] 预览解析失败，使用降级方案:", parseResult.error);
-			fields = this.mapFieldsFromGeneratedCard(generatedCard);
+			fields = this.mapFieldsFromContent(content, generatedCard.type);
 			parsedMetadata = undefined;
 		}
 
@@ -478,5 +453,30 @@ export class CardConverter {
 			default:
 				return "basic";
 		}
+	}
+
+	private static splitContent(content: string): { front: string; back: string } {
+		const separator = "\n\n---div---\n\n";
+		if (content.includes(separator)) {
+			const parts = content.split(separator);
+			return {
+				front: parts[0] || "",
+				back: parts.slice(1).join(separator),
+			};
+		}
+
+		const fallbackSeparator = "\n---div---\n";
+		if (content.includes(fallbackSeparator)) {
+			const parts = content.split(fallbackSeparator);
+			return {
+				front: parts[0] || "",
+				back: parts.slice(1).join(fallbackSeparator),
+			};
+		}
+
+		return {
+			front: content,
+			back: "",
+		};
 	}
 }

@@ -1,6 +1,12 @@
 import type { App } from "obsidian";
 import type { ReadingMaterial } from "../../types/incremental-reading-types";
-import type { IRChunkFileData, IRDeck } from "../../types/ir-types";
+import {
+	DEFAULT_ADVANCED_SCHEDULE_SETTINGS,
+	type IRAdvancedScheduleSettings,
+	type IRChunkFileData,
+	type IRDeck,
+} from "../../types/ir-types";
+import { getChunkTopicIds, getTaskTopicId } from "../../utils/ir-topic-compat";
 import { logger } from "../../utils/logger";
 import {
 	type IRAssociatedNoteSignalIndex,
@@ -59,6 +65,7 @@ export interface IRPlannedScheduleItem {
 	title: string;
 	displayName?: string;
 	sourceFile: string;
+	topicKey: string;
 	associatedNotePath?: string;
 	associatedNoteScope?: "point" | "material";
 	linkedCardCount?: number;
@@ -213,6 +220,110 @@ export class IRScheduleKernel {
 		this.planGenerator = new IRPlanGeneratorService(this.profileService);
 	}
 
+	private getPlanningSettingsSnapshot(): IRAdvancedScheduleSettings {
+		const defaults = DEFAULT_ADVANCED_SCHEDULE_SETTINGS;
+
+		try {
+			const plugin: any = (this.app as any)?.plugins?.getPlugin?.("weave");
+			const ir = plugin?.settings?.incrementalReading;
+			return {
+				...defaults,
+				dailyTimeBudgetMinutes: ir?.dailyTimeBudgetMinutes ?? defaults.dailyTimeBudgetMinutes,
+				interleaveMode: ir?.interleaveMode ?? defaults.interleaveMode,
+				maxConsecutiveSameTopic:
+					ir?.maxConsecutiveSameTopic ?? defaults.maxConsecutiveSameTopic,
+			};
+		} catch {
+			return defaults;
+		}
+	}
+
+	private resolveTopicKey(sourceFile: string, tagGroup?: string | null): string {
+		const normalizedGroup = String(tagGroup || "").trim();
+		if (normalizedGroup && normalizedGroup !== "default") {
+			return `tag:${normalizedGroup}`;
+		}
+		return `source:${sourceFile}`;
+	}
+
+	private normalizeIdentifiers(values: string[]): string[] {
+		return Array.from(
+			new Set(
+				(Array.isArray(values) ? values : [])
+					.map((value) => String(value || "").trim())
+					.filter(Boolean)
+			)
+		);
+	}
+
+	private buildDeckIdentifierContext(decks: IRDeck[], requestedDeckIds: string[]): {
+		targetIdentifiers: Set<string>;
+		canonicalDeckIds: string[];
+		canonicalByIdentifier: Map<string, string>;
+	} {
+		const normalizedTargets = this.normalizeIdentifiers(requestedDeckIds);
+		const targetIdentifiers = new Set<string>();
+		const canonicalByIdentifier = new Map<string, string>();
+		const canonicalDeckIds: string[] = [];
+
+		for (const deck of decks) {
+			const deckId = String(deck?.id || "").trim();
+			const deckPath = String((deck as any)?.path || "").trim();
+			const identifiers = this.normalizeIdentifiers([deckId, deckPath]);
+			if (identifiers.length === 0) {
+				continue;
+			}
+
+			const isTarget =
+				normalizedTargets.length === 0 ||
+				identifiers.some((identifier) => normalizedTargets.includes(identifier));
+			if (!isTarget) {
+				continue;
+			}
+
+			if (deckId && !canonicalDeckIds.includes(deckId)) {
+				canonicalDeckIds.push(deckId);
+			}
+
+			for (const identifier of identifiers) {
+				targetIdentifiers.add(identifier);
+				if (deckId) {
+					canonicalByIdentifier.set(identifier, deckId);
+				}
+			}
+		}
+
+		for (const identifier of normalizedTargets) {
+			if (!targetIdentifiers.has(identifier)) {
+				targetIdentifiers.add(identifier);
+			}
+			if (!canonicalByIdentifier.has(identifier)) {
+				canonicalByIdentifier.set(identifier, identifier);
+			}
+			if (!canonicalDeckIds.includes(canonicalByIdentifier.get(identifier) || identifier)) {
+				canonicalDeckIds.push(canonicalByIdentifier.get(identifier) || identifier);
+			}
+		}
+
+		return {
+			targetIdentifiers,
+			canonicalDeckIds,
+			canonicalByIdentifier,
+		};
+	}
+
+	private resolveCanonicalDeckId(
+		deckIdentifier: string | null | undefined,
+		canonicalByIdentifier: Map<string, string>
+	): string {
+		const normalizedIdentifier = String(deckIdentifier || "").trim();
+		if (!normalizedIdentifier) {
+			return "";
+		}
+
+		return canonicalByIdentifier.get(normalizedIdentifier) || normalizedIdentifier;
+	}
+
 	async recomputeScheduleForDeck(
 		reason: ScheduleRecomputeReason,
 		options?: RecomputeOptions
@@ -222,11 +333,13 @@ export class IRScheduleKernel {
 		await this.epubService.initialize();
 
 		const decks = Object.values(await this.storage.getAllDecks());
-		const targetDeckIds = (
+		const requestedDeckIds = (
 			options?.deckIds?.length ? options.deckIds : decks.map((deck) => deck.id)
 		).filter(Boolean);
+		const { targetIdentifiers, canonicalDeckIds, canonicalByIdentifier } =
+			this.buildDeckIdentifierContext(decks, requestedDeckIds);
 
-		for (const deckId of targetDeckIds) {
+		for (const deckId of canonicalDeckIds) {
 			try {
 				await this.v4Scheduler.getStudyQueueV4(deckId, { markActive: false });
 			} catch (error) {
@@ -237,6 +350,7 @@ export class IRScheduleKernel {
 			}
 		}
 
+		const planningSettings = this.getPlanningSettingsSnapshot();
 		const readingMaterials = await this.getReadingMaterials();
 		const readingMaterialByPath = this.getReadingMaterialMap(readingMaterials);
 		const associatedNoteSignalIndex = await this.getAssociatedNoteSignalIndex();
@@ -250,19 +364,21 @@ export class IRScheduleKernel {
 		const nowMs = now.getTime();
 
 		for (const chunk of chunks) {
-			if (!this.belongsToTargetDecks(chunk, targetDeckIds)) continue;
+			if (!this.belongsToTargetDecks(chunk, targetIdentifiers)) continue;
 			const item = this.mapChunkToPlannedItem(
 				chunk,
 				readingMaterialByPath,
 				associatedNoteSignalIndex,
-				nowMs
+				nowMs,
+				canonicalByIdentifier
 			);
 			if (!item) continue;
 			candidates.push(item);
 		}
 
 		for (const task of pdfTasks) {
-			if (!targetDeckIds.includes(task.deckId)) continue;
+			const taskDeckIdentifier = getTaskTopicId(task);
+			if (!targetIdentifiers.has(String(taskDeckIdentifier || "").trim())) continue;
 			if (task.status === "done" || task.status === "suspended" || task.status === "removed")
 				continue;
 
@@ -287,6 +403,7 @@ export class IRScheduleKernel {
 				title: String(task.title || "").trim() || "PDF 书签任务",
 				displayName: extractPdfHeading(String(task.title || "").trim() || "PDF 书签任务"),
 				sourceFile: task.pdfPath,
+				topicKey: this.resolveTopicKey(task.pdfPath, task.meta?.tagGroup),
 				...associationMeta,
 				resumeLink: task.link,
 				priority: Number(task.priorityUi ?? task.priorityEff ?? 5),
@@ -295,7 +412,7 @@ export class IRScheduleKernel {
 				nextRepDate,
 				nextReviewDate,
 				estimatedMinutes,
-				deckId: task.deckId,
+				deckId: this.resolveCanonicalDeckId(taskDeckIdentifier, canonicalByIdentifier),
 				sourceType: "pdf",
 				explanation: this.buildExplanation({
 					scheduleStatus: String(task.status || "new"),
@@ -313,7 +430,8 @@ export class IRScheduleKernel {
 		}
 
 		for (const task of epubTasks) {
-			if (!targetDeckIds.includes(task.deckId)) continue;
+			const taskDeckIdentifier = getTaskTopicId(task);
+			if (!targetIdentifiers.has(String(taskDeckIdentifier || "").trim())) continue;
 			if (task.status === "done" || task.status === "suspended" || task.status === "removed")
 				continue;
 
@@ -337,6 +455,7 @@ export class IRScheduleKernel {
 				id: task.id,
 				title: String(task.title || "").trim() || "EPUB",
 				sourceFile: task.epubFilePath,
+				topicKey: this.resolveTopicKey(task.epubFilePath, task.meta?.tagGroup),
 				...associationMeta,
 				priority: Number(task.priorityUi ?? task.priorityEff ?? 5),
 				intervalDays: Number(task.intervalDays ?? 1),
@@ -344,7 +463,7 @@ export class IRScheduleKernel {
 				nextRepDate,
 				nextReviewDate,
 				estimatedMinutes,
-				deckId: task.deckId,
+				deckId: this.resolveCanonicalDeckId(taskDeckIdentifier, canonicalByIdentifier),
 				sourceType: "epub",
 				explanation: this.buildExplanation({
 					scheduleStatus: String(task.status || "new"),
@@ -362,9 +481,11 @@ export class IRScheduleKernel {
 		}
 		const generated = this.planGenerator.generatePlan(candidates, {
 			horizonDays: 7,
-			dailyBudgetMinutes: 45,
+			dailyBudgetMinutes: planningSettings.dailyTimeBudgetMinutes ?? 45,
+			enableInterleaving: planningSettings.interleaveMode !== false,
+			maxConsecutiveSameTopic: planningSettings.maxConsecutiveSameTopic ?? 3,
 		});
-		return this.buildPlannedScheduleFromMap(generated.itemsByDate, targetDeckIds, reason);
+		return this.buildPlannedScheduleFromMap(generated.itemsByDate, canonicalDeckIds, reason);
 	}
 
 	async previewScheduleImpact(
@@ -420,9 +541,12 @@ export class IRScheduleKernel {
 			nowMs,
 		});
 
+		const planningSettings = this.getPlanningSettingsSnapshot();
 		const generated = this.planGenerator.generatePlan(flatItems, {
 			horizonDays: 7,
-			dailyBudgetMinutes: 45,
+			dailyBudgetMinutes: planningSettings.dailyTimeBudgetMinutes ?? 45,
+			enableInterleaving: planningSettings.interleaveMode !== false,
+			maxConsecutiveSameTopic: planningSettings.maxConsecutiveSameTopic ?? 3,
 		});
 		const after = this.buildPlannedScheduleFromMap(
 			generated.itemsByDate,
@@ -508,13 +632,15 @@ export class IRScheduleKernel {
 		};
 	}
 
-	private belongsToTargetDecks(chunk: IRChunkFileData, targetDeckIds: string[]): boolean {
-		if (chunk.deckIds?.some((deckId) => targetDeckIds.includes(deckId))) {
+	private belongsToTargetDecks(chunk: IRChunkFileData, targetIdentifiers: Set<string>): boolean {
+		if (targetIdentifiers.size === 0) {
 			return true;
 		}
-		if (targetDeckIds.length === 0) {
+
+		if (getChunkTopicIds(chunk).some((deckId) => targetIdentifiers.has(deckId))) {
 			return true;
 		}
+
 		return false;
 	}
 
@@ -522,7 +648,8 @@ export class IRScheduleKernel {
 		chunk: IRChunkFileData,
 		readingMaterialByPath: Map<string, ReadingMaterial>,
 		associatedNoteSignalIndex: IRAssociatedNoteSignalIndex,
-		nowMs: number
+		nowMs: number,
+		canonicalByIdentifier: Map<string, string>
 	): IRPlannedScheduleItem | null {
 		const scheduleStatus = String(chunk.scheduleStatus || "new");
 		if (
@@ -556,6 +683,7 @@ export class IRScheduleKernel {
 			id: chunk.chunkId,
 			title,
 			sourceFile: filePath,
+			topicKey: this.resolveTopicKey(filePath, chunk.meta?.tagGroup),
 			...associationMeta,
 			resumeLink: material?.resumeLink,
 			priority: (chunk.priorityUi as number | undefined) ?? chunk.priorityEff ?? 5,
@@ -564,7 +692,7 @@ export class IRScheduleKernel {
 			nextRepDate,
 			nextReviewDate,
 			estimatedMinutes,
-			deckId: chunk.deckIds?.[0],
+			deckId: this.resolveCanonicalDeckId(getChunkTopicIds(chunk)[0], canonicalByIdentifier),
 			sourceType: "chunk",
 			explanation: this.buildExplanation({
 				scheduleStatus,

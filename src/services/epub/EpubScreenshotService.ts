@@ -339,18 +339,16 @@ export class EpubScreenshotService {
 		cfi: string,
 		extractedText: string,
 		chapterIndex?: number,
-		chapterTitle?: string
+		chapterTitle?: string,
+		sourcePath?: string
 	): string {
-		const displayText =
-			extractedText.length > 30
-				? `${extractedText.slice(0, 30)}...`
-				: extractedText || "screenshot";
 		const link = this.linkService.buildEpubLink(
 			filePath,
 			cfi,
-			displayText,
+			extractedText,
 			chapterIndex,
-			chapterTitle
+			chapterTitle,
+			sourcePath
 		);
 		if (!extractedText) {
 			return `> [!EPUB|] ${link}\n`;
@@ -367,14 +365,16 @@ export class EpubScreenshotService {
 		filePath: string,
 		cfi: string,
 		chapterIndex?: number,
-		chapterTitle?: string
+		chapterTitle?: string,
+		sourcePath?: string
 	): string {
 		const link = this.linkService.buildEpubLink(
 			filePath,
 			cfi,
 			"screenshot",
 			chapterIndex,
-			chapterTitle
+			chapterTitle,
+			sourcePath
 		);
 		return `> [!EPUB|] ${link}\n> ![[${imagePath}]]\n`;
 	}

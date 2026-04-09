@@ -290,7 +290,7 @@
 					<div class="epub-tut-section">
 						<div class="epub-tut-title">EPUB 解析引擎</div>
 						<div class="epub-tut-text">
-							<p>EPUB 文件阅读现已完全基于 <strong>Readium</strong> 内核；历史阅读定位仍会自动兼容迁移。</p>
+							<p>EPUB 文件阅读现已完全基于 <strong>foliate-js</strong> 内核；历史阅读定位仍会自动兼容迁移。</p>
 						</div>
 					</div>
 

@@ -770,6 +770,7 @@ const BUILTIN_YAML_KEYS = new Set([
 	"we_priority",
 	"we_type",
 	"we_difficulty",
+	"created",
 	"we_created",
 	"tags",
 ]);

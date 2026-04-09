@@ -205,7 +205,6 @@ export interface Card {
 	 * const front = result.fields?.front; // 动态获取 front 字段
 	 * ```
 	 *
-	 * @see ContentOnlyMigration 迁移工具
 	 * @see MarkdownFieldsConverter Parser 基类
 	 */
 	fields?: Record<string, string>;

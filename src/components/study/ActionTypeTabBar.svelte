@@ -14,9 +14,9 @@
   let t = $derived($tr);
 </script>
 
-<div class="action-type-tab-bar">
+<div class="action-type-tab-bar weave-toolbar-tabs">
   <button
-    class="tab-btn"
+    class="tab-btn weave-toolbar-tab"
     class:active={activeType === 'format'}
     onclick={() => onTypeChange('format')}
   >
@@ -25,7 +25,7 @@
   </button>
   
   <button
-    class="tab-btn"
+    class="tab-btn weave-toolbar-tab"
     class:active={activeType === 'split'}
     onclick={() => onTypeChange('split')}
   >
@@ -36,49 +36,17 @@
 
 <style>
   .action-type-tab-bar {
-    display: flex;
-    gap: 6px;
     border-bottom: none;
     margin-bottom: 0;
-    overflow-x: auto;
     background: transparent;
-    scrollbar-width: none;
-  }
-
-  .action-type-tab-bar::-webkit-scrollbar {
-    display: none;
   }
   
   .tab-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
     gap: 8px;
-    padding: 9px 18px;
     min-width: fit-content;
     white-space: nowrap;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 999px;
     margin-bottom: 0;
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.18s ease;
-    position: relative;
-  }
-  
-  .tab-btn:hover {
-    color: var(--text-normal);
-    background: color-mix(in srgb, var(--background-modifier-hover) 86%, transparent);
-  }
-  
-  .tab-btn.active {
-    background: var(--background-primary);
-    color: var(--text-normal);
-    border-color: color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
-    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.06);
+    font-weight: 500;
   }
   
   .tab-btn:focus-visible {
@@ -98,8 +66,8 @@
   }
   
   .tab-btn.active .count-badge {
-    background: color-mix(in srgb, var(--interactive-accent) 18%, var(--background-primary));
-    color: var(--interactive-accent);
+    background: color-mix(in srgb, var(--interactive-accent) 16%, var(--background-secondary));
+    color: var(--text-accent);
   }
   
   .tab-btn:hover .count-badge {
@@ -108,13 +76,8 @@
 
   @media (max-width: 768px) {
     .tab-btn {
-      border: none;
-      box-shadow: none;
-    }
-
-    .tab-btn.active {
-      border: none;
-      box-shadow: none;
+      min-height: 40px;
+      padding: 8px 10px;
     }
   }
 </style>

@@ -1,0 +1,73 @@
+import { App, Modal } from "obsidian";
+import { mount, unmount } from "svelte";
+import type { ColumnOrder, ColumnKey, ColumnVisibility } from "../tables/types/table-types";
+import ColumnManager from "../ui/ColumnManager.svelte";
+
+export interface ColumnManagerQuickPreset {
+	id: string;
+	label: string;
+	description: string;
+}
+
+export interface ColumnManagerModalObsidianOptions {
+	visibility: ColumnVisibility;
+	columnOrder: ColumnOrder;
+	quickPresets?: ColumnManagerQuickPreset[];
+	activePresetId?: string | null;
+	onVisibilityChange: (key: ColumnKey, value: boolean) => void;
+	onOrderChange: (newOrder: ColumnOrder) => void;
+	onApplyPreset?: (presetId: string) => void;
+	onResetToDefaults?: () => void;
+	onClose?: () => void;
+}
+
+export class ColumnManagerModalObsidian extends Modal {
+	private component: ReturnType<typeof mount> | null = null;
+	private readonly options: ColumnManagerModalObsidianOptions;
+
+	constructor(app: App, options: ColumnManagerModalObsidianOptions) {
+		super(app);
+		this.options = options;
+	}
+
+	onOpen() {
+		this.setTitle("字段管理");
+		this.modalEl.addClass("weave-column-manager-modal");
+		this.modalEl.setCssProps({
+			width: "min(820px, 92vw)",
+			"max-width": "820px",
+			"max-height": "80vh",
+		});
+
+		this.contentEl.empty();
+		this.contentEl.addClass("weave-column-manager-modal-content");
+		this.contentEl.setCssProps({
+			padding: "0 var(--size-4-6) var(--size-4-6)",
+			overflow: "auto",
+		});
+
+		this.component = mount(ColumnManager, {
+			target: this.contentEl,
+			props: {
+				visibility: this.options.visibility,
+				columnOrder: this.options.columnOrder,
+				quickPresets: this.options.quickPresets ?? [],
+				activePresetId: this.options.activePresetId ?? null,
+				onVisibilityChange: this.options.onVisibilityChange,
+				onOrderChange: this.options.onOrderChange,
+				onApplyPreset: this.options.onApplyPreset ?? (() => {}),
+				onResetToDefaults: this.options.onResetToDefaults ?? (() => {}),
+			},
+		});
+	}
+
+	onClose() {
+		if (this.component) {
+			void unmount(this.component);
+			this.component = null;
+		}
+
+		this.contentEl.empty();
+		this.options.onClose?.();
+	}
+}

@@ -8,6 +8,8 @@ export interface IRPlanGeneratorOptions {
 	loadSmoothingPenalty?: number;
 	volatilityPenaltyFactor?: number;
 	continuityBonus?: number;
+	enableInterleaving?: boolean;
+	maxConsecutiveSameTopic?: number;
 }
 
 interface IRPlanningContext {
@@ -17,6 +19,8 @@ interface IRPlanningContext {
 	loadSmoothingPenalty: number;
 	volatilityPenaltyFactor: number;
 	continuityBonus: number;
+	enableInterleaving: boolean;
+	maxConsecutiveSameTopic: number;
 }
 
 interface IRPlanningOrigin {
@@ -30,12 +34,19 @@ interface IRCandidateEvaluation {
 	loadPenalty: number;
 	fatiguePenalty: number;
 	volatilityPenalty: number;
+	interleavePenalty: number;
 }
 
 interface IRMoveCandidate {
 	item: IRPlannedScheduleItem;
 	destinationEvaluation: IRCandidateEvaluation;
 	utilityDelta: number;
+}
+
+interface IRPlanningCursor {
+	lastSourceFile: string | null;
+	lastTopicKey: string | null;
+	sameTopicRunLength: number;
 }
 
 function formatDateKey(date: Date): string {
@@ -87,6 +98,8 @@ export class IRPlanGeneratorService {
 		const loadSmoothingPenalty = options?.loadSmoothingPenalty ?? 1.2;
 		const volatilityPenaltyFactor = options?.volatilityPenaltyFactor ?? 1.6;
 		const continuityBonus = options?.continuityBonus ?? 0.6;
+		const enableInterleaving = options?.enableInterleaving ?? true;
+		const maxConsecutiveSameTopic = Math.max(1, options?.maxConsecutiveSameTopic ?? 3);
 		const today = new Date();
 		today.setHours(0, 0, 0, 0);
 		const horizonEnd = new Date(today);
@@ -140,6 +153,8 @@ export class IRPlanGeneratorService {
 			loadSmoothingPenalty,
 			volatilityPenaltyFactor,
 			continuityBonus,
+			enableInterleaving,
+			maxConsecutiveSameTopic,
 		};
 
 		for (let offset = 0; offset < horizonDays; offset++) {
@@ -155,15 +170,21 @@ export class IRPlanGeneratorService {
 
 			let currentLoad = 0;
 			const selected: IRPlannedScheduleItem[] = [];
-			let lastSourceFile: string | null = null;
+			let cursor: IRPlanningCursor = {
+				lastSourceFile: null,
+				lastTopicKey: null,
+				sameTopicRunLength: 0,
+			};
 
 			while (candidates.length > 0) {
+				const candidateTopicCounts = this.buildTopicCounts(candidates);
 				candidates.sort((a, b) => {
 					const aUtility = this.evaluateCandidateForDay(
 						a,
 						day,
 						currentLoad,
-						lastSourceFile,
+						cursor,
+						candidateTopicCounts,
 						origins,
 						planningContext
 					).utility;
@@ -171,7 +192,8 @@ export class IRPlanGeneratorService {
 						b,
 						day,
 						currentLoad,
-						lastSourceFile,
+						cursor,
+						candidateTopicCounts,
 						origins,
 						planningContext
 					).utility;
@@ -186,7 +208,8 @@ export class IRPlanGeneratorService {
 					next,
 					day,
 					currentLoad,
-					lastSourceFile,
+					cursor,
+					candidateTopicCounts,
 					origins,
 					planningContext
 				);
@@ -207,7 +230,7 @@ export class IRPlanGeneratorService {
 					next.explanation.compositeScore = evaluation.utility;
 					selected.push(next);
 					assigned.add(next.id);
-					lastSourceFile = next.sourceFile;
+					cursor = this.advanceCursor(cursor, next);
 				}
 			}
 
@@ -255,8 +278,10 @@ export class IRPlanGeneratorService {
 			});
 
 		const normalized = new Map<string, IRPlannedScheduleItem[]>();
-		for (const day of days) {
-			normalized.set(day.dateKey, day.items);
+		for (const [dateKey, dayItems] of Array.from(itemsByDate.entries()).sort((a, b) =>
+			a[0].localeCompare(b[0])
+		)) {
+			normalized.set(dateKey, [...dayItems]);
 		}
 
 		return { days, itemsByDate: normalized };
@@ -266,7 +291,8 @@ export class IRPlanGeneratorService {
 		item: IRPlannedScheduleItem,
 		day: Date,
 		currentLoad: number,
-		lastSourceFile: string | null,
+		cursor: IRPlanningCursor,
+		candidateTopicCounts: Map<string, number>,
 		origins: Map<string, IRPlanningOrigin>,
 		context: IRPlanningContext
 	): IRCandidateEvaluation {
@@ -302,7 +328,16 @@ export class IRPlanGeneratorService {
 			volatilityPenalty,
 		});
 		const continuityBoost =
-			lastSourceFile && lastSourceFile === item.sourceFile ? context.continuityBonus : 0;
+			cursor.lastSourceFile && cursor.lastSourceFile === item.sourceFile
+				? context.continuityBonus
+				: 0;
+		const interleavePenalty = this.calculateInterleavePenalty(
+			item,
+			dayShift,
+			cursor,
+			candidateTopicCounts,
+			context
+		);
 		const scheduleFidelityBoost =
 			dayShift === 0
 				? origin.frozenUntilOriginalDay
@@ -312,7 +347,9 @@ export class IRPlanGeneratorService {
 					: 0.2
 				: 0;
 		const utility = roundScore(
-			clampScore(baseUtility + continuityBoost + scheduleFidelityBoost - smoothingPenalty)
+			clampScore(
+				baseUtility + continuityBoost + scheduleFidelityBoost - smoothingPenalty - interleavePenalty
+			)
 		);
 		const loadPenalty = roundScore(clampScore(loadRatio * 4 + smoothingPenalty));
 
@@ -321,7 +358,113 @@ export class IRPlanGeneratorService {
 			loadPenalty,
 			fatiguePenalty: roundScore(fatiguePenalty),
 			volatilityPenalty: roundScore(volatilityPenalty),
+			interleavePenalty,
 		};
+	}
+
+	private buildTopicCounts(items: IRPlannedScheduleItem[]): Map<string, number> {
+		const counts = new Map<string, number>();
+		for (const item of items) {
+			counts.set(item.topicKey, (counts.get(item.topicKey) || 0) + 1);
+		}
+		return counts;
+	}
+
+	private advanceCursor(cursor: IRPlanningCursor, item: IRPlannedScheduleItem): IRPlanningCursor {
+		if (cursor.lastTopicKey === item.topicKey) {
+			return {
+				lastSourceFile: item.sourceFile,
+				lastTopicKey: item.topicKey,
+				sameTopicRunLength: cursor.sameTopicRunLength + 1,
+			};
+		}
+
+		return {
+			lastSourceFile: item.sourceFile,
+			lastTopicKey: item.topicKey,
+			sameTopicRunLength: 1,
+		};
+	}
+
+	private getTailCursor(items: IRPlannedScheduleItem[]): IRPlanningCursor {
+		const tail = items[items.length - 1];
+		if (!tail) {
+			return {
+				lastSourceFile: null,
+				lastTopicKey: null,
+				sameTopicRunLength: 0,
+			};
+		}
+
+		let sameTopicRunLength = 1;
+		for (let index = items.length - 2; index >= 0; index--) {
+			if (items[index].topicKey !== tail.topicKey) {
+				break;
+			}
+			sameTopicRunLength += 1;
+		}
+
+		return {
+			lastSourceFile: tail.sourceFile,
+			lastTopicKey: tail.topicKey,
+			sameTopicRunLength,
+		};
+	}
+
+	private calculateInterleavePenalty(
+		item: IRPlannedScheduleItem,
+		dayShift: number,
+		cursor: IRPlanningCursor,
+		candidateTopicCounts: Map<string, number>,
+		context: IRPlanningContext
+	): number {
+		if (!context.enableInterleaving) {
+			return 0;
+		}
+		if (!cursor.lastTopicKey || cursor.lastTopicKey !== item.topicKey) {
+			return 0;
+		}
+		if (!this.hasAlternativeTopic(candidateTopicCounts, item.topicKey)) {
+			return 0;
+		}
+		if (item.explanation.isOverdue) {
+			return 0;
+		}
+
+		const overflow = cursor.sameTopicRunLength + 1 - context.maxConsecutiveSameTopic;
+		if (overflow <= 0) {
+			return 0;
+		}
+
+		let penalty = Math.min(2.7, overflow * 0.9);
+		if (dayShift < 0) {
+			penalty *= 0.7;
+		}
+		if (item.priority >= 8 || item.explanation.scoreBreakdown.urgencyScore >= 6.5) {
+			penalty *= 0.4;
+		} else if (item.priority >= 7) {
+			penalty *= 0.7;
+		}
+
+		return roundScore(penalty);
+	}
+
+	private hasAlternativeTopic(candidateTopicCounts: Map<string, number>, topicKey: string): boolean {
+		for (const [candidateTopic, count] of candidateTopicCounts.entries()) {
+			if (candidateTopic !== topicKey && count > 0) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private incrementTopicCount(
+		candidateTopicCounts: Map<string, number>,
+		topicKey: string
+	): Map<string, number> {
+		const next = new Map(candidateTopicCounts);
+		next.set(topicKey, (next.get(topicKey) || 0) + 1);
+		return next;
 	}
 
 	private rebalanceAdjacentDays(
@@ -426,8 +569,8 @@ export class IRPlanGeneratorService {
 		origins: Map<string, IRPlanningOrigin>,
 		context: IRPlanningContext
 	): IRMoveCandidate | null {
-		const lastDestinationSource =
-			destinationItems.length > 0 ? destinationItems[destinationItems.length - 1].sourceFile : null;
+		const destinationCursor = this.getTailCursor(destinationItems);
+		const destinationTopicCounts = this.buildTopicCounts(destinationItems);
 		const candidates = sourceItems
 			.map((item): IRMoveCandidate | null => {
 				const origin = origins.get(item.id);
@@ -439,7 +582,12 @@ export class IRPlanGeneratorService {
 					item,
 					sourceDay,
 					Math.max(0, sourceLoad - item.estimatedMinutes),
-					null,
+					{
+						lastSourceFile: null,
+						lastTopicKey: null,
+						sameTopicRunLength: 0,
+					},
+					this.buildTopicCounts(sourceItems.filter((sourceItem) => sourceItem.id !== item.id)),
 					origins,
 					context
 				);
@@ -447,7 +595,8 @@ export class IRPlanGeneratorService {
 					item,
 					destinationDay,
 					destinationLoad,
-					lastDestinationSource,
+					destinationCursor,
+					this.incrementTopicCount(destinationTopicCounts, item.topicKey),
 					origins,
 					context
 				);

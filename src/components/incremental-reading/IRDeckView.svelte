@@ -3,40 +3,12 @@
    * 模块级别的服务实例（跨组件生命周期保持）
    */
   import { IRStorageService } from '../../services/incremental-reading/IRStorageService';
-  import { IRStorageAdapterV4 } from '../../services/incremental-reading/IRStorageAdapterV4';
   import { IRDeckManager } from '../../services/incremental-reading/IRDeckManager';
   import { IRChunkFileService } from '../../services/incremental-reading/IRChunkFileService';
-  import type { IncrementalReadingSettings } from '../../types/plugin-settings.d';
   import type { App } from 'obsidian';
-
-  /**
-   * v3.0: 从插件设置构建 IRSchedulingFacadeConfig
-   */
-  // export function buildFacadeConfigFromSettings(irSettings?: IncrementalReadingSettings): IRSchedulingFacadeConfig {
-  //   if (!irSettings) return {};
-    
-  //   return {
-  //     strategy: irSettings.scheduleStrategy || 'processing',
-  //     advancedSettings: {
-  //       dailyTimeBudgetMinutes: irSettings.dailyTimeBudgetMinutes ?? 40,
-  //       maxAppearancesPerDay: irSettings.maxAppearancesPerDay ?? 2,
-  //       priorityHalfLifeDays: irSettings.priorityHalfLifeDays ?? 7,
-  //       agingStrength: irSettings.agingStrength || 'low',
-  //       autoPostponeStrategy: irSettings.autoPostponeStrategy || 'off',
-  //       tagGroupLearningSpeed: irSettings.enableTagGroupPrior ? 'medium' : 'off'
-  //     }
-  //   };
-  // }
 
   let _storageService: IRStorageService | null = null;
   let _deckManager: IRDeckManager | null = null;
-  // @deprecated v5.0: 旧 UUID 标记方案已弃用
-  // let _contentSplitter: IRContentSplitter | null = null;
-  // let _fileWatcher: IRFileWatcher | null = null;
-  // let _incrementalSync: IRIncrementalSync | null = null;
-  // v6.0: 仅使用 V4 调度服务
-  import { IRV4SchedulerService } from '../../services/incremental-reading/IRV4SchedulerService';
-  let _v4SchedulerService: IRV4SchedulerService | null = null;
   let _servicesInitialized = false;
   let _currentApp: App | null = null;
 
@@ -49,9 +21,6 @@
     return {
       get storageService() { return _storageService; },
       get deckManager() { return _deckManager; },
-      /** v6.0: V4 调度服务 */
-      get v4SchedulerService() { return _v4SchedulerService; },
-      get initialized() { return _servicesInitialized; },
       async init() {
         if (_servicesInitialized && _storageService && _deckManager) {
           return;
@@ -62,19 +31,10 @@
           await _storageService.initialize();
           
           _deckManager = new IRDeckManager(app, _storageService, importFolder);
-          
-          // v6.0: 仅初始化 V4 调度服务
-          _v4SchedulerService = new IRV4SchedulerService(app, importFolder);
-          _v4SchedulerService.initialize().catch(() => {});
-          
           _servicesInitialized = true;
         } catch (error) {
           _servicesInitialized = true;
         }
-      },
-      // @deprecated v5.0: 旧 UUID 标记方案已弃用，setImportFolder 不再需要
-      setImportFolder(_folder: string) {
-        // no-op: 块文件方案不需要监听 importFolder
       }
     };
   }
@@ -89,7 +49,7 @@
    * @module components/incremental-reading/IRDeckView
    * @version 2.0.0
    */
-  import { onMount, onDestroy, untrack } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { Notice, Menu, Modal, Setting, TFile } from 'obsidian';
   import { MaterialImportModalObsidian } from './MaterialImportModalObsidian';
   import IRLoadForecastModal from '../modals/IRLoadForecastModal.svelte';
@@ -105,28 +65,12 @@
   import DeckGridCard from '../deck-views/DeckGridCard.svelte';
   import type { DeckCardStyle } from '../../types/plugin-settings.d';
   import { getColorSchemeForDeck } from '../../config/card-color-schemes';
-  import IRNoBlocksAvailableModal from './IRNoBlocksAvailableModal.svelte';
-  import IRTemporaryLearnAheadModal from './IRTemporaryLearnAheadModal.svelte';
-  import { calculateSelectionScore } from '../../services/incremental-reading/IRCoreAlgorithmsV4';
   import { IRPdfBookmarkTaskService } from '../../services/incremental-reading/IRPdfBookmarkTaskService';
   import { IREpubBookmarkTaskService } from '../../services/incremental-reading/IREpubBookmarkTaskService';
   import { recomputeAndBroadcastIRData } from '../../services/incremental-reading/IRScheduleRefreshService';
 
   interface Props {
     plugin: WeavePlugin;
-    onStartReading?: (
-      deckPath: string,
-      blocks: any[],
-      deckName: string,
-      focusStats?: {
-        timeBudgetMinutes: number;
-        estimatedMinutes: number;
-        candidateCount: number;
-        dueToday: number;
-        dueWithinDays: number;
-        learnAheadDays: number;
-      }
-    ) => void;
   }
 
   function buildSessionTotalsByBlockId(sessions: Array<{ blockId?: string; duration?: number }> | undefined | null): Map<string, number> {
@@ -140,14 +84,11 @@
     return totals;
   }
 
-  let { plugin, onStartReading }: Props = $props();
+  let { plugin }: Props = $props();
 
   const deckCardStyle = $derived<DeckCardStyle>(
     (plugin.settings.deckCardStyle as DeckCardStyle) || 'default'
   );
-
-  // v6.0: 获取模块级别的服务实例
-  const services = untrack(() => getServices(plugin.app, plugin.settings?.incrementalReading?.importFolder));
 
   // 牌组数据
   let decks = $state<IRDeck[]>([]);
@@ -161,17 +102,6 @@
   let showLoadForecastModal = $state(false);
   let loadForecastDeckId = $state<string | undefined>(undefined);
   
-  // 空队列选择模态窗状态
-  let showNoBlocksModal = $state(false);
-  let noBlocksModalDeckPath = $state<string>('');
-  let noBlocksModalDeckName = $state<string>('');
-  let noBlocksModalStats = $state<{ totalBlocks: number; dueToday: number; dueWithinDays: number; learnAheadDays?: number } | undefined>(undefined);
-
-  // 临时扩大提前阅读范围模态窗状态
-  let showTemporaryLearnAheadModal = $state(false);
-  let temporaryLearnAheadDeckPath = $state<string>('');
-  let temporaryLearnAheadDeckName = $state<string>('');
-
   // 打开导入模态窗（供外部事件调用）
   export function openImportModal() {
     if (importModalInstance) {
@@ -420,7 +350,7 @@
             loadRatePercent = Math.round(maxRatio * 100);
           }
 
-          // PDF 书签任务的统计已在 IRStorageService.getDeckStats 中纳入，此处仅覆盖 loadRatePercent
+          // PDF / EPUB 书签任务的统计已在 IRStorageService.getDeckStats 中纳入，此处仅覆盖 loadRatePercent
           newStats[deckKey] = {
             ...d.stats,
             loadRatePercent
@@ -702,11 +632,8 @@
     modal.open();
   }
 
-  // 处理开始阅读（使用学习队列）- V4版本
+  // 处理开始阅读：统一跳转到现役侧边栏阅读流程
   async function handleStartReading(deckPath: string) {
-    logger.info('[IRDeckView] ========== handleStartReading V4 开始 ==========');
-    logger.info('[IRDeckView] deckPath:', deckPath);
-    
     try {
       const redirectDeck = decks.find(d => d.id === deckPath || d.path === deckPath);
       const redirectDeckName = redirectDeck?.name || deckPath.split('/').pop() || '增量阅读';
@@ -715,110 +642,14 @@
         deckName: redirectDeckName,
         closeLegacyFocusLeaves: true
       });
-      return;
-
-      // V4: 使用 IRStorageAdapterV4
-      logger.debug('[IRDeckView] 初始化 IRStorageAdapterV4...');
-      const storageAdapter = new IRStorageAdapterV4(plugin.app);
-      await storageAdapter.initialize();
-      logger.debug('[IRDeckView] IRStorageAdapterV4 初始化完成');
-      
-      // 获取 V4 格式的内容块
-      const allBlocksV4 = await storageAdapter.getBlocksByDeckV4Fast(deckPath);
-      logger.info('[IRDeckView] 牌组总内容块数(V4):', allBlocksV4.length);
-      if (allBlocksV4.length > 0) {
-        logger.debug('[IRDeckView] 第一个块状态:', allBlocksV4[0].status, 'nextRepDate:', allBlocksV4[0].nextRepDate);
-      }
-      
-      await services.init();
-      const timeBudgetMinutes = plugin.settings?.incrementalReading?.dailyTimeBudgetMinutes ?? 40;
-      const queueResult = await services.v4SchedulerService!.getStudyQueueV4(deckPath, {
-        timeBudgetMinutes,
-        currentSourcePath: null,
-        markActive: true,
-        preloadedBlocks: allBlocksV4
-      });
-      const dueBlocksV4 = queueResult.queue;
-      logger.info(
-        '[IRDeckView] 学习队列生成(V4/DRR):',
-        'len=',
-        dueBlocksV4.length,
-        'candidate=',
-        queueResult.stats.candidateCount,
-        'budgetMin=',
-        timeBudgetMinutes,
-        'estMin=',
-        queueResult.totalEstimatedMinutes.toFixed(1),
-        'persistedTransitions=',
-        queueResult.stats.persistedTransitions
-      );
-      
-      // 获取牌组名称（同时匹配 id 和 path，解决牌组名显示为ID的问题）
-      const deck = decks.find(d => d.id === deckPath || d.path === deckPath);
-      const deckName = deck?.name || deckPath.split('/').pop() || '增量阅读';
-
-      const stats = deckStats[deckPath];
-      const focusStats = {
-        timeBudgetMinutes,
-        estimatedMinutes: queueResult.totalEstimatedMinutes,
-        candidateCount: queueResult.stats.candidateCount,
-        dueToday: stats?.dueToday ?? 0,
-        dueWithinDays: stats?.dueWithinDays ?? 0,
-        learnAheadDays: plugin.settings?.incrementalReading?.learnAheadDays ?? 3
-      };
-      
-      // 队列为空时：显示选择模态窗而非自动进入全量阅读
-      if (dueBlocksV4.length === 0) {
-        logger.warn('[IRDeckView] 队列为空! 总块数:', allBlocksV4.length);
-        
-        if (allBlocksV4.length === 0) {
-          new Notice('该牌组暂无内容块');
-          return;
-        }
-        
-        // 获取统计信息用于模态窗显示
-        noBlocksModalDeckPath = deckPath;
-        noBlocksModalDeckName = deckName;
-        noBlocksModalStats = stats ? {
-          totalBlocks: stats.totalCount,
-          dueToday: stats.dueToday,
-          dueWithinDays: stats.dueWithinDays,
-          learnAheadDays: plugin.settings?.incrementalReading?.learnAheadDays ?? 3
-        } : { totalBlocks: allBlocksV4.length, dueToday: 0, dueWithinDays: 0, learnAheadDays: plugin.settings?.incrementalReading?.learnAheadDays ?? 3 };
-        showNoBlocksModal = true;
-        
-        logger.info('[IRDeckView] 显示空队列选择模态窗');
-        return;
-      }
-      
-      logger.info('[IRDeckView] 准备打开阅读界面V4, deckName:', deckName);
-      
-      // 使用到期队列
-      const blocksToUse = dueBlocksV4;
-      
-      if (onStartReading) {
-        logger.info('[IRDeckView] 调用 onStartReading 回调...');
-        onStartReading?.(deckPath, blocksToUse, deckName, focusStats);
-      } else {
-        logger.info('[IRDeckView] 直接调用 plugin.openIRFocusView (完整界面)...');
-        // v6.0: 直接传递 V4 blocks
-        await plugin.redirectIncrementalReadingToSidebar({
-          deckPath,
-          deckName,
-          closeLegacyFocusLeaves: true
-        });
-        logger.info('[IRDeckView] 已打开完整聚焦阅读界面:', deckPath, '学习队列:', blocksToUse.length);
-      }
-      logger.info('[IRDeckView] ========== handleStartReading V4 完成 ==========');
     } catch (error) {
-      logger.error('[IRDeckView] ========== handleStartReading V4 失败 ==========');
       logger.error('[IRDeckView] 开始阅读失败:', error);
       new Notice('开始阅读失败');
     }
   }
   
-  // 提前阅读所有内容块，不管是否到期
-  async function handleAdvanceReading(deckPath: string, overrideLearnAheadDays?: number) {
+  // 提前阅读入口也统一跳转到现役侧边栏阅读流程
+  async function handleAdvanceReading(deckPath: string) {
     try {
       const redirectDeck = decks.find(d => d.id === deckPath || d.path === deckPath);
       const redirectDeckName = redirectDeck?.name || deckPath.split('/').pop() || '增量阅读';
@@ -827,105 +658,6 @@
         deckName: redirectDeckName,
         closeLegacyFocusLeaves: true
       });
-      return;
-
-      // V4: 使用 IRStorageAdapterV4
-      const storageAdapter = new IRStorageAdapterV4(plugin.app);
-      await storageAdapter.initialize();
-      
-      // 获取所有 V4 格式内容块
-      let allBlocksV4 = await storageAdapter.getBlocksByDeckV4(deckPath);
-
-      // 合并 PDF 书签任务
-      try {
-        const pdfService = new IRPdfBookmarkTaskService(plugin.app);
-        await pdfService.initialize();
-        const pdfTasks = await pdfService.getTasksByDeck(deckPath);
-        for (const task of pdfTasks) {
-          allBlocksV4.push(pdfService.toBlockV4(task));
-        }
-      } catch (e) {
-        logger.debug('[IRDeckView] 提前阅读：加载 PDF 书签任务失败', e);
-      }
-      
-      // 获取待读天数设置（默认3天）
-      const baseLearnAheadDays = plugin.settings?.incrementalReading?.learnAheadDays ?? 3;
-      const learnAheadDays = overrideLearnAheadDays ?? baseLearnAheadDays;
-      const endOfToday = new Date();
-      endOfToday.setHours(23, 59, 59, 999);
-      const endMs = endOfToday.getTime();
-      const dayMs = 24 * 60 * 60 * 1000;
-      const safeDays = Math.max(learnAheadDays, 1);
-      const limitMs = endMs + (safeDays - 1) * dayMs;
-      
-      // 过滤 suspended/done 状态、#ignore 标签，以及超出提前阅读上限的内容块
-      allBlocksV4 = allBlocksV4.filter(b => {
-        // 过滤 suspended 和 done 状态
-        if (b.status === 'suspended' || b.status === 'done') return false;
-        
-        // 过滤带有 #ignore 标签的内容块
-        const hasIgnoreInTags = b.tags?.some(tag => 
-          tag.toLowerCase() === 'ignore' || tag.toLowerCase() === '#ignore'
-        ) || false;
-        
-        // 备用检查: notes 中是否包含 #ignore
-        const hasIgnoreInContent = /#ignore\b/i.test(b.notes || '');
-        
-        const hasIgnoreTag = hasIgnoreInTags || hasIgnoreInContent;
-        
-        if (hasIgnoreTag) {
-          logger.debug(`[IRDeckView] 提前阅读V4：过滤忽略标签内容块: ${b.id}`);
-          return false;
-        }
-        
-        // 过滤超出待读天数范围的内容块（nextRepDate 为 0 表示新块，始终包含）
-        if (b.nextRepDate && b.nextRepDate > limitMs) {
-          logger.debug(`[IRDeckView] 提前阅读V4：过滤超出${learnAheadDays}天范围的内容块: ${b.id}`);
-          return false;
-        }
-        
-        return true;
-      });
-      
-      if (allBlocksV4.length === 0) {
-        const deck = decks.find(d => d.id === deckPath || d.path === deckPath);
-        const deckName = deck?.name || deckPath.split('/').pop() || '增量阅读';
-
-        if (!overrideLearnAheadDays && baseLearnAheadDays === 14) {
-          temporaryLearnAheadDeckPath = deckPath;
-          temporaryLearnAheadDeckName = deckName;
-          showTemporaryLearnAheadModal = true;
-          return;
-        }
-
-        new Notice(`该牌组暂无可提前阅读的内容块（限${learnAheadDays}天内到期）`);
-        return;
-      }
-      
-      // v5.5: 使用 calculateSelectionScore 算法对队列进行排序
-      if (allBlocksV4.length > 1) {
-        allBlocksV4 = allBlocksV4
-          .map(block => ({ block, score: calculateSelectionScore(block, null) }))
-          .sort((a, b) => b.score - a.score)
-          .map(item => item.block);
-        logger.info('[IRDeckView] 提前阅读队列已按算法排序');
-      }
-      
-      // 获取牌组名称（同时匹配 id 和 path，解决牌组名显示为ID的问题）
-      const deck = decks.find(d => d.id === deckPath || d.path === deckPath);
-      const deckName = deck?.name || deckPath.split('/').pop() || '增量阅读';
-      
-      if (onStartReading) {
-        onStartReading?.(deckPath, allBlocksV4, deckName);
-      } else {
-        // v6.0: 直接传递 V4 blocks
-        await plugin.redirectIncrementalReadingToSidebar({
-          deckPath,
-          deckName,
-          closeLegacyFocusLeaves: true
-        });
-        logger.info('[IRDeckView] 已打开提前阅读完整界面:', deckPath, '总块数:', allBlocksV4.length);
-      }
     } catch (error) {
       logger.error('[IRDeckView] 提前阅读V4失败:', error);
       new Notice('提前阅读失败');
@@ -1028,47 +760,6 @@
     onClose={() => {
       showLoadForecastModal = false;
       loadForecastDeckId = undefined;
-    }}
-  />
-{/if}
-
-<!-- 空队列选择模态窗 -->
-{#if showNoBlocksModal}
-  <IRNoBlocksAvailableModal
-    deckName={noBlocksModalDeckName}
-    stats={noBlocksModalStats}
-    onClose={() => {
-      showNoBlocksModal = false;
-      noBlocksModalDeckPath = '';
-      noBlocksModalDeckName = '';
-      noBlocksModalStats = undefined;
-    }}
-    onAdvanceReading={() => {
-      showNoBlocksModal = false;
-      handleAdvanceReading(noBlocksModalDeckPath);
-    }}
-    onGoToMemoryDeck={() => {
-      showNoBlocksModal = false;
-    }}
-  />
-{/if}
-
-{#if showTemporaryLearnAheadModal}
-  <IRTemporaryLearnAheadModal
-    deckName={temporaryLearnAheadDeckName}
-    minDays={15}
-    maxDays={30}
-    initialDays={30}
-    onClose={() => {
-      showTemporaryLearnAheadModal = false;
-      temporaryLearnAheadDeckPath = '';
-      temporaryLearnAheadDeckName = '';
-    }}
-    onConfirm={(days) => {
-      showTemporaryLearnAheadModal = false;
-      handleAdvanceReading(temporaryLearnAheadDeckPath, days);
-      temporaryLearnAheadDeckPath = '';
-      temporaryLearnAheadDeckName = '';
     }}
   />
 {/if}

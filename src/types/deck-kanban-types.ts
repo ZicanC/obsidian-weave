@@ -18,6 +18,42 @@ export interface DeckTagGroup {
 	description?: string; // 描述（可选）
 }
 
+export const DECK_TAG_EMPTY_GROUP_KEY = "__weave_internal__no-tag";
+export const DECK_TAG_GROUP_OTHER_KEY = "__weave_internal__other-tag-group";
+
+const DECK_TAG_COLUMN_KEY_PREFIX = "__weave_tag__:";
+
+export function normalizeDeckTagName(tag: string): string {
+	return tag.trim();
+}
+
+export function normalizeDeckTagGroupTags(tags: readonly string[]): string[] {
+	const normalized: string[] = [];
+	const seen = new Set<string>();
+
+	for (const rawTag of tags) {
+		if (typeof rawTag !== "string") continue;
+		const tag = normalizeDeckTagName(rawTag);
+		if (!tag || seen.has(tag)) continue;
+		seen.add(tag);
+		normalized.push(tag);
+	}
+
+	return normalized;
+}
+
+export function normalizeDeckTagGroup(tagGroup: DeckTagGroup): DeckTagGroup {
+	return {
+		...tagGroup,
+		name: tagGroup.name.trim(),
+		tags: normalizeDeckTagGroupTags(tagGroup.tags),
+	};
+}
+
+export function createDeckTagColumnKey(tag: string): string {
+	return `${DECK_TAG_COLUMN_KEY_PREFIX}${normalizeDeckTagName(tag)}`;
+}
+
 /**
  * 牌组分组类型
  */

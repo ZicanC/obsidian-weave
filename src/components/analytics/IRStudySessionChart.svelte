@@ -51,6 +51,16 @@
   // 会话数据
   let sessions = $state<IRStudySession[]>([]);
 
+  function getSessionDeckIdentifiers(session: Partial<IRStudySession> | null | undefined): string[] {
+    return Array.from(
+      new Set(
+        [session?.topicId, session?.deckId]
+          .map(value => String(value ?? '').trim())
+          .filter(Boolean)
+      )
+    );
+  }
+
   // 最小会话时长（秒）- 1分钟
   const MIN_SESSION_DURATION = 60;
 
@@ -102,7 +112,9 @@
       if (deck?.path) selectedAliases.add(deck.path);
     }
 
-    return sessions.filter(s => selectedAliases.has(s.deckId));
+    return sessions.filter(session =>
+      getSessionDeckIdentifiers(session).some(identifier => selectedAliases.has(identifier))
+    );
   }
 
   // 生成散点图数据

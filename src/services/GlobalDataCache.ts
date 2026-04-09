@@ -18,8 +18,6 @@ import { logger } from "../utils/logger";
 interface CacheState {
 	/** 牌组缓存 */
 	decks: Deck[] | null;
-	/** 模板缓存 - 已弃用 */
-	templates: any[] | null;
 	/** 缓存时间戳 */
 	timestamp: number;
 	/** 是否正在加载 */
@@ -35,7 +33,6 @@ export class GlobalDataCache {
 	// 缓存状态
 	private state: CacheState = {
 		decks: null,
-		templates: null,
 		timestamp: 0,
 		isLoading: false,
 	};
@@ -96,22 +93,16 @@ export class GlobalDataCache {
 
 		this.loadPromise = (async () => {
 			try {
-				// 并行加载牌组和模板数据
-				const [decks, templates] = await Promise.all([
-					this.loadDecks(plugin),
-					this.loadTemplates(plugin),
-				]);
+				const decks = await this.loadDecks(plugin);
 
 				// 更新缓存
 				this.state.decks = decks;
-				this.state.templates = templates;
 				this.state.timestamp = Date.now();
 
 				const duration = Date.now() - startTime;
 
 				logger.debug("[GlobalDataCache]", `数据预加载完成: ${duration}ms`, {
 					decks: decks.length,
-					templates: templates.length,
 				});
 			} catch (error) {
 				logger.error("[GlobalDataCache] 数据预加载失败:", error);
@@ -151,30 +142,6 @@ export class GlobalDataCache {
 	}
 
 	/**
-	 * 获取模板列表（带缓存）
-	 *
-	 * @param forceRefresh 是否强制刷新缓存
-	 * @returns 模板列表
-	 */
-	async getTemplates(forceRefresh = false): Promise<any[]> {
-		// 如果强制刷新或缓存无效，重新加载
-		if (forceRefresh || !this.isCacheValid() || !this.state.templates) {
-			logger.debug("[GlobalDataCache]", "模板缓存无效，重新加载...");
-
-			// 如果正在预加载，等待完成
-			if (this.loadPromise) {
-				await this.loadPromise;
-			} else {
-				// 模板系统已弃用，返回空数组
-				this.state.templates = [];
-				this.state.timestamp = Date.now();
-			}
-		}
-
-		return this.state.templates || [];
-	}
-
-	/**
 	 * 手动刷新缓存
 	 *
 	 * @param plugin 插件实例
@@ -191,7 +158,6 @@ export class GlobalDataCache {
 	clear(): void {
 		logger.debug("[GlobalDataCache]", "清除缓存");
 		this.state.decks = null;
-		this.state.templates = null;
 		this.state.timestamp = 0;
 		this.loadPromise = null;
 	}
@@ -253,14 +219,6 @@ export class GlobalDataCache {
 		}
 	}
 
-	/**
-	 * 加载模板数据
-	 */
-	private loadTemplates(_plugin: WeavePlugin): any[] {
-		// 模板系统已弃用，直接返回空数组
-		logger.debug("[GlobalDataCache]", "模板系统已弃用，返回空数组");
-		return [];
-	}
 }
 
 /**

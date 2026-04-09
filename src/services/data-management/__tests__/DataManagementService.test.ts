@@ -313,4 +313,56 @@ describe('DataManagementService', () => {
       }),
     ]);
   });
+
+  it('detects cards that still use legacy epub source link formats', async () => {
+    const { plugin } = createMemoryPlugin();
+    plugin.dataStorage.getCards.mockResolvedValue([
+      {
+        uuid: 'card-1',
+        content: '[[Books/demo.epub#weave-cfi=readium%3Aabc&chapter=3&text=Hello%20world|Old]]',
+      },
+      {
+        uuid: 'card-2',
+        content: '[[Books/demo.epub#weave-cfi=readium:xyz|demo]]',
+      },
+    ]);
+    const service = new DataManagementService(plugin);
+
+    const result = await service.check('epub_source_link_migration');
+
+    expect(result).toMatchObject({
+      type: 'epub_source_link_migration',
+      status: 'warning',
+      count: 1,
+      items: ['card-1'],
+    });
+  });
+
+  it('migrates legacy epub source links to the new cfi-only format', async () => {
+    const { plugin } = createMemoryPlugin();
+    plugin.dataStorage.getCards.mockResolvedValue([
+      {
+        uuid: 'card-1',
+        content:
+          '前文 [[Books/demo.epub#weave-cfi=readium%3Aabc&chapter=3&text=Hello%20world|Old]] 后文',
+      },
+    ]);
+    const service = new DataManagementService(plugin);
+
+    const result = await service.fix('epub_source_link_migration');
+
+    expect(result).toEqual({
+      type: 'epub_source_link_migration',
+      success: 1,
+      failed: 0,
+      errors: [],
+    });
+    expect(plugin.dataStorage.saveCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        uuid: 'card-1',
+        content: '前文 [[Books/demo.epub#weave-cfi=readium:abc|demo]] 后文',
+        modified: expect.any(String),
+      })
+    );
+  });
 });

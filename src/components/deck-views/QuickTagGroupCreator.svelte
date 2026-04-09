@@ -1,7 +1,11 @@
 <script lang="ts">
   import { Notice } from 'obsidian';
   import type AnkiObsidianPlugin from '../../main';
-  import type { DeckTagGroup } from '../../types/deck-kanban-types';
+  import {
+    normalizeDeckTagGroupTags,
+    normalizeDeckTagName,
+    type DeckTagGroup
+  } from '../../types/deck-kanban-types';
   import { untrack } from 'svelte';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import { tr } from '../../utils/i18n';
@@ -19,7 +23,7 @@
 
   // 初始化时加载编辑数据
   let name = $state(untrack(() => editingTagGroup?.name || ''));
-  let tags = $state<string[]>(untrack(() => editingTagGroup?.tags || []));
+  let tags = $state<string[]>(untrack(() => normalizeDeckTagGroupTags(editingTagGroup?.tags || [])));
   let tagInput = $state('');
   let showSuggestions = $state(false);
   let allExistingTags = $state<string[]>([]);
@@ -31,7 +35,12 @@
       const tagSet = new Set<string>();
       decks.forEach(deck => {
         if (deck.tags && deck.tags.length > 0) {
-          deck.tags.forEach(tag => tagSet.add(tag));
+          deck.tags.forEach(tag => {
+            const normalizedTag = normalizeDeckTagName(tag);
+            if (normalizedTag) {
+              tagSet.add(normalizedTag);
+            }
+          });
         }
       });
       allExistingTags = Array.from(tagSet).sort();
@@ -43,19 +52,21 @@
   const filteredTags = $derived.by(() => {
     if (!tagInput) return [];
     const lower = tagInput.toLowerCase();
+    const normalizedSelectedTags = new Set(tags.map((tag) => normalizeDeckTagName(tag)));
     return allExistingTags
-      .filter(tag => tag.toLowerCase().includes(lower) && !tags.includes(tag))
+      .filter(tag => tag.toLowerCase().includes(lower) && !normalizedSelectedTags.has(normalizeDeckTagName(tag)))
       .slice(0, 8);
   });
 
   // 添加标签
   function addTag(tag: string) {
-    if (!tag.trim()) return;
-    if (tags.includes(tag)) {
+    const normalizedTag = normalizeDeckTagName(tag);
+    if (!normalizedTag) return;
+    if (tags.some((existingTag) => normalizeDeckTagName(existingTag) === normalizedTag)) {
       new Notice(t('decks.tagGroupCreator.tagExists'));
       return;
     }
-    tags = [...tags, tag.trim()];
+    tags = [...tags, normalizedTag];
     tagInput = '';
     showSuggestions = false;
   }
@@ -85,7 +96,8 @@
       new Notice(t('decks.tagGroupCreator.nameRequired'));
       return;
     }
-    if (tags.length === 0) {
+    const normalizedTags = normalizeDeckTagGroupTags(tags);
+    if (normalizedTags.length === 0) {
       new Notice(t('decks.tagGroupCreator.tagRequired'));
       return;
     }
@@ -93,7 +105,7 @@
     const savedTagGroup: DeckTagGroup = {
       id: editingTagGroup?.id || `tag-group-${Date.now()}`, // 编辑模式保留原 ID
       name: name.trim(),
-      tags,
+      tags: normalizedTags,
       icon: editingTagGroup?.icon || '📦', // 保留原图标
       color: editingTagGroup?.color || '#3b82f6' // 保留原颜色
     };

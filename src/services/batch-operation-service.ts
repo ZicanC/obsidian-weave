@@ -11,6 +11,7 @@ import type {
 	BatchProgressCallback,
 	BatchUpdateFunction,
 } from "../types/batch-operation-types";
+import { getCardFront } from "../utils/card-field-helper";
 
 /**
  * 批量更新卡片
@@ -83,8 +84,7 @@ export async function batchUpdateCards(
  */
 function getCardTitle(card: Card): string {
 	return (
-		card.fields?.front ||
-		card.fields?.question ||
+		getCardFront(card) ||
 		card.fields?.word ||
 		card.fields?.term ||
 		`卡片 ${card.uuid.substring(0, 8)}`

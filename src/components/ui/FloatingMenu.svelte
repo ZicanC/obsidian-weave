@@ -188,7 +188,7 @@
     background: var(--background-primary);
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 60%, transparent);
     border-radius: 12px;
-    overflow: hidden;
+    overflow: visible;
     box-shadow: 
       0 8px 24px rgba(0, 0, 0, 0.12),
       0 2px 8px rgba(0, 0, 0, 0.08);
@@ -217,5 +217,9 @@
   /* 全局样式：确保 portal 到 body 的菜单不受父容器影响 */
   :global(body > .floating-menu) {
     position: fixed !important;
+  }
+
+  :global(.menu) {
+    z-index: var(--weave-z-dropdown, 1600);
   }
 </style>

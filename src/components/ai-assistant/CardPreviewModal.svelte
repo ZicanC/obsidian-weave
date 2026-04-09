@@ -21,7 +21,6 @@
     isOpen: boolean;
     isGenerating?: boolean; // 是否正在生成
     totalCards?: number; // 总卡片数
-    mode?: 'test' | 'split'; // 模式：test 表示测试题生成，split 表示卡片拆分
     onClose: () => void;
     onImport: (selectedCards: GeneratedCard[], targetDeck: string) => Promise<void>;
   }
@@ -33,7 +32,6 @@
     isOpen, 
     isGenerating = false,
     totalCards = 0,
-    mode = 'test',
     onClose, 
     onImport 
   }: Props = $props();
@@ -447,24 +445,14 @@ ${originalContent}
   // ===== 加载牌组列表 =====
   async function loadDecks() {
     try {
-      logger.debug('[CardPreviewModal] 开始加载牌组列表, mode:', mode);
+      logger.debug('[CardPreviewModal] 开始加载牌组列表');
       const allDecks = await plugin.dataStorage.getDecks();
       logger.debug('[CardPreviewModal] 获取到所有牌组:', allDecks.length);
       
-      // 根据模式过滤牌组
-      if (mode === 'split') {
-        // 拆分模式：只显示记忆学习牌组（非考试题组）
-        availableDecks = allDecks
-          .filter(deck => deck.purpose !== 'test')
-          .map(deck => ({ id: deck.id, name: deck.name }));
-        logger.debug('[CardPreviewModal] 拆分模式，过滤后牌组:', availableDecks.length);
-      } else {
-        // 测试题模式：只显示考试题组
-        availableDecks = allDecks
-          .filter(deck => deck.purpose === 'test')
-          .map(deck => ({ id: deck.id, name: deck.name }));
-        logger.debug('[CardPreviewModal] 测试题模式，过滤后牌组:', availableDecks.length);
-      }
+      availableDecks = allDecks
+        .filter(deck => deck.purpose !== 'test')
+        .map(deck => ({ id: deck.id, name: deck.name }));
+      logger.debug('[CardPreviewModal] 拆分模式，过滤后牌组:', availableDecks.length);
       
       // 如果没有匹配的牌组，显示所有牌组
       if (availableDecks.length === 0) {
@@ -492,8 +480,7 @@ ${originalContent}
     } catch (error) {
       logger.error('[CardPreviewModal] Load decks failed:', error);
       // 创建默认牌组备用
-      const defaultName = mode === 'split' ? '默认记忆牌组' : '默认考试题组';
-      availableDecks = [{ id: 'default', name: defaultName }];
+      availableDecks = [{ id: 'default', name: '默认记忆牌组' }];
       selectedDeckId = 'default';
     }
   }
@@ -809,7 +796,7 @@ ${originalContent}
               <!-- 牌组选择器 -->
               <div class="deck-selector">
                 <label for="target-deck">
-                  {mode === 'split' ? '导入到记忆牌组' : t('modals.cardPreview.importTo')}：
+                  导入到记忆牌组：
                 </label>
                 <ObsidianDropdown
                   className="target-deck-select"
@@ -1518,4 +1505,3 @@ ${originalContent}
     }
   }
 </style>
-

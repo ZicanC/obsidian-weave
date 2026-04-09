@@ -219,7 +219,7 @@ export class DiagnosticEngine {
 	 * 检查选择题格式
 	 */
 	private checkChoiceFormat(card: Card): DiagnosticResult {
-		const frontContent = card.fields?.front || "";
+		const frontContent = getCardFront(card);
 
 		if (!frontContent) {
 			return {
@@ -281,7 +281,7 @@ export class DiagnosticEngine {
 	 * 修复选择题格式
 	 */
 	private fixChoiceFormat(card: Card): Card {
-		const frontContent = card.fields?.front || "";
+		const frontContent = getCardFront(card);
 
 		// 简单的格式修复逻辑
 		// 这里可以实现更复杂的修复算法
@@ -401,7 +401,7 @@ export class DiagnosticEngine {
 	 * 检查标签格式
 	 */
 	private checkTagFormat(card: Card): DiagnosticResult {
-		const frontContent = card.fields?.front || "";
+		const frontContent = getCardFront(card);
 		const tags = frontContent.match(/#[\w\u4e00-\u9fa5]+/g) || [];
 
 		if (tags.length === 0) {

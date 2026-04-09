@@ -167,7 +167,7 @@ describe('EpubStorageService', () => {
     expect(settings.flowMode).toBe('paginated');
   });
 
-  it('returns paginated reader defaults on mobile when no reader settings were saved', async () => {
+  it('returns scrolled reader defaults on mobile when no reader settings were saved', async () => {
     const { app } = createMemoryApp();
 
     await withPlatformIsMobile(true, async () => {
@@ -177,7 +177,7 @@ describe('EpubStorageService', () => {
       expect(settings.lineHeight).toBe(1.66);
       expect(settings.widthMode).toBe('full');
       expect(settings.layoutMode).toBe('paginated');
-      expect(settings.flowMode).toBe('paginated');
+      expect(settings.flowMode).toBe('scrolled');
     });
   });
 
@@ -207,14 +207,14 @@ describe('EpubStorageService', () => {
     expect(JSON.parse(files.get('weave/incremental-reading/epub-reading/reader-settings.json') || '{}').flowMode).toBe('paginated');
   });
 
-  it('resets the old forced mobile scrolled default back to paginated on mobile', async () => {
+  it('migrates the legacy mobile paginated default back to scrolled on mobile', async () => {
     const { app } = createMemoryApp({
       'weave/incremental-reading/epub-reading/reader-settings.mobile.json': JSON.stringify({
-        lineHeight: 1.9,
+        lineHeight: 1.66,
         theme: 'default',
         widthMode: 'full',
         layoutMode: 'paginated',
-        flowMode: 'scrolled',
+        flowMode: 'paginated',
         showScrolledSideNav: true,
       }),
     });
@@ -224,7 +224,31 @@ describe('EpubStorageService', () => {
       const settings = await service.loadReaderSettings();
 
       expect(settings.layoutMode).toBe('paginated');
-      expect(settings.flowMode).toBe('paginated');
+      expect(settings.flowMode).toBe('scrolled');
+    });
+  });
+
+  it('forces saved mobile paginated settings back to scrolled to avoid blank mobile rendering', async () => {
+    const { app } = createMemoryApp({
+      'weave/incremental-reading/epub-reading/reader-settings.mobile.json': JSON.stringify({
+        lineHeight: 1.82,
+        theme: 'sepia',
+        widthMode: 'full',
+        layoutMode: 'paginated',
+        flowMode: 'paginated',
+        showScrolledSideNav: false,
+      }),
+    });
+
+    await withPlatformIsMobile(true, async () => {
+      const service = new EpubStorageService(app);
+      const settings = await service.loadReaderSettings();
+
+      expect(settings.lineHeight).toBe(1.82);
+      expect(settings.theme).toBe('sepia');
+      expect(settings.layoutMode).toBe('paginated');
+      expect(settings.flowMode).toBe('scrolled');
+      expect(settings.showScrolledSideNav).toBe(false);
     });
   });
 

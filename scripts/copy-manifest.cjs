@@ -1,38 +1,24 @@
 const fs = require("fs");
 const path = require("path");
-const dotenv = require("dotenv");
+const {
+	DEFAULT_PRUNABLE_RUNTIME_FILES,
+	copyFileAtomicWithRetry,
+	resolvePluginDir,
+	syncRuntimeFiles,
+} = require("./hot-reload-utils.cjs");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const DIST_DIR = path.join(PROJECT_ROOT, "dist");
 const MANIFEST_SOURCE = path.join(PROJECT_ROOT, "manifest.json");
 const PLUGIN_ID = "weave";
 
-function readEnvValueFromDotEnv(key) {
-	const envPath = path.join(PROJECT_ROOT, ".env");
-	if (!fs.existsSync(envPath)) {
-		return null;
-	}
-
-	try {
-		const parsed = dotenv.parse(fs.readFileSync(envPath, "utf8"));
-		const value = parsed[key];
-		return typeof value === "string" && value.trim() ? value.trim() : null;
-	} catch {
-		return null;
-	}
-}
-
-function resolveVaultPath() {
-	return process.env.OBSIDIAN_VAULT_PATH?.trim() || readEnvValueFromDotEnv("OBSIDIAN_VAULT_PATH");
-}
-
 function resolveTargetDirs() {
 	const targets = new Set();
 	targets.add(DIST_DIR);
 
-	const vaultPath = resolveVaultPath();
-	if (vaultPath) {
-		targets.add(path.resolve(vaultPath, "plugins", PLUGIN_ID));
+	const pluginDir = resolvePluginDir(PLUGIN_ID, process.env);
+	if (pluginDir) {
+		targets.add(pluginDir);
 	}
 
 	return [...targets];
@@ -43,9 +29,30 @@ if (!fs.existsSync(MANIFEST_SOURCE)) {
 	process.exit(1);
 }
 
-for (const targetDir of resolveTargetDirs()) {
-	fs.mkdirSync(targetDir, { recursive: true });
-	const manifestTarget = path.join(targetDir, "manifest.json");
-	fs.copyFileSync(MANIFEST_SOURCE, manifestTarget);
-	console.log(`Copied manifest.json -> ${manifestTarget}`);
+async function main() {
+	for (const targetDir of resolveTargetDirs()) {
+		fs.mkdirSync(targetDir, { recursive: true });
+		await copyFileAtomicWithRetry(MANIFEST_SOURCE, path.join(targetDir, "manifest.json"), {
+			retries: 8,
+			delayMs: 120,
+		});
+
+		const { runtimeFiles, removed } = await syncRuntimeFiles(DIST_DIR, targetDir, {
+			pruneStaleManagedFiles: true,
+			managedFiles: DEFAULT_PRUNABLE_RUNTIME_FILES,
+			retries: 8,
+			delayMs: 120,
+		});
+
+		const syncedFiles = new Set(["manifest.json", ...runtimeFiles]);
+		console.log(`Synced ${syncedFiles.size} build file(s) -> ${targetDir}`);
+		if (removed.length > 0) {
+			console.log(`Removed stale build file(s) -> ${removed.join(", ")}`);
+		}
+	}
 }
+
+main().catch((error) => {
+	console.error(error?.message || error);
+	process.exit(1);
+});

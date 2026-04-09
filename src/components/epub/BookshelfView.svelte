@@ -13,7 +13,7 @@
                 type EpubBookshelfSettings,
                 DEFAULT_EPUB_BOOKSHELF_SETTINGS
         } from '../../services/epub';
-        import { ReadiumVaultPublicationBridge } from '../../services/epub/ReadiumVaultPublicationBridge';
+        import { FoliateVaultPublicationParser } from '../../services/epub/FoliateVaultPublicationParser';
         import type { EpubBook } from '../../services/epub';
         import { epubActiveDocumentStore } from '../../stores/epub-active-document-store';
         import { showObsidianConfirm } from '../../utils/obsidian-confirm';
@@ -84,6 +84,10 @@
                         return plugin.getEpubBookshelfSettings();
                 }
                 return { ...DEFAULT_EPUB_BOOKSHELF_SETTINGS };
+        }
+
+        function getWeavePlugin(): any {
+                return (app as any)?.plugins?.getPlugin?.('weave');
         }
 
         function setBookshelfFiles(files: EpubFileInfo[]) {
@@ -263,9 +267,10 @@
                         return;
                 }
 
-                const publicationBridge = new ReadiumVaultPublicationBridge(app);
+                const publicationParser = new FoliateVaultPublicationParser(app);
                 try {
-                        const coverUrl = await publicationBridge.extractCoverDataUrlFromFile(file.path);
+                        const loaded = await publicationParser.load(file.path);
+                        const coverUrl = loaded.coverImage || null;
                         if (runId !== refreshRunId) return;
                         cacheResolvedCover(file.path, coverUrl);
                 } catch {
@@ -273,7 +278,7 @@
                                 cacheResolvedCover(file.path, null);
                         }
                 } finally {
-                        publicationBridge.dispose();
+                        publicationParser.dispose();
                 }
         }
 
@@ -514,6 +519,12 @@
 
         async function openBookInNewTab(filePath: string) {
                 try {
+                        const plugin = getWeavePlugin();
+                        if (plugin && typeof plugin.openEpubReader === 'function') {
+                                await plugin.openEpubReader(filePath);
+                                return;
+                        }
+
                         const leaf = app.workspace.getLeaf('tab');
                         if (!leaf) return;
                         await leaf.setViewState({

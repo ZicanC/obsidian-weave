@@ -12,6 +12,16 @@ export interface BacklinkHighlight {
 	createdTime?: number;
 }
 
+export interface BacklinkSourceMatch {
+	sourceFile: string;
+	sourceRef?: string;
+}
+
+export interface BacklinkSourceHint {
+	text?: string;
+	createdTime?: number;
+}
+
 interface ParsedEpubCallout {
 	color: string;
 	linkMarkup: string;
@@ -109,7 +119,109 @@ export class EpubBacklinkHighlightService {
 		return highlights;
 	}
 
+	async findSourceForCfi(
+		cfiRange: string,
+		epubFilePath: string,
+		preferredSourceFile?: string,
+		hint?: BacklinkSourceHint
+	): Promise<BacklinkSourceMatch | null> {
+		const normalizedTargetCfi = EpubLinkService.normalizeCfi(cfiRange);
+		const allHighlights = await this.collectHighlights(epubFilePath);
+		let matchedHighlights = allHighlights.filter(
+			(highlight) => EpubLinkService.normalizeCfi(highlight.cfiRange) === normalizedTargetCfi
+		);
+		if (matchedHighlights.length === 0) {
+			matchedHighlights = this.findHighlightsByHint(allHighlights, hint);
+		}
+		if (matchedHighlights.length === 0) {
+			return null;
+		}
+
+		const normalizedPreferredPath = preferredSourceFile
+			? normalizePath(preferredSourceFile)
+			: "";
+		if (normalizedPreferredPath) {
+			const sameSourceMatches = matchedHighlights.filter(
+				(highlight) => normalizePath(highlight.sourceFile || "") === normalizedPreferredPath
+			);
+			const preferredMatch = this.pickPreferredSourceMatch(sameSourceMatches);
+			if (preferredMatch) {
+				return {
+					sourceFile: preferredMatch.sourceFile,
+					sourceRef: preferredMatch.sourceRef,
+				};
+			}
+		}
+
+		const matched = this.pickPreferredSourceMatch(matchedHighlights);
+		if (!matched) {
+			return null;
+		}
+
+		return {
+			sourceFile: matched.sourceFile,
+			sourceRef: matched.sourceRef,
+		};
+	}
+
+	private findHighlightsByHint(
+		highlights: BacklinkHighlight[],
+		hint?: BacklinkSourceHint
+	): BacklinkHighlight[] {
+		const normalizedTargetText = this.normalizeHighlightText(hint?.text);
+		if (!normalizedTargetText) {
+			return [];
+		}
+
+		const textMatches = highlights.filter(
+			(highlight) => this.normalizeHighlightText(highlight.text) === normalizedTargetText
+		);
+		if (textMatches.length <= 1) {
+			return textMatches;
+		}
+
+		if (typeof hint?.createdTime === "number" && Number.isFinite(hint.createdTime) && hint.createdTime > 0) {
+			const sameTimestampMatches = textMatches.filter((highlight) =>
+				this.isSameHighlightTimestamp(highlight.createdTime, hint.createdTime)
+			);
+			if (sameTimestampMatches.length > 0) {
+				return sameTimestampMatches;
+			}
+		}
+
+		return textMatches;
+	}
+
+	private normalizeHighlightText(text?: string): string {
+		return String(text || "")
+			.replace(/\r\n/g, "\n")
+			.replace(/\u00a0/g, " ")
+			.replace(/[ \t]+/g, " ")
+			.replace(/\n{2,}/g, "\n")
+			.trim();
+	}
+
+	private isSameHighlightTimestamp(left?: number, right?: number): boolean {
+		if (
+			typeof left !== "number" ||
+			!Number.isFinite(left) ||
+			left <= 0 ||
+			typeof right !== "number" ||
+			!Number.isFinite(right) ||
+			right <= 0
+		) {
+			return false;
+		}
+
+		return Math.abs(left - right) < 60_000;
+	}
+
 	async findSourceFileForCfi(cfiRange: string, epubFilePath: string): Promise<string | null> {
+		const matchedSource = await this.findSourceForCfi(cfiRange, epubFilePath);
+		if (matchedSource?.sourceFile) {
+			return matchedSource.sourceFile;
+		}
+
 		const encodedCfi = EpubLinkService.encodeCfiForWikilink(cfiRange);
 		const normalizedCfi = EpubLinkService.normalizeCfi(cfiRange);
 		const epubFileName = epubFilePath.split("/").pop() || "";
@@ -175,6 +287,45 @@ export class EpubBacklinkHighlightService {
 		}
 
 		return null;
+	}
+
+	private pickPreferredSourceMatch(highlights: BacklinkHighlight[]): BacklinkHighlight | null {
+		if (highlights.length === 0) {
+			return null;
+		}
+
+		const cardMatch = highlights.find(
+			(highlight) =>
+				typeof highlight.sourceRef === "string" && highlight.sourceRef.startsWith("card:")
+		);
+		if (cardMatch) {
+			return cardMatch;
+		}
+
+		const referencedMatch = highlights.find(
+			(highlight) =>
+				typeof highlight.sourceRef === "string" && highlight.sourceRef.trim().length > 0
+		);
+		if (referencedMatch) {
+			return referencedMatch;
+		}
+
+		const markdownMatch = highlights.find((highlight) => highlight.sourceFile.endsWith(".md"));
+		if (markdownMatch) {
+			return markdownMatch;
+		}
+
+		const canvasMatch = highlights.find((highlight) => highlight.sourceFile.endsWith(".canvas"));
+		if (canvasMatch) {
+			return canvasMatch;
+		}
+
+		const jsonMatch = highlights.find((highlight) => highlight.sourceFile.endsWith(".json"));
+		if (jsonMatch) {
+			return jsonMatch;
+		}
+
+		return highlights[0] || null;
 	}
 
 	async deleteHighlight(

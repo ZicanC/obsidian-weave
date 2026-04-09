@@ -1332,7 +1332,18 @@ export class WeaveDataStorage {
 				hydrated.priority = yaml.we_priority;
 			}
 
-			// 6. tags → tags
+			// 6. created / we_created → created
+			const created =
+				typeof yaml.created === "string"
+					? yaml.created
+					: typeof yaml.we_created === "string"
+						? yaml.we_created
+						: undefined;
+			if (created) {
+				hydrated.created = created;
+			}
+
+			// 7. tags → tags
 			const extractedTags = extractAllTags(card.content || "");
 			if (extractedTags.length > 0) {
 				hydrated.tags = extractedTags;
@@ -1413,7 +1424,18 @@ export class WeaveDataStorage {
 			}
 			if (existingYAML.we_priority !== undefined) metadata.we_priority = existingYAML.we_priority;
 			if (existingYAML.tags) metadata.tags = existingYAML.tags;
-			if (existingYAML.we_created) metadata.we_created = existingYAML.we_created;
+			const canonicalCreated =
+				typeof card.created === "string" && card.created.trim()
+					? card.created
+					: typeof existingYAML.created === "string" && existingYAML.created.trim()
+						? existingYAML.created
+						: typeof existingYAML.we_created === "string" && existingYAML.we_created.trim()
+							? existingYAML.we_created
+							: undefined;
+			if (canonicalCreated) {
+				metadata.created = canonicalCreated;
+			}
+			metadata.we_created = undefined;
 
 			// 使用 setCardProperties 确保 YAML 格式一致
 			const newContent = setCardProperties(card.content || "", metadata);

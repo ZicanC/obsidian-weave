@@ -61,7 +61,6 @@ import { type App, normalizePath } from "obsidian";
 type PluginFolderSettings = {
 	settings?: {
 		weaveParentFolder?: string;
-		tuankiParentFolder?: string;
 	};
 };
 
@@ -179,8 +178,7 @@ export function getV2PathsFromApp(app?: App | AppWithPluginAccess) {
 	try {
 		const pluginHost = app as AppWithPluginAccess | undefined;
 		const plugin = pluginHost?.plugins?.getPlugin?.("weave");
-		const parentFolder =
-			plugin?.settings?.weaveParentFolder ?? plugin?.settings?.tuankiParentFolder;
+		const parentFolder = plugin?.settings?.weaveParentFolder;
 		return getV2Paths(parentFolder);
 	} catch {
 		return getV2Paths(undefined);

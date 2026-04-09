@@ -79,9 +79,6 @@ export interface SettingsWithEditor {
 	/** 默认牌组名称 */
 	defaultDeck?: string;
 	backupRetentionCount?: number;
-	// 已废弃：使用 autoBackupConfig 替代
-	dataBackupIntervalHours?: number;
-	autoBackup?: boolean;
 	// 自动备份配置
 	autoBackupConfig?: import("../../../types/data-management-types").AutoBackupConfig;
 	fsrsParams: import("../../../data/types").FSRSParameters;

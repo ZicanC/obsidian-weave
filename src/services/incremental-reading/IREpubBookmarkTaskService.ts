@@ -61,6 +61,34 @@ function generateEpubBookmarkTaskId(): string {
 	return `epubbm-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function mergeTaskMeta(existing: IRBlockMeta, updates?: Partial<IRBlockMeta>): IRBlockMeta {
+	if (!updates) {
+		return existing;
+	}
+
+	return {
+		...existing,
+		...updates,
+		siblings: updates.siblings
+			? {
+					...existing.siblings,
+					...updates.siblings,
+			  }
+			: existing.siblings,
+	};
+}
+
+function mergeTaskStats(existing: IRBlockStats, updates?: Partial<IRBlockStats>): IRBlockStats {
+	if (!updates) {
+		return existing;
+	}
+
+	return {
+		...existing,
+		...updates,
+	};
+}
+
 export class IREpubBookmarkTaskService {
 	private app: App;
 	private initialized = false;
@@ -173,8 +201,19 @@ export class IREpubBookmarkTaskService {
 	}
 
 	async getTasksByDeck(deckId: string): Promise<IREpubBookmarkTask[]> {
+		return this.getTasksByDeckIdentifiers([deckId]);
+	}
+
+	async getTasksByDeckIdentifiers(deckIds: string[]): Promise<IREpubBookmarkTask[]> {
+		const identifiers = this.toNormalizedSet(deckIds);
+		if (identifiers.size === 0) {
+			return [];
+		}
+
 		const store = await this.readStore();
-		return Object.values(store.tasks).filter((t) => getTaskTopicId(t) === deckId);
+		return Object.values(store.tasks).filter((task) =>
+			identifiers.has(String(getTaskTopicId(task) || "").trim())
+		);
 	}
 
 	async getTasksByEpub(epubFilePath: string): Promise<IREpubBookmarkTask[]> {
@@ -343,8 +382,8 @@ export class IREpubBookmarkTaskService {
 		const updated: IREpubBookmarkTask = {
 			...existing,
 			...updates,
-			meta: (updates as any).meta ? (updates as any).meta : existing.meta,
-			stats: (updates as any).stats ? (updates as any).stats : existing.stats,
+			meta: mergeTaskMeta(existing.meta, updates.meta),
+			stats: mergeTaskStats(existing.stats, updates.stats),
 			updatedAt: Date.now(),
 		};
 

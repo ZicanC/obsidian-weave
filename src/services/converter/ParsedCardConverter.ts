@@ -211,33 +211,9 @@ export class ParsedCardConverter {
 	 * content 构建核心方法
 	 */
 	private buildContent(parsedCard: ParsedCard): string {
-		// 优先使用 content 字段（新架构）
 		if (parsedCard.content) {
 			return parsedCard.content;
 		}
-
-		// 向后兼容：从 front/back 构建 content
-		if (parsedCard.front || parsedCard.back) {
-			const front = parsedCard.front || "";
-			const back = parsedCard.back || "";
-
-			if (back) {
-				return `${front}\n---div---\n${back}`;
-			}
-			return front;
-		}
-
-		// 降级：从 fields 重建（极端向后兼容）
-		if (parsedCard.fields) {
-			const front = parsedCard.fields.front || parsedCard.fields.Front || "";
-			const back = parsedCard.fields.back || parsedCard.fields.Back || "";
-
-			if (back) {
-				return `${front}\n---div---\n${back}`;
-			}
-			return front;
-		}
-
 		return "";
 	}
 
@@ -256,31 +232,6 @@ export class ParsedCardConverter {
 			default:
 				return "basic" as any;
 		}
-	}
-
-	/**
-	 * 推断模板ID
-	 * Compatibility note: template inference is retained only for backward compatibility
-	 */
-	private inferTemplate(_parsedCard: ParsedCard, options: ConversionOptions): string {
-		// templateId 为可选
-		if (options.templateId) {
-			return options.templateId;
-		}
-
-		// 2. 优先使用卡片自带的模板
-		if (_parsedCard.template) {
-			return _parsedCard.template;
-		}
-
-		// 3. 根据卡片类型推断默认模板（向后兼容）
-		const defaultTemplates: Record<string, string> = {
-			basic: "official-qa",
-			cloze: "official-cloze",
-			multiple: "official-mcq",
-		};
-
-		return defaultTemplates[_parsedCard.type] || "official-qa";
 	}
 
 	/**

@@ -652,11 +652,11 @@
           </h2>
         {/if}
 
-        <div class="header-tabs" role="tablist" aria-label="AI制卡配置导航">
+        <div class="header-tabs weave-toolbar-tabs" role="tablist" aria-label="AI制卡配置导航">
           {#each headerTabs as tab}
             <button
               type="button"
-              class="header-tab"
+              class="header-tab weave-toolbar-tab"
               class:active={activeTab === tab.id}
               role="tab"
               id={`tab-${tab.id}`}
@@ -1235,13 +1235,13 @@
 
   .modal-header.modal-header-native {
     grid-template-columns: minmax(0, 1fr);
-    justify-items: center;
+    justify-items: start;
     padding: 12px 24px;
     gap: 0;
   }
 
   .modal-header.modal-header-native .header-tabs {
-    justify-self: center;
+    justify-self: start;
   }
 
   .modal-title {
@@ -1289,42 +1289,14 @@
   }
 
   .header-tabs {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 4px;
     min-width: 0;
     max-width: 100%;
-    justify-self: center;
-    background: var(--background-secondary);
-    border: 1px solid var(--weave-border-visible);
-    border-radius: 999px;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    justify-self: start;
+    width: fit-content;
   }
 
   .header-tab {
-    position: relative;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     min-width: 0;
-    padding: 9px 18px;
-    border: none;
-    border-radius: 999px;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 0.88rem;
-    font-weight: 500;
-    line-height: 1;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: all 0.22s ease;
-  }
-
-  .header-tab:hover {
-    color: var(--text-normal);
-    background: var(--background-modifier-hover);
   }
 
   .header-tab:focus-visible {
@@ -1332,29 +1304,13 @@
     outline-offset: 2px;
   }
 
-  .header-tab.active {
-    color: var(--text-normal);
-    background: var(--background-primary);
-    box-shadow:
-      0 10px 24px rgba(15, 23, 42, 0.08),
-      0 1px 2px rgba(15, 23, 42, 0.06);
-  }
-
-  .header-tab.active::after {
-    content: '';
-    position: absolute;
-    left: 16px;
-    right: 16px;
-    bottom: 5px;
-    height: 2px;
-    border-radius: 999px;
-    background: var(--interactive-accent);
-    opacity: 0.9;
-  }
-
   .header-tab-label {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .header-tab.active .header-tab-label {
+    font-weight: 600;
   }
 
   .tab-panel {
@@ -1899,6 +1855,7 @@
 
     .header-tab {
       flex: 1 0 auto;
+      min-height: 40px;
       padding: 8px 14px;
       font-size: 0.82rem;
     }

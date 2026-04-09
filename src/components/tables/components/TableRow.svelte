@@ -12,6 +12,7 @@
   import ReviewDataCell from "./cells/ReviewDataCell.svelte";
   import ModifiedCell from "./cells/ModifiedCell.svelte";
   import type { FieldTemplateInfo, SourceDocumentStatusInfo, TableRowProps } from "../types/table-types";
+  import { getCardBack, getCardFront } from "../../../utils/card-field-helper";
   import { getCardDeckNames as getNormalizedCardDeckNames } from "../../../utils/yaml-utils";
 
   let {
@@ -194,7 +195,7 @@
       <td class="weave-content-column weave-front-column">
         <div class="weave-cell-content">
           <span class="weave-text-content weave-text-content-primary">
-            {truncateText((card as any).front || card.fields?.front || card.fields?.question || '')}
+            {truncateText((card as any).front || getCardFront(card))}
           </span>
         </div>
       </td>
@@ -202,7 +203,7 @@
       <td class="weave-content-column weave-back-column">
         <div class="weave-cell-content">
           <span class="weave-text-content weave-text-content-secondary">
-            {truncateText((card as any).back || card.fields?.back || card.fields?.answer || '')}
+            {truncateText((card as any).back || getCardBack(card))}
           </span>
         </div>
       </td>
@@ -258,7 +259,6 @@
               ? '点击打开源文档并定位到块引用位置'
               : '点击打开源文档'}
           >
-            <EnhancedIcon name="file-text" size={14} />
             <span>{truncateText(getSourceFileName(card), 20)}</span>
             {#if card.sourceBlock || (card.customFields?.blockId)}
               <EnhancedIcon name="link" size={12} class="weave-has-block-indicator" />
@@ -439,14 +439,13 @@
   @import '../styles/cell-common.css';
 
   .weave-table-row {
-    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 62%, transparent);
     transition: background-color 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
     position: relative;
   }
 
   .weave-table-row:hover {
     background: color-mix(in srgb, var(--background-modifier-hover) 58%, transparent);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
+    box-shadow: inset 0 1px 0 var(--weave-table-grid-hover-border-color, color-mix(in srgb, var(--background-modifier-border) 24%, transparent));
     z-index: 1;
   }
 
@@ -460,8 +459,9 @@
   }
 
   .weave-table-row td {
-    padding: 10px 16px;
-    border-right: 1px solid color-mix(in srgb, var(--background-modifier-border) 45%, transparent);
+    padding: var(--weave-table-cell-padding-y, 6px) var(--weave-table-cell-padding-x, 16px);
+    border-right: 1px solid var(--weave-table-grid-border-color, color-mix(in srgb, var(--background-modifier-border) 45%, transparent));
+    border-bottom: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
     vertical-align: middle;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -469,12 +469,16 @@
     max-width: 0;
   }
 
+  .weave-table-row:last-child td {
+    border-bottom: none;
+  }
+
   .weave-table-row .weave-checkbox-column {
     width: 48px;
     min-width: 48px;
     max-width: 48px;
     text-align: center;
-    padding: 10px 16px;
+    padding: var(--weave-table-cell-padding-y, 6px) var(--weave-table-cell-padding-x, 16px);
     text-overflow: clip;
     overflow: visible;
   }
@@ -523,7 +527,7 @@
 
   .weave-text-content-primary {
     color: var(--text-normal);
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
   }
 
@@ -541,8 +545,8 @@
   .weave-inline-chip {
     display: inline-flex;
     align-items: center;
-    min-height: 24px;
-    padding: 0 10px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border-radius: 999px;
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 65%, transparent);
     background: color-mix(in srgb, var(--weave-table-surface-bg, var(--background-secondary)) 92%, transparent);
@@ -567,8 +571,8 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    min-height: 24px;
-    padding: 0 10px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border-radius: 999px;
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 65%, transparent);
     background: color-mix(in srgb, var(--weave-table-surface-bg, var(--background-secondary)) 92%, transparent);
@@ -642,7 +646,8 @@
   .weave-deck-badge {
     display: inline-flex;
     align-items: center;
-    padding: 3px 9px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     background: color-mix(in srgb, var(--weave-table-surface-bg, var(--background-secondary)) 88%, transparent);
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 70%, transparent);
     border-radius: 999px;
@@ -669,7 +674,8 @@
   .weave-deck-more {
     display: inline-flex;
     align-items: center;
-    padding: 3px 7px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 7px;
     background: color-mix(in srgb, var(--weave-table-surface-bg, var(--background-secondary)) 92%, transparent);
     color: var(--text-faint);
     border-radius: 999px;
@@ -680,7 +686,8 @@
   .weave-state-badge {
     display: inline-flex;
     align-items: center;
-    padding: 2px 8px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border-radius: 4px;
     font-size: 0.75rem;
     font-weight: 500;
@@ -688,34 +695,35 @@
   }
 
   .weave-state-new {
-    background: rgba(var(--color-blue-rgb, 66, 153, 225), 0.15);
-    color: var(--color-blue, #4299e1);
+    background: color-mix(in srgb, var(--color-blue, var(--interactive-accent)) 15%, transparent);
+    color: var(--color-blue, var(--interactive-accent));
   }
 
   .weave-state-learning {
-    background: rgba(var(--color-orange-rgb, 237, 137, 54), 0.15);
-    color: var(--color-orange, #ed8936);
+    background: color-mix(in srgb, var(--color-orange, var(--interactive-accent)) 15%, transparent);
+    color: var(--color-orange, var(--interactive-accent));
   }
 
   .weave-state-review {
-    background: rgba(var(--color-green-rgb, 72, 187, 120), 0.15);
-    color: var(--color-green, #48bb78);
+    background: color-mix(in srgb, var(--color-green, var(--interactive-accent)) 15%, transparent);
+    color: var(--color-green, var(--interactive-accent));
   }
 
   .weave-state-suspended {
-    background: rgba(var(--color-gray-rgb, 113, 128, 150), 0.15);
+    background: color-mix(in srgb, var(--color-gray, var(--text-muted)) 15%, transparent);
     color: var(--text-muted);
   }
 
   .weave-state-done {
-    background: rgba(var(--color-purple-rgb, 128, 90, 213), 0.15);
-    color: var(--color-purple, #805ad5);
+    background: color-mix(in srgb, var(--color-purple, var(--interactive-accent)) 15%, transparent);
+    color: var(--color-purple, var(--interactive-accent));
   }
 
   .weave-priority-badge {
     display: inline-flex;
     align-items: center;
-    padding: 2px 8px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border-radius: 4px;
     font-size: 0.75rem;
     font-weight: 500;
@@ -723,18 +731,18 @@
   }
 
   .weave-priority-1 {
-    background: rgba(var(--color-red-rgb, 245, 101, 101), 0.15);
-    color: var(--color-red, #f56565);
+    background: color-mix(in srgb, var(--color-red, var(--text-error)) 15%, transparent);
+    color: var(--color-red, var(--text-error));
   }
 
   .weave-priority-2 {
-    background: rgba(var(--color-yellow-rgb, 236, 201, 75), 0.15);
-    color: var(--color-yellow, #ecc94b);
+    background: color-mix(in srgb, var(--color-yellow, var(--interactive-accent)) 15%, transparent);
+    color: var(--color-yellow, var(--interactive-accent));
   }
 
   .weave-priority-3 {
-    background: rgba(var(--color-green-rgb, 72, 187, 120), 0.15);
-    color: var(--color-green, #48bb78);
+    background: color-mix(in srgb, var(--color-green, var(--interactive-accent)) 15%, transparent);
+    color: var(--color-green, var(--interactive-accent));
   }
 
   .weave-tags-container {
@@ -773,14 +781,14 @@
 
   @media (max-width: 768px) {
     .weave-table-row td {
-      padding: 9px 10px;
+      padding: 4px 10px;
     }
 
     .weave-table-row .weave-checkbox-column {
       width: 42px;
       min-width: 42px;
       max-width: 42px;
-      padding: 9px 10px;
+      padding: 4px 10px;
     }
 
     .weave-actions-column {
@@ -808,8 +816,8 @@
     .weave-field-template-chip,
     .weave-source-status-badge,
     .weave-deck-badge {
-      min-height: 22px;
-      padding: 0 8px;
+      min-height: 17px;
+      padding: 0 5px;
     }
 
     .weave-inline-chip,

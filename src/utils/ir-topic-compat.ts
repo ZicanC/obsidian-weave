@@ -26,6 +26,61 @@ function normalizeStringArray(value: unknown): string[] {
 	return single ? [single] : [];
 }
 
+function normalizeDueAtValue(value: unknown): string | undefined {
+	if (value instanceof Date) {
+		return Number.isNaN(value.getTime()) ? undefined : value.toISOString();
+	}
+
+	if (typeof value === "number") {
+		if (!Number.isFinite(value)) {
+			return undefined;
+		}
+		const date = new Date(value);
+		return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+	}
+
+	return normalizeString(value);
+}
+
+function getLegacyReadingMaterialDueAt(
+	material: Partial<ReadingMaterial> | Record<string, unknown> | null | undefined
+): string | undefined {
+	const fsrs = (material as Record<string, unknown> | null | undefined)?.fsrs;
+	if (!fsrs || typeof fsrs !== "object") {
+		return undefined;
+	}
+
+	return normalizeDueAtValue((fsrs as Record<string, unknown>).due);
+}
+
+export function getReadingMaterialDueAt(
+	material: Partial<ReadingMaterial> | Record<string, unknown> | null | undefined
+): string | undefined {
+	return (
+		normalizeDueAtValue((material as Record<string, unknown> | null | undefined)?.nextDueAt) ||
+		getLegacyReadingMaterialDueAt(material)
+	);
+}
+
+export function setReadingMaterialDueAt<T extends Partial<ReadingMaterial>>(
+	material: T,
+	dueAt: string | number | Date | null | undefined
+): T {
+	const normalizedDueAt = normalizeDueAtValue(dueAt);
+	const updated = { ...material } as Record<string, unknown>;
+	updated.nextDueAt = normalizedDueAt;
+
+	const fsrs = updated.fsrs;
+	if (fsrs && typeof fsrs === "object") {
+		updated.fsrs = {
+			...(fsrs as Record<string, unknown>),
+			due: normalizedDueAt,
+		};
+	}
+
+	return updated as T;
+}
+
 export function getReadingTopicId(
 	material: Partial<ReadingMaterial> | Record<string, unknown> | null | undefined
 ): string | undefined {
@@ -48,27 +103,54 @@ export function normalizeReadingMaterialForRuntime<T extends Partial<ReadingMate
 	material: T
 ): T {
 	const topicId = getReadingTopicId(material);
-	if (!topicId) {
-		return { ...material } as T;
+	const dueAt = getReadingMaterialDueAt(material);
+	const normalized = { ...material } as Record<string, unknown>;
+
+	if (topicId) {
+		normalized.topicId = topicId;
+		normalized.readingDeckId = topicId;
 	}
 
-	return {
-		...material,
-		topicId,
-		readingDeckId: topicId,
-	} as T;
+	if (dueAt) {
+		normalized.nextDueAt = dueAt;
+	}
+
+	const fsrs = normalized.fsrs;
+	if (fsrs && typeof fsrs === "object" && dueAt) {
+		normalized.fsrs = {
+			...(fsrs as Record<string, unknown>),
+			due: dueAt,
+		};
+	}
+
+	return normalized as T;
 }
 
 export function serializeReadingMaterialForStorage<T extends Partial<ReadingMaterial>>(
 	material: T
 ): T {
 	const topicId = getReadingTopicId(material);
+	const dueAt = getReadingMaterialDueAt(material);
 	const serialized = { ...material } as Record<string, unknown>;
 
 	if (topicId) {
 		serialized.topicId = topicId;
 	} else {
 		serialized.topicId = undefined;
+	}
+
+	if (dueAt) {
+		serialized.nextDueAt = dueAt;
+	} else {
+		serialized.nextDueAt = undefined;
+	}
+
+	const fsrs = serialized.fsrs;
+	if (fsrs && typeof fsrs === "object") {
+		serialized.fsrs = {
+			...(fsrs as Record<string, unknown>),
+			due: dueAt,
+		};
 	}
 
 	serialized.readingDeckId = undefined;

@@ -511,10 +511,6 @@ KiqnLPDZDoj1QmooLvpFj3j7/9dWyUfbKmJv3D1+hmdbeltKDYZJc9WdIU+v7Bmi
 	 * 保留此方法仅用于向后兼容，实际不再使用
 	 * Compatibility note: 使用简单的匹配/不匹配判断代替
 	 */
-	private calculateFingerprintSimilarity(fingerprint1: string, fingerprint2: string): number {
-		if (fingerprint1 === fingerprint2) return 1.0;
-		return 0.0; // 不同的哈希值完全不相似
-	}
 
 	/**
 	 * 定期验证许可证状态

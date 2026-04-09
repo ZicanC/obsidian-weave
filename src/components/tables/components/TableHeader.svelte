@@ -172,15 +172,15 @@
     /* 增强：更深的背景色 */
     background: color-mix(in srgb, var(--weave-table-page-bg, var(--background-primary)) 90%, var(--weave-table-surface-bg, var(--background-secondary)));
     /* 增强：更粗的边框 */
-    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
+    border-bottom: 1px solid var(--weave-table-grid-strong-border-color, color-mix(in srgb, var(--background-modifier-border) 78%, transparent));
     /* 增强：更明显的阴影 */
-    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+    box-shadow: 0 1px 0 var(--weave-table-grid-hover-border-color, color-mix(in srgb, var(--background-modifier-border) 34%, transparent));
     backdrop-filter: blur(10px);
   }
 
   .weave-table-header th {
     /* 增强：增加内边距 */
-    padding: 11px 16px;
+    padding: var(--weave-table-header-padding-y, 8px) var(--weave-table-header-padding-x, 16px);
     text-align: left;
     /* 增强：更粗的字重 */
     font-weight: 600;
@@ -191,9 +191,9 @@
     text-transform: none;
     /* 增强：增加字母间距 */
     letter-spacing: 0.04em;
-    border-right: 1px solid color-mix(in srgb, var(--background-modifier-border) 55%, transparent);
+    border-right: 1px solid var(--weave-table-grid-border-color, color-mix(in srgb, var(--background-modifier-border) 55%, transparent));
     /* 增强：增加高度 */
-    height: 42px;
+    height: var(--weave-table-header-cell-height, 34px);
     vertical-align: middle;
     /* 平滑过渡 */
     transition: background-color 0.15s ease, color 0.15s ease;
@@ -201,7 +201,7 @@
   
   /* 分组列结构：分组结束标记 */
   .weave-table-header th.group-end {
-    border-right: 2px solid var(--background-modifier-border);
+    border-right: 2px solid var(--weave-table-grid-strong-border-color, var(--background-modifier-border));
   }
 
   /* 可排序列样式 */
@@ -279,7 +279,7 @@
     max-width: 48px;
     text-align: center;
     /* 与表格行 td 的 padding 完全一致 */
-    padding: 10px 16px;
+    padding: var(--weave-table-cell-padding-y, 6px) var(--weave-table-cell-padding-x, 16px);
     /* 移除复选框列的省略号效果 */
     text-overflow: clip;
     overflow: visible;
@@ -307,9 +307,9 @@
   /* 响应式：移动端优化 */
   @media (max-width: 768px) {
     .weave-table-header th {
-      padding: 8px 10px;
+      padding: 5px 10px;
       font-size: 0.75rem; /* 12px */
-      height: 38px;
+      height: 28px;
     }
     
     .weave-column-header {
@@ -336,5 +336,3 @@
     }
   }
 </style>
-
-

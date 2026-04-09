@@ -30,6 +30,16 @@
     content: ''
   });
 
+  function getSessionDeckIdentifiers(session: Partial<IRStudySession> | null | undefined): string[] {
+    return Array.from(
+      new Set(
+        [session?.topicId, session?.deckId]
+          .map(value => String(value ?? '').trim())
+          .filter(Boolean)
+      )
+    );
+  }
+
   interface WeekData {
     days: DayData[];
   }
@@ -74,7 +84,9 @@
       if (deck?.path) selectedAliases.add(deck.path);
     }
 
-    return sessions.filter(s => selectedAliases.has(s.deckId));
+    return sessions.filter(session =>
+      getSessionDeckIdentifiers(session).some(identifier => selectedAliases.has(identifier))
+    );
   }
 
   function generateDailyData(): Record<string, { blocks: number; duration: number }> {

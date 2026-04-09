@@ -14,6 +14,7 @@ import type {
 } from "../types/filter-types";
 import { getCardContentBySide } from "../utils/helpers";
 import { logger } from "../utils/logger";
+import { extractSourcePath } from "../utils/source-path-matcher";
 import { vaultStorage } from "../utils/vault-local-storage";
 import { getCardDeckIds } from "../utils/yaml-utils";
 
@@ -528,7 +529,7 @@ export class FilterManager {
 				return card.fsrs?.stability ?? 0;
 
 			case "source_document":
-				return card.fields?.source_document || "";
+				return extractSourcePath(card) || "";
 
 			case "front":
 				return getCardContentBySide(card, "front", allFieldTemplates);

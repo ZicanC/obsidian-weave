@@ -24,7 +24,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.3);
+    background: color-mix(in srgb, var(--background-primary) 34%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -48,18 +48,13 @@
   .newtons-cradle {
     --uib-size: 60px;
     --uib-speed: 1.2s;
-    --uib-color: #7c3aed;
+    --uib-color: var(--interactive-accent, var(--color-purple, var(--text-accent)));
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
     width: var(--uib-size);
     height: var(--uib-size);
-  }
-
-  /* 深色模式适配 */
-  :global(body.theme-dark) .newtons-cradle {
-    --uib-color: #a78bfa;
   }
 
   .newtons-cradle__dot {
@@ -78,7 +73,7 @@
     height: 25%;
     border-radius: 50%;
     background-color: var(--uib-color);
-    box-shadow: 0 2px 8px rgba(124, 58, 237, 0.3);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--uib-color) 38%, transparent);
   }
 
   .newtons-cradle__dot:first-child {

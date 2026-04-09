@@ -1,20 +1,4 @@
-/**
- * 增量阅读调度服务外观 v3.0
- *
- * 统一入口，整合以下组件：
- * - IRSchedulerV3: 核心调度算法
- * - IRTagGroupService: 标签组管理
- * - IRQueueGenerator: 队列生成
- * - IRStorageService: 数据存储
- *
- * v5.0 扩展：
- * - IRChunkScheduleAdapter: 文件化块调度适配器（新方案）
- * - 支持从 chunks.json 获取调度数据
- * - 旧的 blocks.json 方法标记为废弃
- *
- * @module services/incremental-reading/IRSchedulingFacade
- * @version 3.0.0 (v5.0 扩展)
- */
+/** 统一协调增量阅读的队列生成、调度执行和文件化块入口。 */
 
 import type { App } from "obsidian";
 import { resolveIRImportFolder } from "../../config/paths";
@@ -46,21 +30,17 @@ import { IRTagGroupService } from "./IRTagGroupService";
 // 类型定义
 // ============================================
 
-/**
- * 调度服务配置
- */
+/** 创建调度外观时可覆盖的配置。 */
 export interface IRSchedulingFacadeConfig {
 	strategy?: "processing" | "reading-list";
 	advancedSettings?: Partial<IRAdvancedScheduleSettings>;
-	/** 🔧 优化：可选传入已初始化的存储服务，避免重复创建 */
+	/** 可选传入现成的存储服务，避免重复创建。 */
 	storageService?: IRStorageService;
-	/** v5.0+: 文件化块根目录（默认使用 DEFAULT_IR_IMPORT_FOLDER） */
+	/** 文件化块根目录，默认按插件设置解析。 */
 	chunkRoot?: string;
 }
 
-/**
- * 学习队列结果（扩展）
- */
+/** 调度外观返回的学习队列结果。 */
 export interface StudyQueueResult extends QueueGenerationResult {
 	deckId: string;
 	strategy: IRScheduleStrategy;
@@ -70,9 +50,7 @@ export interface StudyQueueResult extends QueueGenerationResult {
 	};
 }
 
-/**
- * 完成阅读的结果
- */
+/** 完成内容块后的返回结果。 */
 export interface CompleteBlockResult {
 	block: IRBlock;
 	groupProfile: IRTagGroupProfile;
@@ -106,7 +84,6 @@ export class IRSchedulingFacade {
 		const parentFolder = plugin?.settings?.weaveParentFolder;
 		this.chunkRoot = resolveIRImportFolder(config?.chunkRoot, parentFolder);
 
-		// 解析策略
 		this.strategy =
 			config?.strategy === "reading-list" ? READING_LIST_STRATEGY : PROCESSING_STRATEGY;
 
@@ -115,7 +92,6 @@ export class IRSchedulingFacade {
 			...config?.advancedSettings,
 		};
 
-		// 初始化组件
 		this.scheduler = new IRSchedulerV3(
 			this.storage,
 			{
@@ -130,13 +106,10 @@ export class IRSchedulingFacade {
 		this.queueGenerator = new IRQueueGenerator(this.strategy, this.advancedSettings);
 	}
 
-	/**
-	 * 初始化服务
-	 */
+	/** 初始化依赖服务。 */
 	async initialize(): Promise<void> {
 		if (this.initialized) return;
 
-		// 始终调用 storage.initialize()，它内部会处理重复初始化
 		await this.storage.initialize();
 		await this.tagGroupService.initialize();
 
@@ -148,9 +121,7 @@ export class IRSchedulingFacade {
 	// v5.0 文件化块调度方法
 	// ============================================
 
-	/**
-	 * 获取文件化块调度适配器（延迟初始化）
-	 */
+	/** 懒加载文件化块调度适配器。 */
 	getChunkAdapter(): IRChunkScheduleAdapter {
 		if (!this.chunkAdapter) {
 			this.chunkAdapter = new IRChunkScheduleAdapter(this.app, this.storage, this.chunkRoot);
@@ -158,28 +129,21 @@ export class IRSchedulingFacade {
 		return this.chunkAdapter;
 	}
 
-	/**
-	 * 获取文件化块学习队列
-	 * v5.0 新方案：从 chunks.json 获取调度数据
-	 */
+	/** 返回今天可学习的文件化块。 */
 	async getChunkStudyQueue(): Promise<IRChunkFileData[]> {
 		await this.initialize();
 		const adapter = this.getChunkAdapter();
 		return adapter.getTodayDueChunks();
 	}
 
-	/**
-	 * 标记文件化块为完成
-	 */
+	/** 将文件化块标记为完成。 */
 	async markChunkComplete(chunkId: string): Promise<void> {
 		await this.initialize();
 		const adapter = this.getChunkAdapter();
 		await adapter.markChunkDone(chunkId);
 	}
 
-	/**
-	 * 同步所有块文件的 YAML 状态到调度数据
-	 */
+	/** 把块文件里的 YAML 状态同步回调度数据。 */
 	async syncChunksFromYAML(): Promise<number> {
 		await this.initialize();
 		const adapter = this.getChunkAdapter();
@@ -190,9 +154,7 @@ export class IRSchedulingFacade {
 	// 策略与设置
 	// ============================================
 
-	/**
-	 * 切换调度策略
-	 */
+	/** 切换队列生成和调度策略。 */
 	setStrategy(strategyType: "processing" | "reading-list"): void {
 		this.strategy = strategyType === "processing" ? PROCESSING_STRATEGY : READING_LIST_STRATEGY;
 
@@ -202,25 +164,19 @@ export class IRSchedulingFacade {
 		logger.info(`[IRSchedulingFacade] 切换策略: ${strategyType}`);
 	}
 
-	/**
-	 * 获取当前策略
-	 */
+	/** 返回当前调度策略。 */
 	getStrategy(): IRScheduleStrategy {
 		return this.strategy;
 	}
 
-	/**
-	 * 更新高级设置
-	 */
+	/** 合并并下发新的高级设置。 */
 	updateAdvancedSettings(settings: Partial<IRAdvancedScheduleSettings>): void {
 		this.advancedSettings = { ...this.advancedSettings, ...settings };
 		this.scheduler.updateAdvancedSettings(this.advancedSettings);
 		this.queueGenerator.setAdvancedSettings(this.advancedSettings);
 	}
 
-	/**
-	 * 获取高级设置
-	 */
+	/** 返回当前高级设置。 */
 	getAdvancedSettings(): IRAdvancedScheduleSettings {
 		return this.advancedSettings;
 	}
@@ -229,12 +185,7 @@ export class IRSchedulingFacade {
 	// 队列生成
 	// ============================================
 
-	/**
-	 * 获取学习队列（主入口）
-	 *
-	 * @param deckId 牌组 ID
-	 * @returns 学习队列结果
-	 */
+	/** 生成指定牌组的学习队列。 */
 	async getStudyQueue(deckId: string): Promise<StudyQueueResult> {
 		await this.initialize();
 
@@ -243,18 +194,16 @@ export class IRSchedulingFacade {
 			`[IRSchedulingFacade] storage实例: initialized=${(this.storage as any).initialized}`
 		);
 
-		// 1. 获取牌组的所有内容块
 		const blocks = await this.storage.getBlocksByDeck(deckId, false, "IRSchedulingFacade");
 		logger.info(`[IRSchedulingFacade] 获取到块数: ${blocks.length}`);
 
-		// 🔍 调试：如果块数为0，检查所有牌组和块
+		// 仅在牌组为空时补充诊断日志，帮助定位 deckId/path 不一致。
 		if (blocks.length === 0) {
 			const allDecks = await this.storage.getAllDecks();
 			const allBlocks = await this.storage.getAllBlocks();
 			logger.warn(`[IRSchedulingFacade] 块数为0! 所有牌组: ${Object.keys(allDecks).join(", ")}`);
 			logger.warn(`[IRSchedulingFacade] 所有块数: ${Object.keys(allBlocks).length}`);
 
-			// 检查是否有匹配的牌组
 			const matchingDeck = Object.values(allDecks).find(
 				(d: any) => d.id === deckId || d.path === deckId
 			);
@@ -269,7 +218,6 @@ export class IRSchedulingFacade {
 			}
 		}
 
-		// 调试：打印前3个块的状态
 		if (blocks.length > 0) {
 			const sample = blocks.slice(0, 3).map((b) => ({
 				id: b.id.slice(0, 8),
@@ -280,20 +228,10 @@ export class IRSchedulingFacade {
 			logger.debug("[IRSchedulingFacade] 块样本:", JSON.stringify(sample));
 		}
 
-		// 2. 构建文档到组的映射
-		const groupMapping: Record<string, string> = {};
-		for (const block of blocks) {
-			if (!groupMapping[block.filePath]) {
-				groupMapping[block.filePath] = await this.tagGroupService.matchGroupForDocument(
-					block.filePath
-				);
-			}
-		}
+		const groupMapping = await this.buildGroupMapping(blocks);
 
-		// 3. 检查过载情况
 		const overloadStats = this.queueGenerator.getOverloadStats(blocks, groupMapping);
 
-		// 4. 如果过载且启用自动后推，先执行后推
 		if (overloadStats.isOverloaded && this.advancedSettings.autoPostponeStrategy !== "off") {
 			const today = new Date().toISOString().split("T")[0];
 			const dueBlocks = blocks.filter(
@@ -304,17 +242,13 @@ export class IRSchedulingFacade {
 
 			const postponeResult = this.queueGenerator.autoPostpone(dueBlocks);
 
-			// 保存后推的块
 			if (postponeResult.postponedBlocks.length > 0) {
 				await this.storage.saveBlocks(postponeResult.postponedBlocks);
 				logger.info(`[IRSchedulingFacade] 自动后推 ${postponeResult.postponedCount} 块`);
 			}
 		}
 
-		// 5. 重新获取块（可能已更新）
 		const updatedBlocks = await this.storage.getBlocksByDeck(deckId);
-
-		// 6. 生成队列
 		const queueResult = this.queueGenerator.generateQueue(updatedBlocks, groupMapping);
 
 		return {
@@ -328,18 +262,40 @@ export class IRSchedulingFacade {
 		};
 	}
 
+	/** 在调用方未显式传入时，为内容块解析所属牌组 ID。 */
+	private async resolveDeckIdForBlock(block: IRBlock, deckId?: string): Promise<string> {
+		const explicitDeckId = String(deckId || "").trim();
+		if (explicitDeckId) {
+			return explicitDeckId;
+		}
+
+		const blockDeckIdentifier = String(block.deckPath || "").trim();
+		if (blockDeckIdentifier) {
+			const matchedDeck = await this.storage.getDeckById(blockDeckIdentifier);
+			if (matchedDeck) {
+				return matchedDeck.id || matchedDeck.path || blockDeckIdentifier;
+			}
+		}
+
+		const allDecks = Object.values(await this.storage.getAllDecks());
+		const matchedByBlockId = allDecks.find((deck) => deck.blockIds?.includes(block.id));
+		if (matchedByBlockId) {
+			return matchedByBlockId.id || matchedByBlockId.path || "";
+		}
+
+		const matchedBySourceFile = allDecks.find((deck) => deck.sourceFiles?.includes(block.filePath));
+		if (matchedBySourceFile) {
+			return matchedBySourceFile.id || matchedBySourceFile.path || "";
+		}
+
+		return blockDeckIdentifier;
+	}
+
 	// ============================================
 	// 内容块操作
 	// ============================================
 
-	/**
-	 * 完成内容块阅读
-	 *
-	 * @param block 内容块
-	 * @param data 阅读完成数据
-	 * @param deckId 牌组 ID
-	 * @returns 完成结果
-	 */
+	/** 完成一个内容块，并返回更新后的后续上下文。 */
 	async completeBlock(
 		block: IRBlock,
 		data: ReadingCompletionData,
@@ -347,13 +303,15 @@ export class IRSchedulingFacade {
 	): Promise<CompleteBlockResult> {
 		await this.initialize();
 
-		// 1. 获取标签组参数
+		const resolvedDeckId = await this.resolveDeckIdForBlock(block, deckId);
 		const groupProfile = await this.tagGroupService.getProfileForDocument(block.filePath);
+		const updatedBlock = await this.scheduler.completeBlock(
+			block,
+			data,
+			resolvedDeckId,
+			groupProfile
+		);
 
-		// 2. 完成阅读
-		const updatedBlock = await this.scheduler.completeBlock(block, data, deckId, groupProfile);
-
-		// 3. 如果启用组参数学习，更新组参数
 		if (this.advancedSettings.tagGroupLearningSpeed !== "off") {
 			const { calculateLoadSignal } = await import("./IRSchedulerV3");
 			const loadSignal = calculateLoadSignal(
@@ -379,8 +337,7 @@ export class IRSchedulingFacade {
 			);
 		}
 
-		// 4. 获取队列中的下一个（如果有）
-		const queueResult = await this.getStudyQueue(deckId);
+		const queueResult = await this.getStudyQueue(resolvedDeckId);
 		const nextInQueue = queueResult.queue.find((b) => b.id !== updatedBlock.id) ?? null;
 
 		return {
@@ -390,45 +347,37 @@ export class IRSchedulingFacade {
 		};
 	}
 
-	/**
-	 * 更新内容块优先级
-	 */
+	/** 更新内容块的优先级。 */
 	async updatePriority(block: IRBlock, priorityUi: number): Promise<IRBlock> {
 		await this.initialize();
 		return this.scheduler.updatePriority(block, priorityUi);
 	}
 
-	/**
-	 * 暂停内容块
-	 */
+	/** 暂停内容块。 */
 	async suspendBlock(block: IRBlock, deckId = ""): Promise<IRBlock> {
 		await this.initialize();
-		return this.scheduler.suspendBlock(block, deckId);
+		const resolvedDeckId = await this.resolveDeckIdForBlock(block, deckId);
+		return this.scheduler.suspendBlock(block, resolvedDeckId);
 	}
 
-	/**
-	 * 恢复内容块
-	 */
+	/** 恢复已暂停的内容块。 */
 	async unsuspendBlock(block: IRBlock): Promise<IRBlock> {
 		await this.initialize();
 		return this.scheduler.unsuspendBlock(block);
 	}
 
-	/**
-	 * 跳过内容块
-	 */
+	/** 跳过内容块。 */
 	async skipBlock(block: IRBlock, deckId = ""): Promise<void> {
 		await this.initialize();
-		return this.scheduler.skipBlock(block, deckId);
+		const resolvedDeckId = await this.resolveDeckIdForBlock(block, deckId);
+		return this.scheduler.skipBlock(block, resolvedDeckId);
 	}
 
 	// ============================================
 	// 后推操作
 	// ============================================
 
-	/**
-	 * 批量后推
-	 */
+	/** 批量后推多个内容块。 */
 	async postponeBlocks(blocks: IRBlock[], days: number): Promise<IRBlock[]> {
 		await this.initialize();
 		const postponedBlocks = this.queueGenerator.manualPostpone(blocks, days);
@@ -436,22 +385,12 @@ export class IRSchedulingFacade {
 		return postponedBlocks;
 	}
 
-	/**
-	 * 按组后推
-	 */
+	/** 按标签组后推内容块。 */
 	async postponeByGroup(deckId: string, groupId: string, days: number): Promise<IRBlock[]> {
 		await this.initialize();
 
 		const blocks = await this.storage.getBlocksByDeck(deckId);
-		const groupMapping: Record<string, string> = {};
-
-		for (const block of blocks) {
-			if (!groupMapping[block.filePath]) {
-				groupMapping[block.filePath] = await this.tagGroupService.matchGroupForDocument(
-					block.filePath
-				);
-			}
-		}
+		const groupMapping = await this.buildGroupMapping(blocks);
 
 		const postponedBlocks = this.queueGenerator.postponeByGroup(
 			blocks,
@@ -464,9 +403,7 @@ export class IRSchedulingFacade {
 		return postponedBlocks;
 	}
 
-	/**
-	 * 按优先级后推
-	 */
+	/** 按优先级阈值后推内容块。 */
 	async postponeByPriority(deckId: string, maxPriority: number, days: number): Promise<IRBlock[]> {
 		await this.initialize();
 
@@ -481,17 +418,13 @@ export class IRSchedulingFacade {
 	// 标签组管理
 	// ============================================
 
-	/**
-	 * 获取所有标签组
-	 */
+	/** 获取所有标签组。 */
 	async getAllTagGroups(): Promise<IRTagGroup[]> {
 		await this.initialize();
 		return this.tagGroupService.getAllGroups();
 	}
 
-	/**
-	 * 创建标签组
-	 */
+	/** 创建标签组。 */
 	async createTagGroup(
 		name: string,
 		matchAnyTags: string[],
@@ -501,17 +434,13 @@ export class IRSchedulingFacade {
 		return this.tagGroupService.createGroup(name, matchAnyTags, description);
 	}
 
-	/**
-	 * 删除标签组
-	 */
+	/** 删除标签组。 */
 	async deleteTagGroup(id: string): Promise<void> {
 		await this.initialize();
 		return this.tagGroupService.deleteGroup(id);
 	}
 
-	/**
-	 * 获取标签组统计
-	 */
+	/** 获取标签组统计。 */
 	async getTagGroupStats(): Promise<
 		Array<{
 			group: IRTagGroup;
@@ -527,9 +456,7 @@ export class IRSchedulingFacade {
 	// 统计与监控
 	// ============================================
 
-	/**
-	 * 获取调度统计
-	 */
+	/** 获取牌组的调度统计。 */
 	async getScheduleStats(deckId: string): Promise<{
 		newCount: number;
 		learningCount: number;
@@ -544,9 +471,7 @@ export class IRSchedulingFacade {
 		return this.scheduler.getScheduleStats(deckId);
 	}
 
-	/**
-	 * 获取过载信息
-	 */
+	/** 获取牌组的过载信息。 */
 	async getOverloadInfo(deckId: string): Promise<{
 		isOverloaded: boolean;
 		dueCount: number;
@@ -557,6 +482,37 @@ export class IRSchedulingFacade {
 		await this.initialize();
 
 		const blocks = await this.storage.getBlocksByDeck(deckId);
+		const groupMapping = await this.buildGroupMapping(blocks);
+
+		return this.queueGenerator.getOverloadStats(blocks, groupMapping);
+	}
+
+	// ============================================
+	// 子服务访问
+	// ============================================
+
+	/** 暴露底层存储服务给高级调用方。 */
+	getStorage(): IRStorageService {
+		return this.storage;
+	}
+
+	/** 暴露底层调度器给高级调用方。 */
+	getScheduler(): IRSchedulerV3 {
+		return this.scheduler;
+	}
+
+	/** 暴露标签组服务给高级调用方。 */
+	getTagGroupService(): IRTagGroupService {
+		return this.tagGroupService;
+	}
+
+	/** 暴露队列生成器给高级调用方。 */
+	getQueueGenerator(): IRQueueGenerator {
+		return this.queueGenerator;
+	}
+
+	/** 构建文档到标签组的映射，供过载计算和分组调度复用。 */
+	private async buildGroupMapping(blocks: IRBlock[]): Promise<Record<string, string>> {
 		const groupMapping: Record<string, string> = {};
 
 		for (const block of blocks) {
@@ -567,45 +523,11 @@ export class IRSchedulingFacade {
 			}
 		}
 
-		return this.queueGenerator.getOverloadStats(blocks, groupMapping);
-	}
-
-	// ============================================
-	// 子服务访问
-	// ============================================
-
-	/**
-	 * 获取存储服务（高级用途）
-	 */
-	getStorage(): IRStorageService {
-		return this.storage;
-	}
-
-	/**
-	 * 获取调度器（高级用途）
-	 */
-	getScheduler(): IRSchedulerV3 {
-		return this.scheduler;
-	}
-
-	/**
-	 * 获取标签组服务（高级用途）
-	 */
-	getTagGroupService(): IRTagGroupService {
-		return this.tagGroupService;
-	}
-
-	/**
-	 * 获取队列生成器（高级用途）
-	 */
-	getQueueGenerator(): IRQueueGenerator {
-		return this.queueGenerator;
+		return groupMapping;
 	}
 }
 
-/**
- * 工厂函数
- */
+/** 创建调度外观实例。 */
 export function createIRSchedulingFacade(
 	app: App,
 	config?: IRSchedulingFacadeConfig

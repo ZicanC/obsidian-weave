@@ -46,8 +46,8 @@
 
   // Tab定义（测试卡片专用）- 📱 移动端显示文本功能键（不显示图标）
   let tabs = $derived([
-    { id: 'info', label: '卡片信息', icon: isMobile ? '' : 'file-text' },
-    { id: 'stats', label: '测试数据', icon: isMobile ? '' : 'bar-chart-2' }
+    { id: 'info', label: '卡片信息', icon: '' },
+    { id: 'stats', label: '测试数据', icon: '' }
   ]);
 
   // 牌组名称 - 使用$derived确保响应式更新
@@ -118,6 +118,8 @@
       {tabs}
       {activeTab}
       onTabChange={handleTabChange}
+      useObsidianIcons={false}
+      toolbarStyle={true}
     />
   </div>
 
@@ -142,7 +144,20 @@
   .modal-tabs {
     flex-shrink: 0;
     padding: 12px 16px 0 16px;
-    background: var(--background-primary);
+    background: transparent;
+  }
+
+  .modal-tabs :global(.tab-navigation) {
+    width: fit-content;
+    max-width: 100%;
+  }
+
+  .modal-tabs :global(.tab-button.active .tab-label) {
+    font-weight: 600;
+  }
+
+  .modal-tabs :global(.tab-button svg) {
+    flex-shrink: 0;
   }
 
   .modal-tab-content {
@@ -183,6 +198,10 @@
   /* 移动端Tab导航 - 图标居中，增大触摸区域 */
   .modal-tabs.mobile {
     padding: 8px 12px 0 12px;
+  }
+
+  .modal-tabs.mobile :global(.tab-navigation) {
+    gap: 4px;
   }
 
   .modal-tabs.mobile :global(.tab-button) {

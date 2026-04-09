@@ -19,7 +19,6 @@ export interface MenuBuilderConfig {
 	showTimingInfo?: boolean; // 计时信息栏是否展开
 	aiActions: {
 		format: AIAction[];
-		testGen: AIAction[];
 		split: AIAction[];
 	};
 }
@@ -36,7 +35,6 @@ export interface MenuCallbacks {
 	onChangeDeck: (deckId: string) => void | Promise<void>;
 	onRecycleCard: () => void;
 	onAIFormatCustom: (actionId: string) => void;
-	onTestGenerate: (actionId: string) => void;
 	onSplitCard: (actionId: string) => void;
 	onOpenAIConfig: () => void;
 	onGraphLinkToggle: (enabled: boolean) => void;

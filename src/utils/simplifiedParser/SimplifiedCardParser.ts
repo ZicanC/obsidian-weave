@@ -231,7 +231,6 @@ export class SimplifiedCardParser implements ICardParser {
 			const card: ParsedCard = {
 				type: cardType,
 				content: cleanContent, //  直接使用清理后的内容
-				//  向后兼容：front/back 将由解析器填充
 				tags: this.extractTags(cleanContent),
 				metadata: {
 					sourceContent: content,
@@ -471,24 +470,12 @@ export class SimplifiedCardParser implements ICardParser {
 
 	/**
 	 * 使用符号解析
-	 * 直接使用 content，填充 front/back 仅用于向后兼容
+	 * 直接使用 content
 	 */
 	private parseWithSymbols(content: string, card: ParsedCard): ParsedCard {
-		const { faceDelimiter } = this.settings.symbols;
-
 		// 直接使用原始 content
 		if (!card.content) {
 			card.content = content;
-		}
-
-		//  向后兼容：填充 front/back（用于转换器兼容）
-		if (content.includes(faceDelimiter)) {
-			const parts = content.split(faceDelimiter);
-			card.front = this.cleanContent(parts[0]);
-			card.back = this.cleanContent(parts.slice(1).join(faceDelimiter));
-		} else {
-			card.front = this.cleanContent(content);
-			card.back = "";
 		}
 
 		return card;

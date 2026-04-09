@@ -39,7 +39,6 @@
     onAIAssistant?: (evt: MouseEvent) => void;
     // AI 功能回调
     onAIFormatCustom?: (actionId: string) => void;
-    onTestGenerate?: (actionId: string) => void;
     onSplitCard?: (actionId: string) => void;
     onOpenAIConfig?: () => void;
     onGraphLinkToggle?: (enabled: boolean) => void;
@@ -74,7 +73,6 @@
     onAIAssistant,
     // AI 功能回调
     onAIFormatCustom,
-    onTestGenerate,
     onSplitCard,
     onOpenAIConfig,
     onGraphLinkToggle,

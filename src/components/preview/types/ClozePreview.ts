@@ -4,6 +4,7 @@ import {
 	isProgressiveClozeChild,
 	isProgressiveClozeParent,
 } from "../../../types/progressive-cloze-v2";
+import { getCardField, getCardFront } from "../../../utils/card-field-helper";
 import { logger } from "../../../utils/logger";
 import type { PreviewData, PreviewOptions } from "../ContentPreviewEngine";
 
@@ -250,7 +251,7 @@ export class ClozePreview {
 		}
 
 		// 原有的普通挖空渲染逻辑
-		const content = card.fields?.cloze || card.fields?.content || card.fields?.front || "";
+		const content = getCardField(card, "cloze") || getCardField(card, "content") || getCardFront(card);
 		const clozeData = this.parseClozeContent(content);
 
 		const element = this.renderClozeQuestion(clozeData, options.showAnswers);

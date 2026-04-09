@@ -35,6 +35,7 @@ export class EpubView extends ItemView {
 	private layoutChangeHandler: any = null;
 	private linkedCanvasPath: string | null = null;
 	private mounting = false;
+	private pendingRemount = false;
 	private sidebarBtn: HTMLElement | null = null;
 	private autoInsertBtn: HTMLElement | null = null;
 	private screenshotBtn: HTMLElement | null = null;
@@ -47,14 +48,12 @@ export class EpubView extends ItemView {
 	private canvasDirection: CanvasLayoutDirection = "down";
 	private resumePointBtn: HTMLElement | null = null;
 	private bookmarkBtn: HTMLElement | null = null;
-	private reflowBtn: HTMLElement | null = null;
 	private actionHandlers: {
 		setAutoInsert?: (enabled: boolean) => void;
 		setScreenshotMode?: (active: boolean) => void;
 		setLayoutMode?: (mode: EpubLayoutMode) => void;
 		setFlowMode?: (mode: EpubFlowMode) => void;
 		setScreenshotSaveMode?: (saveAsImage: boolean) => void;
-		forceReflow?: () => Promise<void>;
 		navigateToCfi?: (cfi: string, text: string) => void;
 		toggleTutorial?: () => void;
 		addBookmark?: () => Promise<void>;
@@ -62,6 +61,7 @@ export class EpubView extends ItemView {
 		unbindCanvas?: () => void;
 		getCanvasService?: () => EpubCanvasService;
 		markIRResumePoint?: () => Promise<void>;
+		exportCurrentChapterToMarkdown?: () => Promise<void>;
 	} = {};
 
 	constructor(leaf: WorkspaceLeaf, plugin: WeavePlugin) {
@@ -167,9 +167,6 @@ export class EpubView extends ItemView {
 			this.bookmarkBtn = this.addAction("bookmark", "切换书签", () => {
 				void this.actionHandlers.addBookmark?.();
 			});
-			this.reflowBtn = this.addAction("refresh-cw", "强制重排版", () => {
-				void this.triggerManualReflow();
-			});
 		} else {
 			this.flowBtn = this.addAction("arrow-up-down", "阅读模式：翻页", () => {
 				this.toggleFlowMode();
@@ -189,6 +186,9 @@ export class EpubView extends ItemView {
 			});
 			this.resumePointBtn = this.addAction("bookmark-plus", "增量阅读续读点", () => {
 				void this.actionHandlers.markIRResumePoint?.();
+			});
+			this.addAction("file-text", "导出当前章为 Markdown", () => {
+				void this.actionHandlers.exportCurrentChapterToMarkdown?.();
 			});
 			this.addAction("circle-help", "使用教程", () => {
 				this.actionHandlers.toggleTutorial?.();
@@ -266,7 +266,7 @@ export class EpubView extends ItemView {
 			}
 		}
 
-		return "EPUB 阅读器";
+		return "EPUB 书架";
 	}
 
 	private refreshViewTitle(): void {
@@ -290,8 +290,14 @@ export class EpubView extends ItemView {
 	}
 
 	private async mountComponent(): Promise<void> {
-		if (this.mounting) return;
+		if (this.mounting) {
+			this.pendingRemount = true;
+			return;
+		}
+
+		const mountedFilePath = this.filePath;
 		this.mounting = true;
+		this.pendingRemount = false;
 		try {
 			if (this.component) {
 				const { unmount: unmountOld } = await import("svelte");
@@ -339,11 +345,7 @@ export class EpubView extends ItemView {
 					},
 					onSwitchBook: async (newFilePath: string) => {
 						if (!newFilePath || newFilePath === this.filePath) return;
-						this.filePath = newFilePath;
-						this.bookTitle = "";
-						this.refreshViewTitle();
-						await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
-						await this.mountComponent();
+						await this.plugin.openEpubReader(newFilePath);
 					},
 					onCanvasStateChange: (active: boolean, _canvasPath: string | null) => {
 						this.canvasModeActive = active;
@@ -362,6 +364,10 @@ export class EpubView extends ItemView {
 			});
 		} finally {
 			this.mounting = false;
+			if (this.pendingRemount || mountedFilePath !== this.filePath) {
+				this.pendingRemount = false;
+				void this.mountComponent();
+			}
 		}
 	}
 
@@ -555,13 +561,6 @@ export class EpubView extends ItemView {
 		});
 		menu.addSeparator();
 		menu.addItem((_item) => {
-			_item.setTitle("强制重排版");
-			_item.setIcon("refresh-cw");
-			_item.onClick(() => {
-				void this.triggerManualReflow();
-			});
-		});
-		menu.addItem((_item) => {
 			_item.setTitle("切换书签");
 			_item.setIcon("bookmark");
 			_item.onClick(() => {
@@ -606,26 +605,19 @@ export class EpubView extends ItemView {
 			});
 		});
 		menu.addItem((_item) => {
+			_item.setTitle("导出当前章为 Markdown");
+			_item.setIcon("file-text");
+			_item.onClick(() => {
+				void this.actionHandlers.exportCurrentChapterToMarkdown?.();
+			});
+		});
+		menu.addItem((_item) => {
 			_item.setTitle("使用教程");
 			_item.setIcon("circle-help");
 			_item.onClick(() => {
 				this.actionHandlers.toggleTutorial?.();
 			});
 		});
-	}
-
-	private async triggerManualReflow(): Promise<void> {
-		if (!this.actionHandlers.forceReflow) {
-			new Notice("阅读器尚未就绪，请稍后再试");
-			return;
-		}
-
-		try {
-			await this.actionHandlers.forceReflow();
-		} catch (error) {
-			logger.error("[EpubView] triggerManualReflow failed:", error);
-			new Notice(error instanceof Error ? `重排失败：${error.message}` : "重排失败");
-		}
 	}
 
 	private showDirectionMenu(evt: MouseEvent | Event): void {

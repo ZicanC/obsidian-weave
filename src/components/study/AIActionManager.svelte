@@ -1,6 +1,5 @@
 <script lang="ts">
   import { logger } from '../../utils/logger';
-  //  导入AI配置Store（用于读取和手动提交保存）
   import { aiConfigStore } from '../../stores/ai-config.store';
   import type { AIAction, AIActionType, AIProvider } from '../../types/ai-types';
   import { TEMPLATE_VARIABLES } from '../../types/ai-types';
@@ -23,9 +22,10 @@
     plugin: WeavePlugin;
     onClose: () => void;
     useObsidianModal?: boolean;
+    onUnsavedChangesChange?: (dirty: boolean) => void;
   }
   
-  let { show, availableDecks, plugin, onClose, useObsidianModal = false }: Props = $props();
+  let { show, availableDecks, plugin, onClose, useObsidianModal = false, onUnsavedChangesChange }: Props = $props();
   const isModalOpen = $derived(useObsidianModal || show);
   
   // 状态管理
@@ -124,6 +124,10 @@
     }
   });
 
+  $effect(() => {
+    onUnsavedChangesChange?.(hasUnsavedChanges);
+  });
+
   const currentFormatActions = $derived.by(() => [...buildOfficialFormatActions(), ...draftFormatActions]);
   const currentSplitActions = $derived.by(() => [...buildOfficialSplitActions(), ...draftSplitActions]);
   const currentActions = $derived(activeType === 'format' ? currentFormatActions : currentSplitActions);
@@ -168,36 +172,32 @@
     }
   });
   
-  // 可用的模板变量
   const availableVariables = $derived(TEMPLATE_VARIABLES);
-  
-  // AI服务商列表
   const providers: AIProvider[] = ['openai', 'gemini', 'anthropic', 'deepseek', 'zhipu', 'siliconflow', 'xai'];
-  
-  // 获取默认服务商和模型
-  const defaultProvider = $derived(
-    plugin.settings.aiConfig?.defaultProvider || 'openai'
-  );
-  
-  // 获取当前选中功能的可用模型列表
+
+  function getPreferredProvider(): AIProvider {
+    return plugin.settings.aiConfig?.defaultProvider || 'zhipu';
+  }
+
+  function getDefaultModelForProvider(provider?: AIProvider): string {
+    if (!provider) return '';
+    const providerConfig = (plugin.settings.aiConfig?.apiKeys as any)?.[provider];
+    return providerConfig?.model || (AI_MODEL_OPTIONS[provider]?.[0]?.id || '');
+  }
+
   const availableModels = $derived.by(() => {
     if (!selectedAction?.provider) return [];
     return AI_MODEL_OPTIONS[selectedAction.provider] || [];
   });
-  
-  // 获取当前选中功能的默认模型
+
   const defaultModel = $derived.by(() => {
-    if (!selectedAction?.provider) return '';
-    const providerConfig = (plugin.settings.aiConfig?.apiKeys as any)?.[selectedAction.provider];
-    return providerConfig?.model || (AI_MODEL_OPTIONS[selectedAction.provider]?.[0]?.id || '');
+    return getDefaultModelForProvider(selectedAction?.provider);
   });
-  
-  //  自动初始化model字段：当action.model为空时自动设置为defaultModel
+
   $effect(() => {
     if (selectedAction && !selectedAction.model) {
       const computedDefaultModel = defaultModel;
       if (computedDefaultModel && selectedAction.category === 'custom') {
-        // 只为自定义 action 补齐默认模型，不直接触发“未保存”提示
         logger.debug('[AIActionManager] 自动初始化model字段:', {
           actionId: selectedAction.id,
           provider: selectedAction.provider,
@@ -220,12 +220,8 @@
   }
   
   function createNewAction() {
-    const defaultProvider = plugin.settings.aiConfig?.defaultProvider || 'zhipu';
-    
-    //  获取该provider的默认model
-    const providerConfig = (plugin.settings.aiConfig?.apiKeys as any)?.[defaultProvider];
-    const defaultModelForProvider = providerConfig?.model || (AI_MODEL_OPTIONS[defaultProvider]?.[0]?.id || '');
-    
+    const defaultProvider = getPreferredProvider();
+    const defaultModelForProvider = getDefaultModelForProvider(defaultProvider);
     const actionTypeName = activeType === 'format' ? '格式化' : 'AI拆分';
     
     const newAction: AIAction = {
@@ -236,7 +232,7 @@
       systemPrompt: '你是一个专业的AI助手。',
       userPromptTemplate: '请处理以下内容:\n\n{{cardContent}}',
       provider: defaultProvider,
-      model: defaultModelForProvider, //  初始化model字段
+      model: defaultModelForProvider,
       category: 'custom',
       createdAt: new Date().toISOString(),
       enabled: true
@@ -259,8 +255,7 @@
   function deleteAction(id: string) {
     const action = currentActions.find(a => a.id === id);
     const actionName = action ? getActionDisplayName(action) : '此功能';
-    
-    //  使用 Obsidian Modal 代替原生确认框，避免焦点劫持问题
+
     showObsidianConfirm(
       plugin.app,
       `确定要删除"${actionName}"吗？`,
@@ -297,17 +292,13 @@
       setDraftActions(activeType, updatedActions, shouldMarkDirty);
     }
   }
-  
-  //  复制官方模板为自定义功能
+
   function duplicateAsCustom() {
     if (!selectedAction || selectedAction.category !== 'official') return;
-    
-    const defaultProvider = plugin.settings.aiConfig?.defaultProvider || 'zhipu';
+
+    const defaultProvider = getPreferredProvider();
     const effectiveProvider = selectedAction.provider || defaultProvider;
-    
-    //  获取该provider的默认model
-    const providerConfig = (plugin.settings.aiConfig?.apiKeys as any)?.[effectiveProvider];
-    const defaultModelForProvider = providerConfig?.model || (AI_MODEL_OPTIONS[effectiveProvider]?.[0]?.id || '');
+    const defaultModelForProvider = getDefaultModelForProvider(effectiveProvider);
     
     const newAction: AIAction = {
       ...selectedAction,
@@ -315,7 +306,7 @@
       name: `${selectedAction.name} (副本)`,
       category: 'custom',
       provider: effectiveProvider,
-      model: selectedAction.model || defaultModelForProvider, //  初始化model字段
+      model: selectedAction.model || defaultModelForProvider,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -326,11 +317,7 @@
     new Notice(`已复制"${selectedAction.name}"为自定义功能，点击保存后生效`);
   }
   
-  /**
-   * 恢复官方默认模板
-   * 将官方模板重新添加到功能列表中
-   */
-  async function restoreOfficialTemplates() {
+  function restoreOfficialTemplates() {
     if (activeType === 'format') {
       new Notice('官方格式化模板始终显示在列表中，无需额外恢复');
     } else {
@@ -376,7 +363,7 @@
         .setTitle('恢复官方模板')
         .setIcon('refresh-cw')
         .onClick(() => {
-          void restoreOfficialTemplates();
+          restoreOfficialTemplates();
         });
     });
 
@@ -408,7 +395,6 @@
           apiKeys: {},
           defaultProvider: 'zhipu',
           customFormatActions: [],
-          customTestGenActions: [],
           customSplitActions: [],
           officialFormatActions: {
             choice: { enabled: true },
@@ -421,7 +407,6 @@
       const aiConfig = plugin.settings.aiConfig!;
       aiConfig.defaultProvider = currentState.defaultProvider;
       aiConfig.apiKeys = cloneValue(currentState.apiKeys);
-      aiConfig.customTestGenActions = cloneValue(currentState.customTestGenActions);
       aiConfig.customFormatActions = cloneActions(draftFormatActions);
       aiConfig.customSplitActions = cloneActions(draftSplitActions);
 
@@ -749,8 +734,17 @@
 {/snippet}
 
 {#if useObsidianModal}
-  <div class="ai-action-manager">
-    {@render modalHeader()}
+  <div class="ai-action-manager ai-action-manager-native">
+    <div class="modal-header-tabs modal-header-tabs-native">
+      <div class="top-navigation-shell">
+        <ActionTypeTabBar
+          activeType={activeType}
+          formatCount={currentFormatActions.length}
+          splitCount={currentSplitActions.length}
+          onTypeChange={handleTypeChange}
+        />
+      </div>
+    </div>
     {@render managerContent()}
   </div>
 {:else}
@@ -826,8 +820,8 @@
   .modal-toolbar-center {
     min-width: 0;
     display: flex;
-    justify-content: center;
-    justify-self: center;
+    justify-content: flex-start;
+    justify-self: start;
   }
 
   .modal-toolbar-title {
@@ -841,11 +835,11 @@
   .top-navigation-shell {
     display: inline-flex;
     max-width: 100%;
-    padding: 4px;
-    border-radius: 999px;
-    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 78%, transparent);
-    background: linear-gradient(180deg, color-mix(in srgb, var(--background-secondary) 88%, transparent), color-mix(in srgb, var(--background-primary) 94%, transparent));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    background: transparent;
+    box-shadow: none;
   }
 
   .top-actions {
@@ -855,6 +849,26 @@
     justify-content: flex-end;
     gap: var(--weave-space-md);
     justify-self: end;
+  }
+
+  .modal-header-tabs {
+    flex-shrink: 0;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    min-width: 0;
+    padding: 12px 24px;
+    border-bottom: 1px solid color-mix(in srgb, var(--background-modifier-border) 76%, transparent);
+    background: var(--background-primary);
+  }
+
+  .modal-header-tabs-native {
+    gap: 0;
+  }
+
+  .modal-header-tabs :global(.action-type-tab-bar) {
+    max-width: 100%;
   }
 
   .manager-layout {
@@ -1287,6 +1301,10 @@
     .top-actions {
       justify-self: end;
       gap: 10px;
+    }
+
+    .modal-header-tabs {
+      padding: 10px 12px;
     }
 
     .manager-layout {

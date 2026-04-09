@@ -892,7 +892,7 @@ export class SimpleBatchParsingService {
 			card.metadata.isBatchScanned = true;
 			card.metadata.lastScannedAt = new Date().toISOString();
 
-			const cardContent = `${card.front}\n---div---\n${card.back}`;
+			const cardContent = card.content || "";
 			card.metadata.lastScannedContent = cardContent;
 		}
 
@@ -947,8 +947,7 @@ export class SimpleBatchParsingService {
 				}
 
 				// 优先级3: 使用三方合并引擎智能判断
-				const cardContent =
-					card.metadata?.lastScannedContent || `${card.front}\n---div---\n${card.back}`;
+				const cardContent = card.metadata?.lastScannedContent || card.content || "";
 				const syncResult = await this.mergeEngine.smartSync(cardContent, uuid, deckId);
 
 				switch (syncResult.action) {
@@ -1796,7 +1795,7 @@ export class SimpleBatchParsingService {
 						}
 
 						// 使用三方合并引擎决策
-						const sourceContent = `${parsedCard.front}\n---div---\n${parsedCard.back}`;
+						const sourceContent = parsedCard.content || "";
 						const syncResult = await this.mergeEngine.smartSync(
 							sourceContent,
 							uuid,

@@ -51,6 +51,34 @@ function generatePdfBookmarkTaskId(): string {
 	return `pdfbm-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function mergeTaskMeta(existing: IRBlockMeta, updates?: Partial<IRBlockMeta>): IRBlockMeta {
+	if (!updates) {
+		return existing;
+	}
+
+	return {
+		...existing,
+		...updates,
+		siblings: updates.siblings
+			? {
+					...existing.siblings,
+					...updates.siblings,
+			  }
+			: existing.siblings,
+	};
+}
+
+function mergeTaskStats(existing: IRBlockStats, updates?: Partial<IRBlockStats>): IRBlockStats {
+	if (!updates) {
+		return existing;
+	}
+
+	return {
+		...existing,
+		...updates,
+	};
+}
+
 export class IRPdfBookmarkTaskService {
 	private app: App;
 	private initialized = false;
@@ -161,8 +189,19 @@ export class IRPdfBookmarkTaskService {
 	}
 
 	async getTasksByDeck(deckId: string): Promise<IRPdfBookmarkTask[]> {
+		return this.getTasksByDeckIdentifiers([deckId]);
+	}
+
+	async getTasksByDeckIdentifiers(deckIds: string[]): Promise<IRPdfBookmarkTask[]> {
+		const identifiers = this.toNormalizedSet(deckIds);
+		if (identifiers.size === 0) {
+			return [];
+		}
+
 		const store = await this.readStore();
-		return Object.values(store.tasks).filter((t) => getTaskTopicId(t) === deckId);
+		return Object.values(store.tasks).filter((task) =>
+			identifiers.has(String(getTaskTopicId(task) || "").trim())
+		);
 	}
 
 	async createTask(input: {
@@ -224,8 +263,8 @@ export class IRPdfBookmarkTaskService {
 		const updated: IRPdfBookmarkTask = {
 			...existing,
 			...updates,
-			meta: (updates as any).meta ? (updates as any).meta : existing.meta,
-			stats: (updates as any).stats ? (updates as any).stats : existing.stats,
+			meta: mergeTaskMeta(existing.meta, updates.meta),
+			stats: mergeTaskStats(existing.stats, updates.stats),
 			updatedAt: Date.now(),
 		};
 

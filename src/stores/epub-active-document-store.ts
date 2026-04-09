@@ -5,7 +5,7 @@
  * - services: 全局侧边栏用于读取TOC/高亮并执行导航
  */
 
-import type { EpubAnnotationService, EpubBook, EpubReaderEngine } from "../services/epub";
+import type { EpubAnnotationService, EpubBook, EpubReaderEngine, TocItem } from "../services/epub";
 import type { EpubBacklinkHighlightService } from "../services/epub/EpubBacklinkHighlightService";
 
 export interface EpubSharedState {
@@ -18,6 +18,7 @@ export interface EpubSharedState {
 	progress: number;
 	onSettingsClick: ((evt: MouseEvent) => void) | null;
 	onSwitchBook: ((filePath: string) => void) | null;
+	onCreateChapterReadingPoint: ((item: TocItem) => Promise<void>) | null;
 }
 
 type Subscriber = (state: EpubSharedState) => void;
@@ -33,6 +34,7 @@ const EMPTY_STATE: EpubSharedState = {
 	progress: 0,
 	onSettingsClick: null,
 	onSwitchBook: null,
+	onCreateChapterReadingPoint: null,
 };
 
 class EpubActiveDocumentStore {

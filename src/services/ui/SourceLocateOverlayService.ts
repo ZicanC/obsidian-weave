@@ -394,6 +394,7 @@ export class SourceLocateOverlayService {
 		const normalized = this.normalizeForMatch(candidate);
 		if (!normalized || normalized.length < 10) return false;
 		if (
+			normalized.includes("weave-loc=") ||
 			normalized.includes("weave-cfi=") ||
 			normalized.includes("tuanki-cfi-") ||
 			normalized.includes("weave-epub")

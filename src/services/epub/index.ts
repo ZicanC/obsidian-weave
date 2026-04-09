@@ -1,4 +1,8 @@
-export { ReadiumReaderService } from "./ReadiumReaderService";
+export { FoliateReaderService } from "./FoliateReaderService";
+export {
+	DEFAULT_EPUB_READER_ENGINE,
+	createEpubReaderEngine,
+} from "./reader-engine-factory";
 export type {
 	EpubReaderEngine,
 	EpubReaderEngineType,

@@ -61,8 +61,7 @@
     {
       title: t('study.mobileMenu.settingsSection'),
       items: [
-        { id: 'note-type-config', icon: 'file-cog', label: t('study.mobileMenu.noteTypeConfig') },
-        { id: 'settings', icon: 'settings', label: t('study.mobileMenu.settings') }
+        { id: 'note-type-config', icon: 'file-cog', label: t('study.mobileMenu.noteTypeConfig') }
       ]
     }
   ]);

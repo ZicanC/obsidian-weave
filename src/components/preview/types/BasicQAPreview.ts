@@ -1,5 +1,6 @@
 import type { Card } from "../../../data/types";
 import type WeavePlugin from "../../../main";
+import { getCardBack, getCardFront } from "../../../utils/card-field-helper";
 import type { PreviewData, PreviewOptions, PreviewSection } from "../ContentPreviewEngine";
 
 /**
@@ -160,8 +161,8 @@ export class BasicQAPreview {
 	 * 渲染完整的问答卡片
 	 */
 	renderQACard(card: Card, options: QARenderOptions): QARenderResult {
-		const questionContent = card.fields?.question || card.fields?.front || "";
-		const answerContent = card.fields?.answer || card.fields?.back || "";
+		const questionContent = getCardFront(card);
+		const answerContent = getCardBack(card);
 
 		const questionElement = this.renderQuestion(questionContent, options);
 		const answerElement = this.renderAnswer(answerContent, options);

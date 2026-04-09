@@ -29,7 +29,14 @@
   import IRBlockInfoModal from './IRBlockInfoModal.svelte';
   import IRReviewReminderModal from './IRReviewReminderModal.svelte';
   import { MarkdownFileSuggestModal } from '../../modals/MarkdownFileSuggestModal';
+  import {
+    getPointAssociatedNotePath,
+    getVisibleAssociatedNotePath,
+    hasPointAssociatedNote,
+    hasVisibleAssociatedNote
+  } from '../../services/incremental-reading/IRAssociatedNoteVisibility';
   import type { BatchImportResult } from '../../services/incremental-reading/ReadingMaterialManager';
+  import { getChunkTopicIds, getTaskTopicId } from '../../utils/ir-topic-compat';
   import { logger } from '../../utils/logger';
   import { tr } from '../../utils/i18n';
   import { showDeleteConfirm, showObsidianConfirm, showObsidianInput } from '../../utils/obsidian-confirm';
@@ -926,23 +933,35 @@
   }
 
   async function resolveDeckIdForScheduleItem(item: ScheduleItem): Promise<string> {
-    if (item.deckId) return item.deckId;
+    if (item.deckId) return resolveCanonicalDeckId(item.deckId);
 
     if (isPdfBookmarkTaskId(item.id)) {
       const pdfService = await getPdfBookmarkTaskService();
       const task = await pdfService.getTask(item.id);
-      return task?.deckId || irDecks[0]?.id || '';
+      return resolveCanonicalDeckId(getTaskTopicId(task) || '') || irDecks[0]?.id || '';
     }
 
     if (isEpubBookmarkTaskId(item.id)) {
       const epubService = await getEpubBookmarkTaskService();
       const task = await epubService.getTask(item.id);
-      return task?.deckId || irDecks[0]?.id || '';
+      return resolveCanonicalDeckId(getTaskTopicId(task) || '') || irDecks[0]?.id || '';
     }
 
     const storage = await getStorage();
     const chunk = await storage.getChunkData(item.id);
-    return chunk?.deckIds?.[0] || irDecks[0]?.id || '';
+    return resolveCanonicalDeckId(getChunkTopicIds(chunk)[0] || '') || irDecks[0]?.id || '';
+  }
+
+  function resolveCanonicalDeckId(deckIdentifier: string): string {
+    const normalized = String(deckIdentifier || '').trim();
+    if (!normalized) {
+      return '';
+    }
+
+    const matchedDeck = irDecks.find(
+      (deck) => deck.id === normalized || String((deck as any)?.path || '').trim() === normalized
+    );
+    return matchedDeck?.id || normalized;
   }
 
   function getNextUnprocessedMaterial(currentId: string): ScheduleItem | null {
@@ -1121,16 +1140,6 @@
     return path ? normalizePath(path) : '';
   }
 
-  function getPointAssociatedNotePath(material: ScheduleItem): string {
-    return material.associatedNoteScope === 'point'
-      ? normalizeVaultPath(material.associatedNotePath)
-      : '';
-  }
-
-  function hasPointAssociatedNote(material: ScheduleItem): boolean {
-    return getPointAssociatedNotePath(material).length > 0;
-  }
-
   function formatAssociatedNoteLabel(notePath?: string | null): string {
     const normalized = normalizeVaultPath(notePath);
     if (!normalized) return t('irSidebar.associatedNote.untitled');
@@ -1140,12 +1149,12 @@
   }
 
   function getAssociatedNoteActionLabel(material: ScheduleItem): string {
-    const noteLabel = formatAssociatedNoteLabel(getPointAssociatedNotePath(material));
+    const noteLabel = formatAssociatedNoteLabel(getVisibleAssociatedNotePath(material));
     return t('irSidebar.associatedNote.actionOpen', { name: noteLabel });
   }
 
   function getAssociatedNoteActionTooltip(material: ScheduleItem): string {
-    const noteLabel = formatAssociatedNoteLabel(getPointAssociatedNotePath(material));
+    const noteLabel = formatAssociatedNoteLabel(getVisibleAssociatedNotePath(material));
     return t('irSidebar.associatedNote.tooltipOpen', { name: noteLabel });
   }
 
@@ -1292,7 +1301,7 @@
   }
 
   async function openAssociatedNoteInSidebar(material: ScheduleItem): Promise<void> {
-    const notePath = getPointAssociatedNotePath(material);
+    const notePath = getVisibleAssociatedNotePath(material);
     if (!notePath) {
       new Notice(t('irSidebar.associatedNote.notLinked'), 2600);
       return;
@@ -2075,7 +2084,7 @@
       menu.addItem((item) => {
         item
           .setTitle(
-            hasPointAssociatedNote(material)
+            hasVisibleAssociatedNote(material)
               ? t('irSidebar.associatedNote.menuRelink')
               : t('irSidebar.associatedNote.menuLink')
           )
@@ -2217,14 +2226,19 @@
       if (isPdfBookmarkTaskId(material.id)) {
         const pdfService = await getPdfBookmarkTaskService();
         const task = await pdfService.getTask(material.id);
-        resolvedDeckId = task?.deckId || '';
+        resolvedDeckId = resolveCanonicalDeckId(getTaskTopicId(task) || '');
       }
 
       if (!resolvedDeckId) {
         // 尝试从 irDecks 中找到包含此 sourceFile 的牌组
         for (const deck of irDecks) {
           const blocks = Object.values(await (await getStorage()).getAllBlocks());
-          const match = blocks.find((b: any) => b.sourcePath === material.sourceFile && b.deckId === deck.id);
+          const deckIdentifiers = [deck.id, String((deck as any)?.path || '').trim()].filter(Boolean);
+          const match = blocks.find(
+            (b: any) =>
+              b.sourcePath === material.sourceFile &&
+              getChunkTopicIds(b).some((identifier) => deckIdentifiers.includes(identifier))
+          );
           if (match) {
             resolvedDeckId = deck.id;
             break;
@@ -2430,7 +2444,7 @@
     }
   }
 
-  // 加载数据 - 参考 IRScheduleGantt 的实现
+  // 加载数据
   async function loadData() {
     isLoading = true;
     try {
@@ -2844,7 +2858,7 @@
               >
                 <span class="checkbox-box" class:checked={processedChunkIds.has(material.id)} aria-hidden="true"></span>
               </button>
-              {#if hasPointAssociatedNote(material)}
+              {#if hasVisibleAssociatedNote(material)}
                 <button
                   type="button"
                   class="associated-note-link"
@@ -2915,7 +2929,7 @@
                     >
                       <span class="checkbox-box" class:checked={processedChunkIds.has(sibling.id)} aria-hidden="true"></span>
                     </button>
-                    {#if hasPointAssociatedNote(sibling)}
+                    {#if hasVisibleAssociatedNote(sibling)}
                       <button
                         type="button"
                         class="associated-note-link sibling-associated-note-link"

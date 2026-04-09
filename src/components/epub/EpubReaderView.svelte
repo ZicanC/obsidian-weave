@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { Platform } from 'obsidian';
 	import type { App } from 'obsidian';
 	import type { EpubBook, EpubFlowMode, EpubLayoutMode, EpubReaderEngine, EpubReaderSettings, EpubStorageService, PaginationInfo, ReaderHighlight } from '../../services/epub';
 	import type { EpubAnnotationService } from '../../services/epub';
@@ -32,10 +33,12 @@
 	let currentWidthMode: EpubReaderSettings['widthMode'] = 'full';
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
 	let highlightReapplyTimer: ReturnType<typeof setTimeout> | null = null;
+	let mobileStabilizationTimer: ReturnType<typeof setTimeout> | null = null;
 	let highlightsReady = false;
 	let detachRelocatedHandler: (() => void) | null = null;
 	let skipNextAppearanceSync = false;
 	let renderSessionToken = 0;
+	let mobileStabilizationToken = 0;
 	let viewDisposed = false;
 
 	function isStaleRender(renderToken: number): boolean {
@@ -116,6 +119,19 @@
 
 	function waitForNextFrame(): Promise<void> {
 		return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+	}
+
+	function waitForDelay(delayMs: number): Promise<void> {
+		return new Promise((resolve) => {
+			if (delayMs <= 0) {
+				resolve();
+				return;
+			}
+			mobileStabilizationTimer = setTimeout(() => {
+				mobileStabilizationTimer = null;
+				resolve();
+			}, delayMs);
+		});
 	}
 
 	function getRenderMode(readerSettings: EpubReaderSettings): {
@@ -205,7 +221,7 @@
 
 			registerRelocatedHandler();
 
-			// Let the Readium layout settle after settings/resize before navigating
+			// Let the reader layout settle after settings/resize before navigating
 			await new Promise(r => setTimeout(r, 50));
 			if (isStaleRender(renderToken)) {
 				return;
@@ -243,6 +259,7 @@
 			highlightsReady = true;
 
 			onReaderReady?.();
+			void stabilizeMobileRenderer(renderToken);
 		} catch (error) {
 			if (isStaleRender(renderToken)) {
 				return;
@@ -305,6 +322,38 @@
 		}, 3000);
 	}
 
+	async function stabilizeMobileRenderer(renderToken: number) {
+		if (!Platform.isMobile || settings.flowMode !== 'scrolled' || !rendered || !book) {
+			return;
+		}
+
+		const stabilizationToken = ++mobileStabilizationToken;
+		const runPass = async (delayMs: number) => {
+			await waitForDelay(delayMs);
+			if (isStaleRender(renderToken) || stabilizationToken !== mobileStabilizationToken || !rendered) {
+				return;
+			}
+
+			const rect = await waitForStableContainer(8);
+			if (isStaleRender(renderToken) || stabilizationToken !== mobileStabilizationToken || !rendered) {
+				return;
+			}
+
+			readerService.resize(rect.width, rect.height);
+			const currentCfi = readerService.getCurrentCFI();
+			if (currentCfi) {
+				await readerService.goToLocation(currentCfi);
+			}
+			if (isStaleRender(renderToken) || stabilizationToken !== mobileStabilizationToken || !rendered) {
+				return;
+			}
+			await refreshReaderHighlights();
+		};
+
+		await runPass(0);
+		await runPass(140);
+	}
+
 	async function loadSavedHighlights() {
 		const allHighlights = await collectAllHighlights();
 		if (allHighlights.length > 0) {
@@ -351,6 +400,7 @@
 
 			await refreshReaderHighlights();
 			onReaderReady?.();
+			void stabilizeMobileRenderer(renderSessionToken);
 		} catch (error) {
 			logger.error('[EpubReaderView] Failed to change reader mode:', error);
 			currentLayoutMode = previousLayoutMode;
@@ -393,12 +443,14 @@
 		return () => {
 			viewDisposed = true;
 			renderSessionToken += 1;
+			mobileStabilizationToken += 1;
 			if (detachRelocatedHandler) {
 				detachRelocatedHandler();
 				detachRelocatedHandler = null;
 			}
 			if (retryTimer) clearTimeout(retryTimer);
 			if (highlightReapplyTimer) clearTimeout(highlightReapplyTimer);
+			if (mobileStabilizationTimer) clearTimeout(mobileStabilizationTimer);
 			if (resizeObserver) {
 				resizeObserver.disconnect();
 			}

@@ -140,7 +140,11 @@ npm install
 npm run dev
 ```
 
-注意：开发模式使用 Vite watch 构建流程。
+注意：
+
+- 开发模式使用 Vite watch 构建流程。
+- 如果 `.env` 中的 `OBSIDIAN_VAULT_PATH` 指向某个 Obsidian 仓库下的 `.obsidian` 目录，`npm run dev` 会自动把桌面端开发产物同步到 `plugins/weave/`，用于测试仓库热重载。
+- 桌面端开发会先写入项目内的 `.desktop-hot-reload/` 暂存目录，再以原子方式同步到目标插件目录，避免 Obsidian 正在读取插件文件时出现半写入状态。
 
 ## 更多文档
 

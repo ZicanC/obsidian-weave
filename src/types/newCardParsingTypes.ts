@@ -308,19 +308,13 @@ export interface ParseResult {
 
 /**
  * 解析后的卡片
- *  Content-Only 架构：优先使用 content，向后兼容 front/back
+ *  Content-Only 架构：统一使用 content
  */
 export interface ParsedCard {
 	id?: string;
 	type: CardType;
 
-	//  新架构：Content-Only
-	content?: string; // 卡片完整内容（推荐）
-
-	//  向后兼容：旧架构字段
-	front?: string; // Compatibility note: 使用 content 替代
-	back?: string; // Compatibility note: 使用 content 替代
-	fields?: Record<string, string>; // Compatibility note: 使用 content 替代
+	content?: string; // 卡片完整内容
 
 	tags: string[];
 	metadata?: CardMetadata;

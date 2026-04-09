@@ -4,9 +4,11 @@
   import type { Deck } from '../../../data/types';
   import type { DeckSyncMapping } from '../../settings/types/settings-types';
   import type { AnkiConnectSettings } from '../../settings/types/settings-types';
-  import { tr } from '../../../utils/i18n';
+  import { tr, trArray } from '../../../utils/i18n';
   import ObsidianDropdown from '../../ui/ObsidianDropdown.svelte';
   import { CardTypeMappingModalObsidian } from './CardTypeMappingModalObsidian';
+  import SettingsHelpModal from '../components/SettingsHelpModal.svelte';
+  import SettingsHelpTriggerButton from '../components/SettingsHelpTriggerButton.svelte';
   
   //  高级功能限制
   import { PremiumFeatureGuard } from '../../../services/premium/PremiumFeatureGuard';
@@ -17,6 +19,7 @@
 
   // 响应式翻译
   let t = $derived($tr);
+  let tList = $derived($trArray);
   
   // UI组件（原生 Menu API，无需额外导入）
   
@@ -127,15 +130,6 @@
     }
   }
 
-  function getSyncDirectionIcon(direction: string): string {
-    switch (direction) {
-      case 'to_anki': return '→';
-      case 'from_anki': return '←';
-      case 'bidirectional': return '⇄';
-      default: return '→';
-    }
-  }
-
   function getSyncDirectionClass(direction: string): string {
     switch (direction) {
       case 'to_anki': return 'to-anki';
@@ -146,32 +140,23 @@
   }
 
   function formatLastSyncTime(time: string | undefined): string {
-    if (!time) return '从未同步';
+    if (!time) return t('ankiConnect.deckMapping.neverSynced');
     
     const date = new Date(time);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
     
-    if (diffMins < 1) return '刚刚';
-    if (diffMins < 60) return `${diffMins}分钟前`;
+    if (diffMins < 1) return t('ankiConnect.deckMapping.justNow');
+    if (diffMins < 60) return t('ankiConnect.deckMapping.minutesAgo', { n: diffMins });
     
     const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours}小时前`;
+    if (diffHours < 24) return t('ankiConnect.deckMapping.hoursAgo', { n: diffHours });
     
     const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) return `${diffDays}天前`;
+    if (diffDays < 7) return t('ankiConnect.deckMapping.daysAgo', { n: diffDays });
     
     return date.toLocaleDateString();
-  }
-
-  function handleHelpModalOverlayKeydown(event: KeyboardEvent) {
-    if (event.target !== event.currentTarget) return;
-
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      showHelpModal = false;
-    }
   }
 
   function getContentConversionValue(mapping: DeckSyncMapping): 'standard' | 'preserve_style' | 'minimal' {
@@ -199,7 +184,7 @@
     if (mapping.syncDirection === 'from_anki' || mapping.syncDirection === 'bidirectional') {
       menu.addItem((item) => {
         item
-          .setTitle('从 Anki 导入')
+          .setTitle(t('ankiConnect.deckMapping.importFromAnki'))
           .setIcon('download')
           .setDisabled(!mapping.enabled || isSyncing)
           .onClick(() => handleImport(mapping.ankiDeckName, mapping.weaveDeckId));
@@ -209,7 +194,7 @@
     if (mapping.syncDirection === 'to_anki' || mapping.syncDirection === 'bidirectional') {
       menu.addItem((item) => {
         item
-          .setTitle('导出到 Anki')
+          .setTitle(t('ankiConnect.deckMapping.exportToAnki'))
           .setIcon('upload')
           .setDisabled(!mapping.enabled || isSyncing)
           .onClick(() => handleSync(mapping._id));
@@ -219,7 +204,7 @@
     if (mapping.syncDirection === 'bidirectional') {
       menu.addItem((item) => {
         item
-          .setTitle('双向智能同步')
+          .setTitle(t('ankiConnect.deckMapping.bidirectionalSync'))
           .setIcon('repeat')
           .setDisabled(!mapping.enabled || isSyncing)
           .onClick(() => handleBidirectionalSync(mapping._id));
@@ -228,7 +213,7 @@
 
     menu.addItem((item) => {
       item
-        .setTitle('字段映射配置')
+        .setTitle(t('ankiConnect.deckMapping.fieldMapping'))
         .setIcon('settings-2')
         .onClick(() => openCardTypeMappingModal(mapping));
     });
@@ -238,7 +223,7 @@
     
     menu.addItem((item) => {
       item
-        .setTitle('删除映射')
+        .setTitle(t('ankiConnect.deckMapping.deleteMapping'))
         .setIcon('trash')
         .onClick(() => onRemoveMapping(mapping._id));
     });
@@ -260,12 +245,12 @@
     // 批量导出到 Anki
     menu.addItem((item) => {
       item
-        .setTitle(`批量导出到 Anki`)
+        .setTitle(t('ankiConnect.deckMapping.batchExportToAnki'))
         .setIcon("arrow-right")
         .setDisabled(enabledCount === 0)
         .onClick(async () => {
           if (enabledCount === 0) {
-            new Notice('没有启用的牌组映射');
+            new Notice(t('ankiConnect.deckMapping.noEnabledMappings'));
             return;
           }
           await onBatchSync('to_anki');
@@ -273,49 +258,49 @@
       
       // 添加副标题显示数量
       if (enabledCount > 0) {
-        (item as any).setSection?.(`${enabledCount} 个已启用`);
+        (item as any).setSection?.(t('ankiConnect.deckMapping.enabledCount', { count: enabledCount }));
       }
     });
     
     // 批量从 Anki 导入
     menu.addItem((item) => {
       item
-        .setTitle(`批量从 Anki 导入`)
+        .setTitle(t('ankiConnect.deckMapping.batchImportFromAnki'))
         .setIcon("arrow-left")
         .setDisabled(enabledCount === 0)
         .onClick(async () => {
           if (enabledCount === 0) {
-            new Notice('没有启用的牌组映射');
+            new Notice(t('ankiConnect.deckMapping.noEnabledMappings'));
             return;
           }
           await onBatchSync('from_anki');
         });
       
       if (enabledCount > 0) {
-        (item as any).setSection?.(`${enabledCount} 个已启用`);
+        (item as any).setSection?.(t('ankiConnect.deckMapping.enabledCount', { count: enabledCount }));
       }
     });
     
     // 批量双向同步
     menu.addItem((item) => {
       item
-        .setTitle(`批量双向同步`)
+        .setTitle(t('ankiConnect.deckMapping.batchBidirectionalSync'))
         .setIcon("repeat")
         .setDisabled(enabledCount === 0 || !bidirectionalSyncEnabled)
         .onClick(async () => {
           if (enabledCount === 0) {
-            new Notice('没有启用的牌组映射');
+            new Notice(t('ankiConnect.deckMapping.noEnabledMappings'));
             return;
           }
           if (!bidirectionalSyncEnabled) {
-            new Notice('双向同步未启用，请在高级设置中启用');
+            new Notice(t('ankiConnect.deckMapping.bidirectionalDisabled'));
             return;
           }
           await onBatchSync('bidirectional');
         });
       
       if (enabledCount > 0 && bidirectionalSyncEnabled) {
-        (item as any).setSection?.(`${enabledCount} 个已启用`);
+        (item as any).setSection?.(t('ankiConnect.deckMapping.enabledCount', { count: enabledCount }));
       }
     });
     
@@ -332,18 +317,10 @@
     <div class="header-actions">
       <!-- 🆕 帮助按钮 -->
       {#if mappingList.length > 0}
-        <button 
-          class="header-action-btn help-btn"
-          aria-label={t('common.help')}
-          title={t('common.help')}
-          onclick={() => showHelpModal = true}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"></circle>
-            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-            <line x1="12" y1="17" x2="12.01" y2="17"></line>
-          </svg>
-        </button>
+        <SettingsHelpTriggerButton
+          label={t('common.help')}
+          onClick={() => showHelpModal = true}
+        />
       {/if}
       <!-- 批量操作按钮 -->
       <button 
@@ -365,8 +342,8 @@
     <div class="info-banner warning">
       <span class="banner-icon">!</span>
       <div class="banner-text">
-        <strong>未找到 Weave 牌组</strong><br />
-        请先在"牌组学习"界面中创建至少一个牌组，然后刷新此页面。
+        <strong>{t('ankiConnect.deckMapping.noWeaveDecks')}</strong><br />
+        {t('ankiConnect.deckMapping.noWeaveDecksHint')}
       </div>
     </div>
   {/if}
@@ -410,13 +387,13 @@
         <thead>
           <!-- svelte-ignore component_name_lowercase -->
           <tr>
-            <th>Weave 牌组</th>
-            <th>Anki 牌组</th>
-            <th>同步方向</th>
-            <th>内容转换</th>
-            <th>状态</th>
-            <th>上次同步</th>
-            <th>操作</th>
+            <th>{t('ankiConnect.deckMapping.tableHeaders.weaveDeck')}</th>
+            <th>{t('ankiConnect.deckMapping.tableHeaders.ankiDeck')}</th>
+            <th>{t('ankiConnect.deckMapping.tableHeaders.syncDirection')}</th>
+            <th>{t('ankiConnect.deckMapping.tableHeaders.contentConversion')}</th>
+            <th>{t('ankiConnect.deckMapping.tableHeaders.status')}</th>
+            <th>{t('ankiConnect.deckMapping.tableHeaders.lastSync')}</th>
+            <th>{t('ankiConnect.deckMapping.tableHeaders.actions')}</th>
           </tr>
         </thead>
         <tbody>
@@ -431,17 +408,19 @@
               </td>
               <td>
                 <span class="sync-direction {getSyncDirectionClass(mapping.syncDirection)}">
-                  {getSyncDirectionIcon(mapping.syncDirection)} 
-                  {mapping.syncDirection === 'to_anki' ? '到 Anki' : 
-                   mapping.syncDirection === 'from_anki' ? '从 Anki' : '双向'}
+                  {mapping.syncDirection === 'to_anki'
+                    ? t('ankiConnect.deckMapping.directions.toAnki')
+                    : mapping.syncDirection === 'from_anki'
+                    ? t('ankiConnect.deckMapping.directions.fromAnki')
+                    : t('ankiConnect.deckMapping.directions.bidirectional')}
                 </span>
               </td>
               <td>
                 <ObsidianDropdown
                   options={[
-                    { id: 'standard', label: '标准' },
-                    { id: 'preserve_style', label: '尽量保留样式' },
-                    { id: 'minimal', label: '最少转换' }
+                    { id: 'standard', label: t('ankiConnect.deckMapping.contentOptions.standard') },
+                    { id: 'preserve_style', label: t('ankiConnect.deckMapping.contentOptions.preserveStyle') },
+                    { id: 'minimal', label: t('ankiConnect.deckMapping.contentOptions.minimal') }
                   ]}
                   value={getContentConversionValue(mapping)}
                   onchange={(value) => {
@@ -450,7 +429,7 @@
                 />
               </td>
               <td>
-                <label class="modern-switch" title={mapping.enabled ? '点击禁用同步' : '点击启用同步'}>
+                <label class="modern-switch" title={mapping.enabled ? t('ankiConnect.deckMapping.toggleDisable') : t('ankiConnect.deckMapping.toggleEnable')}>
                   <input
                     type="checkbox"
                     checked={mapping.enabled}
@@ -469,8 +448,8 @@
               <td class="actions-cell">
                 <button 
                   class="mapping-menu-btn"
-                  aria-label="操作菜单"
-                  title="更多操作"
+                  aria-label={t('ankiConnect.deckMapping.actionsMenu')}
+                  title={t('ankiConnect.deckMapping.moreActions')}
                   onclick={(e) => showMappingActionsMenu(mapping, e)}
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -490,62 +469,36 @@
 
 
 <!-- 🆕 帮助提示弹窗 -->
-{#if showHelpModal}
-  <div 
-    class="modal-overlay" 
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="help-modal-title"
-    tabindex="-1"
-    onclick={() => showHelpModal = false}
-    onkeydown={handleHelpModalOverlayKeydown}
-  >
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div 
-      class="help-modal" 
-      role="document"
-      tabindex="-1"
-      onclick={(e) => { e.preventDefault(); }} 
-      onkeydown={(e) => { e.preventDefault(); }}
-    >
-      <div class="help-modal-header">
-        <h3 id="help-modal-title">使用说明</h3>
-        <button 
-          class="close-btn" 
-          onclick={() => showHelpModal = false}
-          aria-label="关闭帮助"
-        >×</button>
-      </div>
-      <div class="help-modal-content">
-        <div class="help-item">
-          <div class="help-item-title">已配置 {mappingList.length} 个映射关系</div>
-          <p class="help-item-desc">打开开关即可启用同步，点击同步按钮执行数据同步</p>
-        </div>
-        
-        <div class="help-item">
-          <div class="help-item-title">如何使用</div>
-          <ul class="help-list">
-            <li><strong>启用同步</strong>：点击表格中的开关启用或禁用该映射</li>
-            <li><strong>单个同步</strong>：点击操作菜单（•••）选择同步方向</li>
-            <li><strong>批量同步</strong>：点击右上角菜单（•••）批量操作所有启用的映射</li>
-          </ul>
-        </div>
-        
-        <div class="help-item">
-          <div class="help-item-title">同步方向说明</div>
-          <ul class="help-list">
-            <li><strong>→ 到 Anki</strong>：将 Weave 卡片导出到 Anki</li>
-            <li><strong>← 从 Anki</strong>：从 Anki 导入卡片到 Weave</li>
-            <li><strong>⇄ 双向</strong>：智能双向同步（需要激活高级功能）</li>
-          </ul>
-        </div>
-      </div>
-      <div class="help-modal-footer">
-        <button class="btn btn-primary" onclick={() => showHelpModal = false}>知道了</button>
-      </div>
-    </div>
+<SettingsHelpModal
+  open={showHelpModal}
+  title={t('ankiConnect.deckMapping.help.title')}
+  closeLabel={t('ankiConnect.deckMapping.help.closeHelp')}
+  confirmLabel={t('ankiConnect.deckMapping.help.gotIt')}
+  onClose={() => showHelpModal = false}
+>
+  <div class="help-item">
+    <div class="help-item-title">{t('ankiConnect.deckMapping.help.mappingCount', { count: mappingList.length })}</div>
+    <p class="help-item-desc">{t('ankiConnect.deckMapping.help.mappingCountDesc')}</p>
   </div>
-{/if}
+
+  <div class="help-item">
+    <div class="help-item-title">{t('ankiConnect.deckMapping.help.howToUse')}</div>
+    <ul class="help-list">
+      {#each tList('ankiConnect.deckMapping.help.howToUseItems') as item}
+        <li>{item}</li>
+      {/each}
+    </ul>
+  </div>
+
+  <div class="help-item">
+    <div class="help-item-title">{t('ankiConnect.deckMapping.help.syncDirections')}</div>
+    <ul class="help-list">
+      {#each tList('ankiConnect.deckMapping.help.syncDirectionItems') as item}
+        <li>{item}</li>
+      {/each}
+    </ul>
+  </div>
+</SettingsHelpModal>
 
 <style>
   /* DeckMappingSection 组件样式 - 使用全局样式框架 */
@@ -851,154 +804,4 @@
     align-items: center;
   }
 
-  .help-btn {
-    color: var(--interactive-accent);
-    opacity: 0.8;
-  }
-
-  .help-btn:hover {
-    opacity: 1;
-    color: var(--interactive-accent);
-    background: var(--interactive-accent-hover);
-  }
-
-  /* 🆕 帮助弹窗样式 */
-  .modal-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: var(--weave-z-overlay);
-    backdrop-filter: blur(2px);
-  }
-
-  .help-modal {
-    background: var(--background-primary);
-    border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-    max-width: 560px;
-    width: 90%;
-    max-height: 80vh;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .help-modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 20px 24px;
-    border-bottom: 1px solid var(--background-modifier-border);
-  }
-
-  .help-modal-header h3 {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--text-normal);
-  }
-
-  .close-btn {
-    width: 32px;
-    height: 32px;
-    border: none;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 24px;
-    line-height: 1;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s ease;
-  }
-
-  .close-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-  }
-
-  .help-modal-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 24px;
-  }
-
-  .help-item {
-    margin-bottom: 24px;
-  }
-
-  .help-item:last-child {
-    margin-bottom: 0;
-  }
-
-  .help-item-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-normal);
-    margin-bottom: 8px;
-  }
-
-  .help-item-desc {
-    font-size: 14px;
-    color: var(--text-muted);
-    line-height: 1.6;
-    margin: 0;
-  }
-
-  .help-list {
-    margin: 8px 0 0 0;
-    padding-left: 20px;
-    list-style: disc;
-  }
-
-  .help-list li {
-    font-size: 14px;
-    color: var(--text-muted);
-    line-height: 1.8;
-    margin-bottom: 6px;
-  }
-
-  .help-list li strong {
-    color: var(--text-normal);
-    font-weight: 600;
-  }
-
-  .help-modal-footer {
-    padding: 16px 24px;
-    border-top: 1px solid var(--background-modifier-border);
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .help-modal-footer .btn {
-    min-width: 100px;
-  }
-
-  /* 移动端适配 */
-  @media (max-width: 640px) {
-    .help-modal {
-      max-width: 95%;
-      margin: 10px;
-    }
-
-    .help-modal-header {
-      padding: 16px 20px;
-    }
-
-    .help-modal-content {
-      padding: 20px;
-    }
-
-    .help-modal-footer {
-      padding: 12px 20px;
-    }
-  }
 </style>

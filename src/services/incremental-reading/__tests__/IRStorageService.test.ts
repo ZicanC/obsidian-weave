@@ -1,4 +1,6 @@
 import { TFile } from 'obsidian';
+import { IREpubBookmarkTaskService } from '../IREpubBookmarkTaskService';
+import { IRPdfBookmarkTaskService } from '../IRPdfBookmarkTaskService';
 import { IRStorageService } from '../IRStorageService';
 
 describe('IRStorageService.deleteChunkData', () => {
@@ -164,5 +166,195 @@ describe('IRStorageService.deleteChunkData', () => {
     expect(frontmatter['weave-reading-ir-deck-id']).toBeUndefined();
     expect(frontmatter.status).toBeUndefined();
     expect(frontmatter.tags).toEqual(['旧标签', 'we_已删除']);
+  });
+});
+
+describe('IRStorageService.getDeckStats', () => {
+  it('会将 EPUB 书签任务计入专题统计与文件数', async () => {
+    const app = {
+      vault: {
+        getAbstractFileByPath: vi.fn(() => null)
+      },
+      metadataCache: {
+        getFileCache: vi.fn(() => null)
+      }
+    };
+
+    const service = new IRStorageService(app as any);
+
+    vi.spyOn(service as any, 'getBlocksByDeck').mockResolvedValue([]);
+    vi.spyOn(service as any, 'getDeckById').mockResolvedValue({
+      id: 'deck-1',
+      name: '测试专题'
+    });
+    vi.spyOn(service as any, 'getAllChunkData').mockResolvedValue({});
+    vi.spyOn(service as any, 'countQuestionsInFiles').mockResolvedValue({
+      total: 0,
+      completed: 0
+    });
+
+    vi.spyOn(IRPdfBookmarkTaskService.prototype, 'initialize').mockResolvedValue(undefined);
+    vi.spyOn(IRPdfBookmarkTaskService.prototype, 'getTasksByDeck').mockResolvedValue([]);
+    vi.spyOn(IREpubBookmarkTaskService.prototype, 'initialize').mockResolvedValue(undefined);
+    vi.spyOn(IREpubBookmarkTaskService.prototype, 'getTasksByDeck').mockResolvedValue([
+      {
+        id: 'epubbm-new',
+        deckId: 'deck-1',
+        epubFilePath: 'books/demo.epub',
+        status: 'new',
+        nextRepDate: 0
+      },
+      {
+        id: 'epubbm-scheduled',
+        deckId: 'deck-1',
+        epubFilePath: 'books/demo.epub',
+        status: 'scheduled',
+        nextRepDate: Date.now() + 2 * 24 * 60 * 60 * 1000
+      }
+    ] as any);
+
+    const stats = await service.getDeckStats('deck-1', 20, 50, 3);
+
+    expect(stats.totalCount).toBe(2);
+    expect(stats.newCount).toBe(1);
+    expect(stats.reviewCount).toBe(1);
+    expect(stats.dueToday).toBe(1);
+    expect(stats.dueWithinDays).toBe(2);
+    expect(stats.fileCount).toBe(1);
+  });
+
+  it('传入 deckId 时也会兼容统计挂在旧 deckPath 上的书签任务', async () => {
+    const app = {
+      vault: {
+        getAbstractFileByPath: vi.fn(() => null)
+      },
+      metadataCache: {
+        getFileCache: vi.fn(() => null)
+      }
+    };
+
+    const service = new IRStorageService(app as any);
+
+    vi.spyOn(service as any, 'getBlocksByDeck').mockResolvedValue([]);
+    vi.spyOn(service as any, 'getDeckById').mockResolvedValue({
+      id: 'deck-1',
+      path: 'topics/demo',
+      name: '测试专题'
+    });
+    vi.spyOn(service as any, 'getAllChunkData').mockResolvedValue({});
+    vi.spyOn(service as any, 'countQuestionsInFiles').mockResolvedValue({
+      total: 0,
+      completed: 0
+    });
+
+    vi.spyOn(IRPdfBookmarkTaskService.prototype, 'initialize').mockResolvedValue(undefined);
+    vi.spyOn(IRPdfBookmarkTaskService.prototype, 'getTasksByDeck').mockImplementation(async (deckId: string) => {
+      if (deckId !== 'topics/demo') return [];
+      return [
+        {
+          id: 'pdfbm-1',
+          deckId: 'topics/demo',
+          pdfPath: 'pdfs/demo.pdf',
+          status: 'new',
+          nextRepDate: 0
+        }
+      ] as any;
+    });
+
+    vi.spyOn(IREpubBookmarkTaskService.prototype, 'initialize').mockResolvedValue(undefined);
+    vi.spyOn(IREpubBookmarkTaskService.prototype, 'getTasksByDeck').mockImplementation(async (deckId: string) => {
+      if (deckId !== 'topics/demo') return [];
+      return [
+        {
+          id: 'epubbm-legacy-path',
+          deckId: 'topics/demo',
+          epubFilePath: 'books/demo.epub',
+          status: 'scheduled',
+          nextRepDate: Date.now() + 24 * 60 * 60 * 1000
+        }
+      ] as any;
+    });
+
+    const stats = await service.getDeckStats('deck-1', 20, 50, 3);
+
+    expect(stats.totalCount).toBe(2);
+    expect(stats.newCount).toBe(1);
+    expect(stats.reviewCount).toBe(1);
+    expect(stats.dueToday).toBe(1);
+    expect(stats.dueWithinDays).toBe(2);
+    expect(stats.fileCount).toBe(2);
+  });
+});
+
+describe('IRStorageService study session deck compatibility', () => {
+  it('getStudySessionsByDeck 会兼容读取挂在旧 deckPath 上的会话', async () => {
+    const service = new IRStorageService({} as any);
+
+    vi.spyOn(service as any, 'getStudySessions').mockResolvedValue([
+      {
+        id: 'session-legacy',
+        deckId: 'topics/demo',
+        topicId: 'topics/demo'
+      },
+      {
+        id: 'session-canonical',
+        deckId: 'deck-1',
+        topicId: 'deck-1'
+      },
+      {
+        id: 'session-other',
+        deckId: 'deck-2',
+        topicId: 'deck-2'
+      }
+    ] as any);
+    vi.spyOn(service as any, 'getDeckById').mockResolvedValue({
+      id: 'deck-1',
+      path: 'topics/demo'
+    });
+
+    const sessions = await service.getStudySessionsByDeck('deck-1');
+
+    expect(sessions.map((session: any) => session.id)).toEqual([
+      'session-legacy',
+      'session-canonical'
+    ]);
+  });
+
+  it('cleanupDeckStudySessions 会清理挂在旧 deckPath 上的会话', async () => {
+    const service = new IRStorageService({} as any);
+
+    vi.spyOn(service as any, 'getStudySessions').mockResolvedValue([
+      {
+        id: 'session-legacy',
+        deckId: 'topics/demo',
+        topicId: 'topics/demo'
+      },
+      {
+        id: 'session-canonical',
+        deckId: 'deck-1',
+        topicId: 'deck-1'
+      },
+      {
+        id: 'session-other',
+        deckId: 'deck-2',
+        topicId: 'deck-2'
+      }
+    ] as any);
+    const writeFile = vi.spyOn(service as any, 'writeFile').mockResolvedValue(undefined);
+
+    await (service as any).cleanupDeckStudySessions('deck-1', 'topics/demo');
+
+    expect(writeFile).toHaveBeenCalledWith(
+      expect.stringContaining('study-sessions.json'),
+      expect.stringContaining('session-other')
+    );
+    expect(writeFile).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('session-legacy')
+    );
+    expect(writeFile).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('session-canonical')
+    );
   });
 });

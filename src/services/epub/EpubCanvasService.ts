@@ -120,7 +120,8 @@ export class EpubCanvasService {
 				chapterIndex,
 				color,
 				chapterTitle,
-				timestamp
+				timestamp,
+				this.canvasPath || undefined
 			);
 
 			const nodeId = this.generateNodeId();

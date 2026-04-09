@@ -429,7 +429,6 @@
   isOpen={showPreviewModal}
   isGenerating={isGenerating}
   totalCards={generationConfig.cardCount}
-  mode="split"
   onClose={() => { showPreviewModal = false; }}
   onImport={handleImportCards}
 />

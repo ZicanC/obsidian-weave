@@ -1,5 +1,6 @@
 import { type App, SuggestModal, setIcon } from "obsidian";
 import type { IRDeck } from "../types/ir-types";
+import { ensureWeaveSuggestModalTheme, markLatestSuggestionContainer } from "./weaveSuggestModalTheme";
 
 export class IRDeckSelectorModal extends SuggestModal<IRDeck> {
 	private decks: IRDeck[];
@@ -26,20 +27,44 @@ export class IRDeckSelectorModal extends SuggestModal<IRDeck> {
 		);
 	}
 
+	onOpen(): void {
+		void super.onOpen();
+		ensureWeaveSuggestModalTheme();
+		markLatestSuggestionContainer("weave-ir-deck-suggest-popover");
+	}
+
 	renderSuggestion(deck: IRDeck, el: HTMLElement): void {
 		el.addClass("weave-ir-deck-suggestion");
+		el.style.padding = "0";
 
 		const row = el.createDiv({ cls: "weave-ir-deck-suggestion-row" });
+		row.style.display = "flex";
+		row.style.alignItems = "center";
+		row.style.gap = "8px";
+		row.style.width = "100%";
+		row.style.minWidth = "0";
+		row.style.flexWrap = "nowrap";
+
 		const iconEl = row.createSpan({ cls: "weave-ir-deck-suggestion-icon" });
+		iconEl.style.display = "inline-flex";
+		iconEl.style.alignItems = "center";
+		iconEl.style.justifyContent = "center";
+		iconEl.style.flex = "0 0 auto";
+		iconEl.style.width = "18px";
+		iconEl.style.height = "18px";
 		setIcon(iconEl, "folder");
 
-		row.createSpan({ text: deck.name, cls: "weave-ir-deck-suggestion-name" });
-
-		const meta = el.createDiv({ cls: "weave-ir-deck-suggestion-meta" });
-		meta.createSpan({ text: deck.id, cls: "weave-ir-deck-suggestion-id" });
+		const nameEl = row.createSpan({ text: deck.name, cls: "weave-ir-deck-suggestion-name" });
+		nameEl.style.display = "block";
+		nameEl.style.flex = "1 1 auto";
+		nameEl.style.minWidth = "0";
+		nameEl.style.whiteSpace = "nowrap";
+		nameEl.style.overflow = "hidden";
+		nameEl.style.textOverflow = "ellipsis";
 	}
 
 	onChooseSuggestion(deck: IRDeck, _evt: MouseEvent | KeyboardEvent): void {
 		this.onSelect(deck);
+		this.close();
 	}
 }

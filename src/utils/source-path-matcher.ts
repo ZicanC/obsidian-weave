@@ -7,7 +7,7 @@
 
 import type { Card } from "../data/types";
 import { EpubLinkService } from "../services/epub/EpubLinkService";
-import { parseObsidianLink, parseYAMLFromContent } from "./yaml-utils";
+import { parseBlockId, parseObsidianLink, parseSourceInfo, parseYAMLFromContent } from "./yaml-utils";
 
 function sanitizeSourcePath(path: string | null | undefined): string | null {
 	if (typeof path !== "string") {
@@ -167,6 +167,7 @@ export function extractAllSourcePaths(card: Card): string[] {
 	}
 
 	appendUniqueSourcePath(paths, card.sourceFile);
+	appendUniqueSourcePath(paths, card.fields?.source_file as string | undefined);
 	appendUniqueSourcePath(paths, card.fields?.source_document as string | undefined);
 	appendUniqueSourcePath(paths, card.customFields?.obsidianFilePath as string | undefined);
 
@@ -179,6 +180,33 @@ export function extractAllSourcePaths(card: Card): string[] {
  */
 export function extractSourcePath(card: Card): string | null {
 	return extractAllSourcePaths(card)[0] ?? null;
+}
+
+/**
+ * Returns the primary source block id without the leading ^ marker.
+ * YAML/content is authoritative; legacy fields remain as the final fallback.
+ */
+export function extractSourceBlock(card: Card): string | null {
+	const sourceInfo = parseSourceInfo(card.content || "");
+	const candidates = [
+		sourceInfo.sourceBlock,
+		card.sourceBlock,
+		card.customFields?.blockId as string | undefined,
+		card.fields?.obsidian_block_link as string | undefined,
+	];
+
+	for (const candidate of candidates) {
+		if (typeof candidate !== "string" || !candidate.trim()) {
+			continue;
+		}
+
+		const parsed = parseBlockId(candidate);
+		if (parsed) {
+			return parsed;
+		}
+	}
+
+	return null;
 }
 
 /**
@@ -272,7 +300,9 @@ export function extractEpubSourcePath(content: string): string | null {
 export function debugSourceInfo(card: Card): {
 	hasSource: boolean;
 	sourceFile?: string;
+	fieldsSourceFile?: string;
 	fieldsSourceDoc?: string;
+	extractedBlock: string | null;
 	customFieldsPath?: string;
 	extractedPath: string | null;
 	allExtractedPaths: string[];
@@ -285,7 +315,9 @@ export function debugSourceInfo(card: Card): {
 	return {
 		hasSource: extractedPath !== null,
 		sourceFile: card.sourceFile,
+		fieldsSourceFile: card.fields?.source_file as string | undefined,
 		fieldsSourceDoc: card.fields?.source_document as string | undefined,
+		extractedBlock: extractSourceBlock(card),
 		customFieldsPath: card.customFields?.obsidianFilePath as string | undefined,
 		extractedPath,
 		allExtractedPaths,

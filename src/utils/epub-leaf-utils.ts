@@ -14,9 +14,7 @@ export function findOpenEpubLeaf(app: App, filePath?: string): WorkspaceLeaf | n
 			const state = leaf.getViewState()?.state;
 			return state?.filePath === filePath;
 		});
-		if (matchedLeaf) {
-			return matchedLeaf;
-		}
+		return matchedLeaf ?? null;
 	}
 
 	return leaves.find((leaf) => isCenterLeaf(leaf)) ?? leaves[0] ?? null;
@@ -26,6 +24,10 @@ export function getPreferredEpubLeaf(app: App, filePath?: string): WorkspaceLeaf
 	const matchedEpubLeaf = findOpenEpubLeaf(app, filePath);
 	if (matchedEpubLeaf) {
 		return matchedEpubLeaf;
+	}
+
+	if (filePath) {
+		return app.workspace.getLeaf("tab");
 	}
 
 	const activeLeaf = app.workspace.getMostRecentLeaf?.() ?? null;

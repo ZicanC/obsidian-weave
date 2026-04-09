@@ -190,7 +190,7 @@ const buildRange = (from, to) => {
 		}
 	}
 	const parent = from.slice(0, -1).concat([localParent]);
-	return toString({ parent, start: [localStart], end: [localEnd] });
+	return stringifyCfi({ parent, start: [localStart], end: [localEnd] });
 };
 
 export const compare = (a, b) => {
@@ -311,7 +311,7 @@ const nodeToParts = (node, offset, filter) => {
 export const fromRange = (range, filter = undefined) => {
 	const { startContainer, startOffset, endContainer, endOffset } = range;
 	const start = nodeToParts(startContainer, startOffset, filter);
-	if (range.collapsed) return toString([start]);
+	if (range.collapsed) return stringifyCfi([start]);
 	const end = nodeToParts(endContainer, endOffset, filter);
 	return buildRange([start], [end]);
 };
@@ -343,7 +343,7 @@ export const fromElements = (elements) => {
 	for (const [index, node] of indexChildNodes(parentNode).entries()) {
 		const el = elements[results.length];
 		if (node === el) {
-			results.push(toString([parts.concat({ id: el.id, index })]));
+			results.push(stringifyCfi([parts.concat({ id: el.id, index })]));
 		}
 	}
 	return results;
@@ -360,7 +360,7 @@ export const fromCalibrePos = (pos) => {
 	const [parts] = parse(pos);
 	const item = parts.shift();
 	parts.shift();
-	return toString([[{ index: 6 }, item], parts]);
+	return stringifyCfi([[{ index: 6 }, item], parts]);
 };
 
 export const fromCalibreHighlight = ({ spine_index, start_cfi, end_cfi }) => {

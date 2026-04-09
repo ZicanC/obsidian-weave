@@ -14,6 +14,7 @@
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   // 导入挖空处理工具
   import { stripClozeForDisplay } from '../../utils/cloze-utils';
+  import { getCardFieldContent } from '../../utils/card-field-helper';
 
   interface Props {
     card: Card;
@@ -48,10 +49,10 @@
   let contentComponent: Component | null = null;
 
   // 计算属性
-  const frontText = $derived(card.fields?.front || card.fields?.question || '');
-  const backText = $derived(card.fields?.back || card.fields?.answer || '');
+  const frontText = $derived(getCardFieldContent(card, 'front'));
+  const backText = $derived(getCardFieldContent(card, 'back'));
   const tags = $derived(card.tags || []);
-  const sourceDocument = $derived(card.fields?.source_document as string || '');
+  const sourceDocument = $derived(getCardFieldContent(card, 'source_document'));
   
   // 合并完整内容，优先使用 content 字段
   // 渐进式挖空卡片的内容存储在 card.content，而非 fields
@@ -74,19 +75,16 @@
   
   // 获取源文件路径（用于正确解析相对路径的媒体文件）
   const sourcePath = $derived.by(() => {
-    // 优先使用 source_document 字段
-    if (card.fields?.source_document) {
-      const doc = card.fields.source_document as string;
-      // 如果已经是完整路径就直接使用
-      if (doc.endsWith('.md')) return doc;
-      // 否则添加 .md 后缀
-      return `${doc}.md`;
+    if (card.sourceFile) {
+      return card.sourceFile.endsWith('.md') ? card.sourceFile : `${card.sourceFile}.md`;
     }
-    // 其次使用 obsidianFilePath
     if (card.customFields?.obsidianFilePath) {
       return card.customFields.obsidianFilePath as string;
     }
-    // 最后返回空字符串
+    const doc = sourceDocument.trim();
+    if (doc) {
+      return doc.endsWith('.md') ? doc : `${doc}.md`;
+    }
     return '';
   });
   
@@ -360,6 +358,14 @@
 
 <style>
   .grid-card {
+    --weave-grid-card-border-color: var(
+      --weave-card-border-color,
+      var(--divider-color, var(--background-modifier-border-hover, var(--background-modifier-border, var(--text-faint))))
+    );
+    --weave-grid-card-hover-shadow: var(
+      --shadow-s,
+      0 4px 12px rgba(0, 0, 0, 0.12)
+    );
     position: relative;
     background: var(--weave-surface-background, var(--background-primary));
     /*  参考复选框方案：使用box-shadow + !important */
@@ -371,6 +377,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-shadow: inset 0 0 0 1px var(--weave-grid-card-border-color);
   }
 
   /* 固定高度模式 */
@@ -402,30 +409,11 @@
     max-height: none;
   }
 
-  /*  移除 !important：深色模式边框使用更具体的选择器 */
-  :global(body.theme-dark) .grid-card {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6);
-  }
-
-  /*  移除 !important：浅色模式边框使用更具体的选择器 */
-  :global(body.theme-light) .grid-card {
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.6);
-  }
-
-  /*  移除 !important：悬停效果使用更具体的选择器 */
-  :global(body.theme-dark) .grid-card:hover,
-  :global(body.theme-dark) .grid-card.hovered {
+  .grid-card:hover,
+  .grid-card.hovered {
     box-shadow: 
       inset 0 0 0 2px var(--interactive-accent),
-      0 4px 12px rgba(0, 0, 0, 0.2);
-    transform: translateY(-2px);
-  }
-
-  :global(body.theme-light) .grid-card:hover,
-  :global(body.theme-light) .grid-card.hovered {
-    box-shadow: 
-      inset 0 0 0 2px var(--interactive-accent),
-      0 4px 12px rgba(0, 0, 0, 0.15);
+      var(--weave-grid-card-hover-shadow);
     transform: translateY(-2px);
   }
 
@@ -799,4 +787,3 @@
   }
 
 </style>
-

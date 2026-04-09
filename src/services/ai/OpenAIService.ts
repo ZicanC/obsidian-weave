@@ -111,30 +111,12 @@ export class OpenAIService extends AIService {
 
 			// 转换为GeneratedCard格式
 			const cards: GeneratedCard[] = parsedCards.map((card) => {
-				// 优先使用 content 字段，向后兼容 front/back 格式
-				let content: string;
-				if (card.content) {
-					// 新格式：直接使用content
-					content = this.ensureString(card.content);
-				} else if (card.front || card.back) {
-					// 旧格式：从front和back构建content
-					const front = this.ensureString(card.front);
-					const back = this.ensureString(card.back);
-					content = back ? `${front}\n\n---div---\n\n${back}` : front;
-				} else {
-					content = "";
-				}
+				const content = this.getParsedCardContent(card);
 
 				return {
 					uuid: generateCardUUID(),
 					type: card.type || "qa",
-					content: content,
-					// 向后兼容：保留front/back字段
-					front: card.front ? this.ensureString(card.front) : undefined,
-					back: card.back ? this.ensureString(card.back) : undefined,
-					choices: card.choices,
-					correctAnswer: card.correctAnswer,
-					clozeText: card.clozeText,
+					content,
 					tags: card.tags || [],
 					images: card.images || [],
 					explanation: card.explanation,
@@ -189,10 +171,7 @@ export class OpenAIService extends AIService {
 
 原始卡片信息：
 类型：${request.originalCard.type}
-内容：${
-				request.originalCard.content ||
-				`${request.originalCard.front}\n\n---div---\n\n${request.originalCard.back}`
-			}
+内容：${request.originalCard.content}
 
 请根据用户的修改要求生成新卡片，保持与原卡片相同的格式。使用 content 字段，通过 ---div--- 分隔正反面。以JSON格式返回。`;
 
@@ -225,28 +204,12 @@ export class OpenAIService extends AIService {
 
 			const card = parsedCards[0];
 
-			// 优先使用 content 字段，向后兼容 front/back 格式
-			let content: string;
-			if (card.content) {
-				content = this.ensureString(card.content);
-			} else if (card.front || card.back) {
-				const front = this.ensureString(card.front);
-				const back = this.ensureString(card.back);
-				content = back ? `${front}\n\n---div---\n\n${back}` : front;
-			} else {
-				content = "";
-			}
+			const content = this.getParsedCardContent(card);
 
 			const newCard: GeneratedCard = {
 				uuid: request.cardId,
 				type: card.type || request.originalCard.type,
-				content: content,
-				// 向后兼容
-				front: card.front ? this.ensureString(card.front) : undefined,
-				back: card.back ? this.ensureString(card.back) : undefined,
-				choices: card.choices,
-				correctAnswer: card.correctAnswer,
-				clozeText: card.clozeText,
+				content,
 				tags: card.tags || [],
 				images: card.images || [],
 				explanation: card.explanation,
@@ -435,30 +398,4 @@ ${request.instruction ? `\n【额外要求】\n${request.instruction}` : ""}
 		}
 	}
 
-	/**
-	 * 确保值是字符串
-	 * 处理AI可能返回对象、数组、undefined等非字符串类型的情况
-	 */
-	private ensureString(value: unknown): string {
-		if (value === null || value === undefined) {
-			return "";
-		}
-
-		if (typeof value === "string") {
-			return value;
-		}
-
-		// 如果是对象或数组，尝试JSON化后返回（作为降级方案）
-		if (typeof value === "object") {
-			logger.warn("AI返回了非字符串类型的卡片内容:", value);
-			try {
-				return JSON.stringify(value);
-			} catch {
-				return String(value);
-			}
-		}
-
-		// 其他类型（数字、布尔等）转为字符串
-		return String(value);
-	}
 }

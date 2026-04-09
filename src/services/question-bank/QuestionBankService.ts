@@ -176,6 +176,41 @@ export class QuestionBankService {
 		return this.getAllQuestionBanks();
 	}
 
+	async pairBankWithMemoryDeck(bankId: string, memoryDeckId: string): Promise<Deck> {
+		await this.loadData();
+
+		const targetBank = this.banks.find((bank) => bank.id === bankId);
+		if (!targetBank) {
+			throw new Error(`题库不存在: ${bankId}`);
+		}
+
+		const now = new Date().toISOString();
+		let changed = false;
+
+		for (const bank of this.banks) {
+			const metadata = (bank.metadata ??= {});
+			const pairedId = (metadata as any).pairedMemoryDeckId;
+			if (bank.id !== bankId && pairedId === memoryDeckId) {
+				delete (metadata as any).pairedMemoryDeckId;
+				bank.modified = now;
+				changed = true;
+			}
+		}
+
+		const targetMetadata = (targetBank.metadata ??= {});
+		if ((targetMetadata as any).pairedMemoryDeckId !== memoryDeckId) {
+			(targetMetadata as any).pairedMemoryDeckId = memoryDeckId;
+			targetBank.modified = now;
+			changed = true;
+		}
+
+		if (changed) {
+			await this.storage.saveBanks(this.banks);
+		}
+
+		return targetBank;
+	}
+
 	/**
 	 * 根据ID获取题库（别名方法）
 	 */

@@ -236,10 +236,10 @@
       title: t('study.kanban.groupTitle.byStatus'),
       icon: 'layers',
       groups: [
-        { key: '0', label: t('study.kanban.status.new'), color: '#6b7280', icon: 'plus-circle' },
-        { key: '1', label: t('study.kanban.status.learning'), color: '#3b82f6', icon: 'book-open' },
-        { key: '2', label: t('study.kanban.status.review'), color: '#10b981', icon: 'refresh-cw' },
-        { key: '3', label: t('study.kanban.status.relearning'), color: '#f59e0b', icon: 'rotate-ccw' }
+        { key: '0', label: t('study.kanban.status.new'), color: 'var(--color-gray, var(--text-muted))', icon: 'plus-circle' },
+        { key: '1', label: t('study.kanban.status.learning'), color: 'var(--color-blue, var(--interactive-accent))', icon: 'book-open' },
+        { key: '2', label: t('study.kanban.status.review'), color: 'var(--color-green, var(--interactive-accent))', icon: 'refresh-cw' },
+        { key: '3', label: t('study.kanban.status.relearning'), color: 'var(--color-orange, var(--interactive-accent))', icon: 'rotate-ccw' }
       ]
     },
     type: {
@@ -247,18 +247,18 @@
       icon: 'grid',
       groups: [
         { key: 'basic-qa', label: t('study.kanban.type.qa'), color: 'var(--interactive-accent)', icon: 'file-text' },
-        { key: 'single-choice', label: t('study.kanban.type.choice'), color: '#06b6d4', icon: 'check-circle' },
-        { key: 'cloze-deletion', label: t('study.kanban.type.cloze'), color: '#ec4899', icon: 'edit' }
+        { key: 'single-choice', label: t('study.kanban.type.choice'), color: 'var(--color-cyan, var(--interactive-accent))', icon: 'check-circle' },
+        { key: 'cloze-deletion', label: t('study.kanban.type.cloze'), color: 'var(--color-pink, var(--interactive-accent))', icon: 'edit' }
       ]
     },
     priority: {
       title: t('study.kanban.groupTitle.byPriority'),
       icon: 'flag',
       groups: [
-        { key: '4', label: t('study.kanban.priorityLevel.urgent'), color: '#ef4444', icon: 'alert-triangle' },
-        { key: '3', label: t('study.kanban.priorityLevel.high'), color: '#f59e0b', icon: 'flag' },
-        { key: '2', label: t('study.kanban.priorityLevel.medium'), color: '#3b82f6', icon: 'flag' },
-        { key: '1', label: t('study.kanban.priorityLevel.low'), color: '#fbbf24', icon: 'minus-circle' }
+        { key: '4', label: t('study.kanban.priorityLevel.urgent'), color: 'var(--color-red, var(--text-error))', icon: 'alert-triangle' },
+        { key: '3', label: t('study.kanban.priorityLevel.high'), color: 'var(--color-orange, var(--interactive-accent))', icon: 'flag' },
+        { key: '2', label: t('study.kanban.priorityLevel.medium'), color: 'var(--color-blue, var(--interactive-accent))', icon: 'flag' },
+        { key: '1', label: t('study.kanban.priorityLevel.low'), color: 'var(--color-yellow, var(--interactive-accent))', icon: 'minus-circle' }
       ]
     },
     deck: {
@@ -270,11 +270,11 @@
       title: t('study.kanban.groupTitle.byCreateTime'),
       icon: 'calendar',
       groups: [
-        { key: 'today', label: t('study.kanban.time.today'), color: '#3b82f6', icon: 'calendar' },
-        { key: 'yesterday', label: t('study.kanban.time.yesterday'), color: '#10b981', icon: 'calendar' },
-        { key: 'last7days', label: t('study.kanban.time.last7days'), color: '#f59e0b', icon: 'calendar' },
-        { key: 'last30days', label: t('study.kanban.time.last30days'), color: '#ec4899', icon: 'calendar' },
-        { key: 'earlier', label: t('study.kanban.time.earlier'), color: '#6b7280', icon: 'calendar' }
+        { key: 'today', label: t('study.kanban.time.today'), color: 'var(--color-blue, var(--interactive-accent))', icon: 'calendar' },
+        { key: 'yesterday', label: t('study.kanban.time.yesterday'), color: 'var(--color-green, var(--interactive-accent))', icon: 'calendar' },
+        { key: 'last7days', label: t('study.kanban.time.last7days'), color: 'var(--color-orange, var(--interactive-accent))', icon: 'calendar' },
+        { key: 'last30days', label: t('study.kanban.time.last30days'), color: 'var(--color-pink, var(--interactive-accent))', icon: 'calendar' },
+        { key: 'earlier', label: t('study.kanban.time.earlier'), color: 'var(--color-gray, var(--text-muted))', icon: 'calendar' }
       ]
     },
     tag: {
@@ -2168,7 +2168,7 @@
     border-radius: var(--radius-l);
     border: 1px solid var(--background-modifier-border);
     overflow: hidden;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--background-modifier-border) 44%, transparent);
   }
 
 
@@ -2514,8 +2514,8 @@
     border-radius: 12px;
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 88%, transparent);
     box-shadow: 
-      0 14px 36px rgba(0, 0, 0, 0.22),
-      0 2px 8px rgba(0, 0, 0, 0.12);
+      0 14px 36px color-mix(in srgb, var(--background-modifier-border) 58%, transparent),
+      0 2px 8px color-mix(in srgb, var(--background-modifier-border) 42%, transparent);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -2741,7 +2741,7 @@
     height: 13px;
     border-radius: 50%;
     background: color-mix(in srgb, var(--background-primary) 78%, white 22%);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+    box-shadow: 0 1px 3px color-mix(in srgb, var(--background-modifier-border) 52%, transparent);
     transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 62%, transparent);
   }

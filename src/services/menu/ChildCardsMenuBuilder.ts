@@ -2,9 +2,7 @@ import { Menu } from "obsidian";
 import type { Deck } from "../../data/types";
 import { logger } from "../../utils/logger";
 
-/**
- * 子卡片操作菜单配置
- */
+/** 子卡片菜单构建所需的状态。 */
 export interface ChildCardsMenuConfig {
 	selectedCount: number;
 	isRegenerating: boolean;
@@ -13,9 +11,7 @@ export interface ChildCardsMenuConfig {
 	selectedDeckId: string;
 }
 
-/**
- * 子卡片操作菜单回调
- */
+/** 子卡片菜单触发的外部回调。 */
 export interface ChildCardsMenuCallbacks {
 	onReturn: () => void;
 	onRegenerate: () => void;
@@ -23,45 +19,17 @@ export interface ChildCardsMenuCallbacks {
 	onDeckChange: (deckId: string) => void;
 }
 
-/**
- * 子卡片操作菜单构建器
- * 用于 AI 拆分后的子卡片操作，使用 Obsidian Menu API
- */
+/** 构建 AI 子卡片相关的 Obsidian 菜单。 */
 export class ChildCardsMenuBuilder {
 	constructor(private config: ChildCardsMenuConfig, private callbacks: ChildCardsMenuCallbacks) {}
 
-	/**
-	 * 显示牌组选择菜单
-	 */
+	/** 显示独立的牌组选择菜单。 */
 	showDeckSelectMenu(position: { x: number; y: number }): void {
 		try {
 			const menu = new Menu();
-
-			// 标题
-			menu.addItem((item) => {
-				item.setTitle("选择目标牌组").setDisabled(true);
-			});
+			this.addMenuTitle(menu, "选择目标牌组");
 			menu.addSeparator();
-
-			const { availableDecks, selectedDeckId } = this.config;
-
-			if (!availableDecks || availableDecks.length === 0) {
-				menu.addItem((item) => {
-					item.setTitle("暂无可用牌组").setDisabled(true);
-				});
-			} else {
-				availableDecks.forEach((deck) => {
-					menu.addItem((item) => {
-						item
-							.setTitle(deck.name)
-							.setIcon("folder")
-							.setChecked(deck.id === selectedDeckId)
-							.onClick(() => {
-								this.safeCallback(() => this.callbacks.onDeckChange(deck.id));
-							});
-					});
-				});
-			}
+			this.addDeckItems(menu);
 
 			menu.showAtPosition(position);
 			logger.debug("[ChildCardsMenuBuilder] 牌组选择菜单已显示");
@@ -70,22 +38,16 @@ export class ChildCardsMenuBuilder {
 		}
 	}
 
-	/**
-	 * 显示完整操作菜单（移动端使用）
-	 */
+	/** 显示完整的子卡片操作菜单。 */
 	showFullMenu(position: { x: number; y: number }): void {
 		try {
 			const menu = new Menu();
 			const { selectedCount, isRegenerating, showDeckSelector, selectedDeckId, availableDecks } =
 				this.config;
 
-			// 标题
-			menu.addItem((item) => {
-				item.setTitle("子卡片操作").setDisabled(true);
-			});
+			this.addMenuTitle(menu, "子卡片操作");
 			menu.addSeparator();
 
-			// 1. 选择目标牌组（仅在 AI 拆分模式显示）
 			if (showDeckSelector && availableDecks.length > 0) {
 				const currentDeck = availableDecks.find((d) => d.id === selectedDeckId);
 				menu.addItem((item) => {
@@ -96,7 +58,6 @@ export class ChildCardsMenuBuilder {
 				menu.addSeparator();
 			}
 
-			// 2. 返回
 			menu.addItem((item) => {
 				item
 					.setTitle("返回")
@@ -106,7 +67,6 @@ export class ChildCardsMenuBuilder {
 					});
 			});
 
-			// 3. 重新生成
 			menu.addItem((item) => {
 				item
 					.setTitle(isRegenerating ? "正在生成..." : "重新生成")
@@ -119,7 +79,6 @@ export class ChildCardsMenuBuilder {
 					});
 			});
 
-			// 4. 收入卡片
 			const canSave = selectedCount > 0 && !isRegenerating && (!showDeckSelector || selectedDeckId);
 			menu.addItem((item) => {
 				item
@@ -140,10 +99,20 @@ export class ChildCardsMenuBuilder {
 		}
 	}
 
-	/**
-	 * 构建牌组子菜单
-	 */
+	/** 构建牌组子菜单。 */
 	private buildDeckSubmenu(menu: Menu): void {
+		this.addDeckItems(menu);
+	}
+
+	/** 添加菜单标题。 */
+	private addMenuTitle(menu: Menu, title: string): void {
+		menu.addItem((item) => {
+			item.setTitle(title).setDisabled(true);
+		});
+	}
+
+	/** 将可选牌组条目填充到菜单中。 */
+	private addDeckItems(menu: Menu): void {
 		const { availableDecks, selectedDeckId } = this.config;
 
 		if (!availableDecks || availableDecks.length === 0) {
@@ -166,9 +135,7 @@ export class ChildCardsMenuBuilder {
 		});
 	}
 
-	/**
-	 * 安全执行回调
-	 */
+	/** 统一捕获回调中的运行时异常。 */
 	private safeCallback(callback: () => void): void {
 		try {
 			callback();

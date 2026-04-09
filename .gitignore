@@ -59,6 +59,7 @@ jspm_packages/
 .nuxt
 dist
 .mobile-hot-reload/
+.desktop-hot-reload/
 
 # Gatsby files
 .cache/
@@ -243,6 +244,7 @@ scripts/*
 !scripts/clean-cache.cjs
 !scripts/copy-manifest.cjs
 !scripts/dev-watch.cjs
+!scripts/hot-reload-utils.cjs
 !scripts/kill-vite.cjs
 
 # 测试文件

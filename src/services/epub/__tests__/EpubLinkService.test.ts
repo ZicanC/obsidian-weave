@@ -67,19 +67,27 @@ describe('EpubLinkService legacy link compatibility', () => {
 		});
 	});
 
-	it('builds current wikilinks with text fallback payload and safe aliases', () => {
+	it('builds compact cfi-only wikilinks for new excerpts', () => {
 		const service = new EpubLinkService({} as any);
 
-		expect(service.buildEpubLink(
+		const built = service.buildEpubLink(
 			'Books/demo.epub',
 			'readium:abc',
 			'Hello world',
 			3,
 			'Part 1 | Intro ]]'
-		)).toBe('[[Books/demo.epub#weave-cfi=readium:abc&chapter=3&text=Hello%20world|demo > Part 1 / Intro ] ]]]');
+		);
+
+		expect(built).toBe('[[Books/demo.epub#weave-cfi=readium:abc|demo]]');
+		expect(EpubLinkService.parseLinkMarkup(built)).toEqual({
+			filePath: 'Books/demo.epub',
+			cfi: 'readium:abc',
+			text: '',
+			chapter: undefined,
+		});
 	});
 
-	it('reuses embedded compact locator text instead of duplicating the text query payload', () => {
+	it('keeps compact readium locators short without duplicating text payloads', () => {
 		const service = new EpubLinkService({} as any);
 		const compactLocator = buildCompactReadiumLocator('OPS/text/chapter1.xhtml', '0.125', 'Hello world');
 
@@ -96,6 +104,50 @@ describe('EpubLinkService legacy link compatibility', () => {
 			'Hello world',
 			3,
 			'Part 1',
-		)).toBe(`[[Books/demo.epub#weave-cfi=${compactLocator}&chapter=3|demo > Part 1]]`);
+		)).toBe(`[[Books/demo.epub#weave-cfi=${compactLocator}|demo]]`);
+	});
+
+	it('renders quote blocks with chapter and timestamp outside the link body', () => {
+		const service = new EpubLinkService({} as any);
+
+		expect(service.buildQuoteBlock(
+			'Books/demo.epub',
+			'readium:abc',
+			'Hello world',
+			14,
+			'red',
+			'根据意图评判我们的行动',
+			'2026-03-26 19:08'
+		)).toBe(
+			'> [!EPUB|red] [[Books/demo.epub#weave-cfi=readium:abc|demo]] [根据意图评判我们的行动] 2026-03-26 19:08\n> Hello world\n'
+		);
+	});
+
+	it('detects and migrates legacy epub links inside content', () => {
+		const service = new EpubLinkService({} as any);
+		const content = [
+			'前文 [[Books/demo.epub#weave-cfi=readium%3Aabc&chapter=3&text=Hello%20world|摘录]]',
+			'[EPUB来源](obsidian://weave-epub?vault=Vault&file=Books%2Fdemo.epub&cfi=epubcfi(/6/2)&text=Hello)',
+			'后文 [[Books/demo.epub#weave-cfi=readium:xyz|demo]]',
+		].join('\n');
+
+		expect(
+			EpubLinkService.isLegacyEpubLinkMarkup(
+				'[[Books/demo.epub#weave-cfi=readium%3Aabc&chapter=3&text=Hello%20world|摘录]]'
+			)
+		).toBe(true);
+		expect(
+			EpubLinkService.isLegacyEpubLinkMarkup('[[Books/demo.epub#weave-cfi=readium:xyz|demo]]')
+		).toBe(false);
+
+		expect(service.migrateLegacyEpubLinksInContent(content)).toEqual({
+			content: [
+				'前文 [[Books/demo.epub#weave-cfi=readium:abc|demo]]',
+				'[[Books/demo.epub#weave-cfi=epubcfi(/6/2)|demo]]',
+				'后文 [[Books/demo.epub#weave-cfi=readium:xyz|demo]]',
+			].join('\n'),
+			changed: true,
+			updatedLinks: 2,
+		});
 	});
 });

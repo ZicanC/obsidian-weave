@@ -8,6 +8,7 @@ import type { Deck } from "../../data/types";
 import { TEMPLATE_VARIABLES } from "../../types/ai-types";
 import type { ParseTemplate } from "../../types/newCardParsingTypes";
 import {
+	getCardField,
 	getCardBack as getCardBackFromContent,
 	getCardFront as getCardFrontFromContent,
 } from "../../utils/card-field-helper";
@@ -110,7 +111,9 @@ export class PromptVariableResolver {
 	private getCardFront(card: Card): string {
 		const fromContent = getCardFrontFromContent(card);
 		if (fromContent?.trim()) return fromContent;
-		return card.fields?.front || card.fields?.question || card.fields?.prompt || "";
+		return (
+			getCardField(card, "front") || getCardField(card, "question") || getCardField(card, "prompt")
+		);
 	}
 
 	/**
@@ -121,7 +124,9 @@ export class PromptVariableResolver {
 	private getCardBack(card: Card): string {
 		const fromContent = getCardBackFromContent(card);
 		if (fromContent?.trim()) return fromContent;
-		return card.fields?.back || card.fields?.answer || card.fields?.response || "";
+		return (
+			getCardField(card, "back") || getCardField(card, "answer") || getCardField(card, "response")
+		);
 	}
 
 	/**

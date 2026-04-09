@@ -39,6 +39,7 @@
     onDeleteDeck?: (deckId: string) => void;
     onRefreshData?: () => Promise<void>;
     onOpenKnowledgeGraph?: (deckId: string) => void;
+    onAssociateQuestionBank?: (deckId: string) => void | Promise<void>;
     onDissolveDeck?: (deckId: string) => void;
   }
 
@@ -69,6 +70,7 @@
     onDeleteDeck,
     onRefreshData,
     onOpenKnowledgeGraph,
+    onAssociateQuestionBank,
     onDissolveDeck
   }: Props = $props();
 
@@ -182,6 +184,15 @@
         .setIcon("git-fork")
         .onClick(() => onOpenKnowledgeGraph?.(deckId))
     );
+
+    if (onAssociateQuestionBank) {
+      menu.addItem((item) =>
+        item
+          .setTitle(t('decks.menu.linkQuestionBank'))
+          .setIcon('link-2')
+          .onClick(async () => await onAssociateQuestionBank?.(deckId))
+      );
+    }
 
     // 鍒涘缓瀛愮墝缁勫拰绉诲姩鐗岀粍鍔熻兘宸茬Щ闄?- 涓嶅啀鏀寔鐖跺瓙鐗岀粍灞傜骇缁撴瀯
 

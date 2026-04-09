@@ -23,6 +23,8 @@
   import { APKGImportModalObsidian } from "../modals/APKGImportModalObsidian";
   import { ClipboardImportModalObsidian } from "../modals/ClipboardImportModalObsidian";
   import CSVImportModal from "../modals/CSVImportModal.svelte";
+  import CreateQuestionBankModal from "../modals/CreateQuestionBankModal.svelte";
+  import { QuestionBankAssociationModal } from "../../modals/QuestionBankAssociationModal";
   import { QuestionBankSelectorModal } from "../../modals/QuestionBankSelectorModal";
   import type { ImportResult } from "../../domain/apkg/types";
   import { Menu, Modal, Notice, Setting, TFile, normalizePath } from "obsidian";
@@ -91,6 +93,7 @@
 
   // 核心状态
   let showCSVImportModal = $state(false);
+  let showCreateQuestionBankModal = $state(false);
   
   //  加载状态
   let isLoading = $state(true);
@@ -153,7 +156,15 @@
   }
 
   // 视图状态，从持久化存储加载，默认使用网格卡片视图
-  let currentView = $state<ActiveDeckView>('grid');
+  function normalizeDeckStudyView(value: string | null | undefined): ActiveDeckView {
+    return value === 'kanban' ? 'kanban' : 'grid';
+  }
+
+  function getInitialDeckStudyView(): ActiveDeckView {
+    return normalizeDeckStudyView(plugin.getCachedDeckViewPreference());
+  }
+
+  let currentView = $state<ActiveDeckView>(getInitialDeckStudyView());
   
   // 牌组模式筛选状态
   // 只保留当前仍可用的筛选值；旧筛选值在读取阶段统一映射到 memory
@@ -294,19 +305,19 @@
         
         // 验证并加载保存的视图
         if (savedView && ['kanban', 'grid'].includes(savedView)) {
-          currentView = savedView as ActiveDeckView;
+          currentView = normalizeDeckStudyView(savedView);
           window.dispatchEvent(new CustomEvent('Weave:deck-view-change', { detail: currentView }));
         } else if (savedView === 'classic' || savedView === 'timeline' || savedView === 'card') {
           // 已移除的旧视图统一回退到网格卡片视图
-          currentView = 'grid';
+          currentView = normalizeDeckStudyView(null);
           window.dispatchEvent(new CustomEvent('Weave:deck-view-change', { detail: currentView }));
         } else {
-          currentView = 'grid';
+          currentView = normalizeDeckStudyView(null);
           window.dispatchEvent(new CustomEvent('Weave:deck-view-change', { detail: currentView }));
         }
       } catch (error) {
         logger.warn('加载视图偏好失败:', error);
-        currentView = 'grid';
+        currentView = normalizeDeckStudyView(null);
         window.dispatchEvent(new CustomEvent('Weave:deck-view-change', { detail: currentView }));
       }
       
@@ -770,12 +781,25 @@
     
     menu.addItem((item) => {
       item
-        .setTitle(t('navigation.createDeck'))
+        .setTitle(getCreateEntryTitle())
         .setIcon('folder-plus')
         .onClick(() => {
-          showCreateDeckModalWithObsidianAPI();
+          void handleCreateDeckForCurrentFilter();
         });
     });
+
+    if (currentView === 'kanban') {
+      menu.addItem((item) => {
+        item
+          .setTitle(t('study.mobileHeader.kanbanColumnSettings'))
+          .setIcon('sliders')
+          .onClick(() => {
+            window.dispatchEvent(new CustomEvent('Weave:open-deck-kanban-menu', {
+              detail: { x: evt.clientX, y: evt.clientY, filter: selectedFilter }
+            }));
+          });
+      });
+    }
     
     menu.addSeparator();
 
@@ -830,16 +854,6 @@
           });
       });
     });
-    
-    menu.addItem((item) => {
-      item
-        .setTitle(t('navigation.settings'))
-        .setIcon('settings')
-        .onClick(() => {
-          safeOpenSettings(plugin.app, 'weave');
-        });
-    });
-
     
     menu.showAtMouseEvent(evt);
   }
@@ -1129,6 +1143,136 @@
     createDeckModalInstance.open();
   }
 
+  function getCreateEntryTitle(): string {
+    if (selectedFilter === 'incremental-reading') {
+      return '新增增量阅读专题牌组';
+    }
+
+    if (selectedFilter === 'question-bank') {
+      return '创建考试题组';
+    }
+
+    return '创建记忆牌组';
+  }
+
+  async function showCreateIRDeckPrompt(): Promise<void> {
+    try {
+      const { IRStorageService } = await import('../../services/incremental-reading/IRStorageService');
+      const { IRDeckManager } = await import('../../services/incremental-reading/IRDeckManager');
+
+      const storageService = new IRStorageService(plugin.app);
+      await storageService.initialize();
+
+      const deckManager = new IRDeckManager(
+        plugin.app,
+        storageService,
+        plugin.settings?.incrementalReading?.importFolder
+      );
+
+      const modal = new Modal(plugin.app);
+      modal.titleEl.setText('新增增量阅读专题牌组');
+
+      let newName = '';
+      let newTag = '';
+
+      new Setting(modal.contentEl)
+        .setName('名称')
+        .addText((text: any) => {
+          text.setPlaceholder('例如：世界史精读专题');
+          text.onChange((value: string) => {
+            newName = value;
+          });
+          text.inputEl.style.width = '100%';
+          window.setTimeout(() => text.inputEl.focus(), 0);
+        });
+
+      new Setting(modal.contentEl)
+        .setName('牌组标签(单选)')
+        .setDesc('用于看板按标签分组，可留空');
+
+      const tagContainer = modal.contentEl.createDiv({ cls: 'weave-tag-input-container' });
+      const tagDisplay = tagContainer.createDiv({ cls: 'weave-tag-display' });
+
+      function renderTag() {
+        tagDisplay.empty();
+        if (newTag) {
+          const chip = tagDisplay.createSpan({ cls: 'weave-tag-chip', text: newTag });
+          chip.createSpan({ cls: 'weave-tag-remove', text: '\u00d7' }).onclick = () => {
+            newTag = '';
+            renderTag();
+          };
+        }
+      }
+
+      renderTag();
+
+      const tagInput = tagContainer.createEl('input', {
+        type: 'text',
+        placeholder: '输入标签后按回车添加'
+      });
+      tagInput.style.width = '100%';
+      tagInput.addEventListener('keydown', (event: KeyboardEvent) => {
+        if (event.key === 'Enter' && tagInput.value.trim()) {
+          event.preventDefault();
+          newTag = tagInput.value.trim();
+          tagInput.value = '';
+          renderTag();
+        }
+      });
+
+      const btnContainer = modal.contentEl.createDiv({ cls: 'modal-button-container' });
+      btnContainer.style.display = 'flex';
+      btnContainer.style.justifyContent = 'flex-end';
+      btnContainer.style.gap = '8px';
+      btnContainer.style.marginTop = '16px';
+
+      btnContainer.createEl('button', { text: '取消' }).onclick = () => modal.close();
+
+      const createBtn = btnContainer.createEl('button', { text: '创建', cls: 'mod-cta' });
+      createBtn.onclick = async () => {
+        const deckName = newName.trim();
+        if (!deckName) {
+          return;
+        }
+
+        try {
+          const newDeck = await deckManager.createDeck(deckName);
+          newDeck.tags = newTag ? [newTag] : [];
+          newDeck.updatedAt = new Date().toISOString();
+          await storageService.saveDeck(newDeck);
+
+          await loadIRDeckTree();
+          window.dispatchEvent(new CustomEvent('Weave:ir-data-updated'));
+          plugin.app.workspace.trigger('Weave:data-changed');
+          new Notice(`已创建增量阅读专题牌组：${deckName}`);
+          modal.close();
+        } catch (error) {
+          logger.error('[DeckStudyPage] 创建增量阅读专题牌组失败:', error);
+          new Notice('创建增量阅读专题牌组失败');
+        }
+      };
+
+      modal.open();
+    } catch (error) {
+      logger.error('[DeckStudyPage] 打开增量阅读专题牌组创建弹窗失败:', error);
+      new Notice('打开增量阅读专题牌组创建弹窗失败');
+    }
+  }
+
+  async function handleCreateDeckForCurrentFilter(): Promise<void> {
+    if (selectedFilter === 'incremental-reading') {
+      await showCreateIRDeckPrompt();
+      return;
+    }
+
+    if (selectedFilter === 'question-bank') {
+      showCreateQuestionBankModal = true;
+      return;
+    }
+
+    showCreateDeckModalWithObsidianAPI();
+  }
+
   function showAPKGImportModalWithObsidianAPI() {
     apkgImportModalInstance?.close();
     apkgImportModalInstance = new APKGImportModalObsidian(plugin.app, {
@@ -1202,7 +1346,7 @@
   
   async function kanbanStartStudy(deckId: string) {
     if (selectedFilter === 'incremental-reading') {
-      // IR牌组：使用 IRStorageAdapterV4 构建学习队列并打开阅读界面
+      // IR 牌组统一跳转到现役侧边栏阅读流程
       try {
         const { IRStorageService: IRStorageServiceCompat } = await import('../../services/incremental-reading/IRStorageService');
         const irStorageCompat = new IRStorageServiceCompat(plugin.app);
@@ -1213,46 +1357,6 @@
         await plugin.redirectIncrementalReadingToSidebar({
           deckPath: deckId,
           deckName: redirectDeckName,
-          closeLegacyFocusLeaves: true
-        });
-        return;
-
-        const { IRStorageAdapterV4 } = await import('../../services/incremental-reading/IRStorageAdapterV4');
-        const storageAdapter = new IRStorageAdapterV4(plugin.app);
-        await storageAdapter.initialize();
-        const allBlocksV4 = await storageAdapter.getBlocksByDeckV4Fast(deckId);
-        
-        if (allBlocksV4.length === 0) {
-          new Notice(t('deckStudyPage.notices.noBlocks'));
-          return;
-        }
-        
-        const { IRV4SchedulerService } = await import('../../services/incremental-reading/IRV4SchedulerService');
-        const v4Scheduler = new IRV4SchedulerService(plugin.app, plugin.settings?.incrementalReading?.importFolder);
-        await v4Scheduler.initialize();
-        const timeBudgetMinutes = plugin.settings?.incrementalReading?.dailyTimeBudgetMinutes ?? 40;
-        const queueResult = await v4Scheduler.getStudyQueueV4(deckId, {
-          timeBudgetMinutes,
-          currentSourcePath: null,
-          markActive: true,
-          preloadedBlocks: allBlocksV4
-        });
-        
-        // 获取牌组名称
-        const { IRStorageService } = await import('../../services/incremental-reading/IRStorageService');
-        const irStorage = new IRStorageService(plugin.app);
-        await irStorage.initialize();
-        const irDeck = await irStorage.getDeckById(deckId);
-        const deckName = irDeck?.name || t('deckStudyPage.fallback.incrementalReading');
-        
-        if (queueResult.queue.length === 0) {
-          new Notice(t('deckStudyPage.notices.noDueBlocks', { name: deckName }));
-          return;
-        }
-        
-        await plugin.redirectIncrementalReadingToSidebar({
-          deckPath: deckId,
-          deckName,
           closeLegacyFocusLeaves: true
         });
       } catch (error) {
@@ -1866,6 +1970,62 @@
       new Notice(t('deckStudyPage.exam.startFailed'));
     }
   }
+
+  async function associateQuestionBank(deckId: string): Promise<void> {
+    try {
+      if (!plugin.questionBankService) {
+        new Notice(t('deckStudyPage.exam.qbNotEnabled'));
+        return;
+      }
+
+      const memoryDeck = decks.find((deck) => deck.id === deckId) ?? await dataStorage.getDeck(deckId);
+      if (!memoryDeck) {
+        new Notice(t('deckStudyPage.notices.deckNotFound'));
+        return;
+      }
+
+      const allBanks = (await plugin.questionBankService.getAllBanks())
+        .filter((bank) => bank.deckType === 'question-bank')
+        .sort((a, b) => {
+          const orderDiff = (a.order || 0) - (b.order || 0);
+          if (orderDiff !== 0) return orderDiff;
+          return (a.name || '').localeCompare(b.name || '', 'zh-Hans-CN');
+        });
+
+      if (allBanks.length === 0) {
+        new Notice(t('deckStudyPage.exam.noBanksAvailable'));
+        return;
+      }
+
+      const currentBank =
+        allBanks.find((bank) => (bank.metadata as any)?.pairedMemoryDeckId === deckId) ?? null;
+
+      const modal = new QuestionBankAssociationModal(
+        plugin.app,
+        allBanks,
+        currentBank?.id ?? null,
+        async (bank) => {
+          try {
+            await plugin.questionBankService!.pairBankWithMemoryDeck(bank.id, deckId);
+            await refreshData();
+            plugin.app.workspace.trigger('Weave:data-changed');
+            new Notice(t('deckStudyPage.exam.linkSuccess', {
+              bank: bank.name || t('deckStudyPage.fallback.unknownBank'),
+              deck: memoryDeck.name || t('deckStudyPage.fallback.deck')
+            }));
+          } catch (error) {
+            logger.error('[DeckStudyPage] 关联考试题组失败:', error);
+            new Notice(t('deckStudyPage.exam.linkFailed'));
+          }
+        }
+      );
+
+      modal.open();
+    } catch (error) {
+      logger.error('[DeckStudyPage] 打开考试题组关联选择器失败:', error);
+      new Notice(t('deckStudyPage.exam.linkFailed'));
+    }
+  }
   
 // 提前学习回调
   async function handleAdvanceStudy() {
@@ -2011,7 +2171,7 @@
           }
           
           // 删除牌组本身
-          await deckHierarchy.deleteDeckWithChildren(deckId, {
+          await deckHierarchy.deleteDeck(deckId, {
             skipCardDeletion: cardUUIDs.length > 0
           });
           
@@ -2196,7 +2356,7 @@
   async function migrateLegacyKnowledgeGraphDirIfNeeded(targetDir: string): Promise<void> {
     const adapter = plugin.app.vault.adapter as any;
     const rawSettings = plugin.settings as any;
-    const parentFolder = (rawSettings?.weaveParentFolder ?? rawSettings?.tuankiParentFolder) as string | undefined;
+    const parentFolder = rawSettings?.weaveParentFolder as string | undefined;
     const legacyDir = normalizePath(`${getReadableWeaveRoot(parentFolder)}/deck-graphs`);
     if (legacyDir === targetDir) return;
 
@@ -2285,7 +2445,7 @@
       }
 
       const rawSettings = plugin.settings as any;
-      const parentFolder = (rawSettings?.weaveParentFolder ?? rawSettings?.tuankiParentFolder) as string | undefined;
+      const parentFolder = rawSettings?.weaveParentFolder as string | undefined;
       const graphDir = normalizePath(getV2Paths(parentFolder).memory.knowledgeGraphs);
       const adapter = plugin.app.vault.adapter;
       await migrateLegacyDirectory(plugin.app, {
@@ -2484,6 +2644,9 @@
       case 'knowledge-graph':
         openKnowledgeGraph(deckId);
         return;
+      case 'associate-question-bank':
+        await associateQuestionBank(deckId);
+        return;
       case 'edit-deck':
         await editDeck(deckId);
         return;
@@ -2506,6 +2669,7 @@
         advanceStudy: t('deckStudyPage.contextMenu.advanceStudy'),
         deckAnalytics: t('deckStudyPage.contextMenu.deckAnalytics'),
         knowledgeGraph: t('deckStudyPage.contextMenu.knowledgeGraph'),
+        linkQuestionBank: t('deckStudyPage.contextMenu.linkQuestionBank'),
         editDeck: t('deckStudyPage.contextMenu.editDeck'),
         deleteDeck: t('deckStudyPage.contextMenu.delete'),
         dissolveDeck: t('deckStudyPage.contextMenu.dissolveDeck')
@@ -2514,6 +2678,7 @@
         onAdvanceStudy: async () => await handleMemoryDeckMenuAction('advance-study', deckId),
         onOpenDeckAnalytics: async () => await handleMemoryDeckMenuAction('deck-analytics', deckId),
         onOpenKnowledgeGraph: async () => await handleMemoryDeckMenuAction('knowledge-graph', deckId),
+        onAssociateQuestionBank: async () => await handleMemoryDeckMenuAction('associate-question-bank', deckId),
         onEditDeck: async () => await handleMemoryDeckMenuAction('edit-deck', deckId),
         onDeleteDeck: async () => await handleMemoryDeckMenuAction('delete-deck', deckId),
         onDissolveDeck: async () => await handleMemoryDeckMenuAction('dissolve-deck', deckId)
@@ -2644,7 +2809,7 @@
   // 监听导航栏功能键事件
   $effect(() => {
     const handleCreateDeck = () => {
-      showCreateDeckModalWithObsidianAPI();
+      void handleCreateDeckForCurrentFilter();
     };
 
     const handleMoreActions = (e: Event) => {
@@ -2714,6 +2879,8 @@
     };
 
     document.addEventListener('create-deck', handleCreateDeck);
+    document.addEventListener('create-question-bank', handleCreateDeck);
+    document.addEventListener('create-ir-deck', handleCreateDeck);
     document.addEventListener('more-actions', handleMoreActions);
     document.addEventListener('apkg-import', handleAPKGImport);
     document.addEventListener('csv-import', handleCSVImport);
@@ -2724,6 +2891,8 @@
 
     return () => {
       document.removeEventListener('create-deck', handleCreateDeck);
+      document.removeEventListener('create-question-bank', handleCreateDeck);
+      document.removeEventListener('create-ir-deck', handleCreateDeck);
       document.removeEventListener('more-actions', handleMoreActions);
       document.removeEventListener('apkg-import', handleAPKGImport);
       document.removeEventListener('csv-import', handleCSVImport);
@@ -2886,12 +3055,6 @@
       {selectedFilter}
       onMenuClick={handleMobileMenuClick}
       onFilterSelect={handleFilterSelect}
-      showKanbanSettings={currentView === 'kanban'}
-      onKanbanSettingsClick={(evt) => {
-        window.dispatchEvent(new CustomEvent('Weave:open-deck-kanban-menu', {
-          detail: { x: evt.clientX, y: evt.clientY, filter: selectedFilter }
-        }));
-      }}
     />
   {/if}
 
@@ -2912,6 +3075,7 @@
         {plugin}
         onStartStudy={kanbanStartStudy}
         onDeckUpdate={refreshData}
+        onAssociateQuestionBank={selectedFilter === 'memory' ? associateQuestionBank : undefined}
         onEditDeck={kanbanEditDeck}
         onDeleteDeck={kanbanDeleteDeck}
         onOpenKnowledgeGraph={selectedFilter === 'memory' ? openKnowledgeGraph : undefined}
@@ -2919,25 +3083,7 @@
       />
     <!-- 非看板视图：按模式分别渲染 -->
     {:else if selectedFilter === 'incremental-reading'}
-      <IRDeckView 
-        {plugin}
-        onStartReading={async (deckPath, blocks, deckName, focusStats) => {
-          logger.info('[DeckStudyPage] ========== onStartReading 回调开始 ==========');
-          logger.info('[DeckStudyPage] 开始增量阅读:', deckPath, '块数:', blocks.length, '牌组名:', deckName);
-          try {
-            void focusStats;
-            await plugin.redirectIncrementalReadingToSidebar({
-              deckPath,
-              deckName,
-              closeLegacyFocusLeaves: true
-            });
-            logger.info('[DeckStudyPage] openIRFocusView 调用成功（完整界面）');
-          } catch (error) {
-            logger.error('[DeckStudyPage] openIRFocusView 调用失败:', error);
-          }
-          logger.info('[DeckStudyPage] ========== onStartReading 回调结束 ==========');
-        }}
-      />
+      <IRDeckView {plugin} />
     {:else if currentView === 'grid'}
       <GridCardView 
         {deckTree}
@@ -2950,6 +3096,7 @@
         onContinueStudy={handleContinueStudy}
         onAdvanceStudy={startAdvanceStudy}
         onOpenDeckAnalytics={openDeckAnalytics}
+        onAssociateQuestionBank={associateQuestionBank}
         onEditDeck={editDeck}
         onDeleteDeck={deleteDeck}
         onOpenKnowledgeGraph={openKnowledgeGraph}
@@ -2963,6 +3110,20 @@
 
 
 <!-- CSV导入向导模态窗 -->
+{#if showCreateQuestionBankModal}
+  <CreateQuestionBankModal
+    bind:open={showCreateQuestionBankModal}
+    {plugin}
+    mode="create"
+    onClose={() => { showCreateQuestionBankModal = false; }}
+    onCreated={async () => {
+      showCreateQuestionBankModal = false;
+      await loadQBDeckTree();
+      plugin.app.workspace.trigger('Weave:data-changed');
+    }}
+  />
+{/if}
+
 {#if showCSVImportModal}
   <CSVImportModal
     bind:open={showCSVImportModal}

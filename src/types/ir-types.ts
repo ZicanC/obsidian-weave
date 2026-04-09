@@ -1097,6 +1097,10 @@ export interface IRAdvancedScheduleSettings {
 	maxAppearancesPerDay?: number;
 	/** 每日时间预算（分钟）(覆盖策略默认值) */
 	dailyTimeBudgetMinutes?: number;
+	/** 是否启用交错学习软约束 */
+	interleaveMode?: boolean;
+	/** 同主题连续软阈值 */
+	maxConsecutiveSameTopic?: number;
 	/** 是否启用 TagGroup 先验 */
 	enableTagGroupPrior: boolean;
 	/** TagGroup 参数学习速度：off/slow/medium/fast */
@@ -1129,6 +1133,8 @@ export interface IRAdvancedScheduleSettings {
 export const DEFAULT_ADVANCED_SCHEDULE_SETTINGS: IRAdvancedScheduleSettings = {
 	maxAppearancesPerDay: 2,
 	dailyTimeBudgetMinutes: 40,
+	interleaveMode: true,
+	maxConsecutiveSameTopic: 3,
 	enableTagGroupPrior: true,
 	tagGroupLearningSpeed: "off",
 	shrinkageStrength: 50,
@@ -1167,14 +1173,6 @@ export const DEFAULT_TAG_GROUP_PROFILE: IRTagGroupProfile = {
 	updatedAt: new Date().toISOString(),
 };
 
-/** Compatibility note: 使用 IRBlocksStore 代替 */
-export type IRBlocksData = Record<string, IRBlock>;
-/** Compatibility note: 使用 IRDecksStore 代替 */
-export type IRDecksData = Record<string, IRDeck>;
-/** Compatibility note: 使用 IRHistoryStore 代替 */
-export interface IRHistoryData {
-	sessions: IRSession[];
-}
 
 // ============================================
 // 工具类型

@@ -1,8 +1,23 @@
 ﻿<script lang="ts">
-  import { onMount } from "svelte";
   import EnhancedIcon from "../../../ui/EnhancedIcon.svelte";
   import type { TagsCellProps } from "../../types/table-types";
-  import { createThemeListener } from "../../../../utils/theme-detection";
+
+  interface SuggestionNode {
+    name: string;
+    fullPath: string;
+    originalTag: string;
+    children: SuggestionNode[];
+  }
+
+  interface SuggestionRow {
+    key: string;
+    name: string;
+    fullPath: string;
+    originalTag: string;
+    depth: number;
+    hasChildren: boolean;
+    expanded: boolean;
+  }
 
   let { card, onTagsUpdate, availableTags = [] }: TagsCellProps = $props();
   const labels = {
@@ -12,71 +27,25 @@
     inputPlaceholder: '\u8f93\u5165\u6807\u7b7e...',
     inputPlaceholderFirst: '\u8f93\u5165\u6807\u7b7e\u540e\u6309 Enter',
     createHintPrefix: '\u6309 Enter \u65b0\u5efa\u6807\u7b7e',
-    noSuggestions: '\u6682\u65e0\u53ef\u590d\u7528\u6807\u7b7e',
-    suggestionsTitle: '\u5df2\u6709\u6807\u7b7e',
-    shortcutsHint: 'Enter \u6dfb\u52a0  Tab \u9009\u4e2d  Esc \u6536\u8d77'
+    noSuggestions: '\u6682\u65e0\u53ef\u590d\u7528\u6807\u7b7e'
   };
 
   const colorPalette = [
-    {
-      lightBg: 'rgba(211, 229, 239, 0.92)',
-      lightText: 'rgba(24, 51, 71, 0.96)',
-      darkBg: 'rgba(24, 51, 71, 0.88)',
-      darkText: 'rgba(211, 229, 239, 0.96)'
-    },
-    {
-      lightBg: 'rgba(219, 237, 219, 0.92)',
-      lightText: 'rgba(28, 56, 41, 0.96)',
-      darkBg: 'rgba(28, 56, 41, 0.88)',
-      darkText: 'rgba(219, 237, 219, 0.96)'
-    },
-    {
-      lightBg: 'rgba(232, 222, 238, 0.92)',
-      lightText: 'rgba(65, 36, 84, 0.96)',
-      darkBg: 'rgba(65, 36, 84, 0.88)',
-      darkText: 'rgba(232, 222, 238, 0.96)'
-    },
-    {
-      lightBg: 'rgba(251, 236, 221, 0.92)',
-      lightText: 'rgba(73, 41, 14, 0.96)',
-      darkBg: 'rgba(73, 41, 14, 0.88)',
-      darkText: 'rgba(251, 236, 221, 0.96)'
-    },
-    {
-      lightBg: 'rgba(245, 224, 233, 0.92)',
-      lightText: 'rgba(76, 35, 55, 0.96)',
-      darkBg: 'rgba(76, 35, 55, 0.88)',
-      darkText: 'rgba(245, 224, 233, 0.96)'
-    },
-    {
-      lightBg: 'rgba(223, 235, 247, 0.92)',
-      lightText: 'rgba(19, 56, 89, 0.96)',
-      darkBg: 'rgba(19, 56, 89, 0.88)',
-      darkText: 'rgba(223, 235, 247, 0.96)'
-    },
-    {
-      lightBg: 'rgba(255, 226, 221, 0.92)',
-      lightText: 'rgba(93, 23, 21, 0.96)',
-      darkBg: 'rgba(93, 23, 21, 0.88)',
-      darkText: 'rgba(255, 226, 221, 0.96)'
-    },
-    {
-      lightBg: 'rgba(251, 243, 219, 0.92)',
-      lightText: 'rgba(64, 44, 27, 0.96)',
-      darkBg: 'rgba(64, 44, 27, 0.88)',
-      darkText: 'rgba(251, 243, 219, 0.96)'
-    }
+    'var(--color-cyan, var(--interactive-accent))',
+    'var(--color-green, var(--interactive-accent))',
+    'var(--color-purple, var(--interactive-accent))',
+    'var(--color-orange, var(--interactive-accent))',
+    'var(--color-pink, var(--interactive-accent))',
+    'var(--color-blue, var(--interactive-accent))',
+    'var(--color-red, var(--interactive-accent))',
+    'var(--color-yellow, var(--interactive-accent))'
   ];
 
   let isEditing = $state(false);
-  let isDarkMode = $state(
-    typeof document !== 'undefined'
-      ? document.documentElement.classList.contains('theme-dark') || document.body.classList.contains('theme-dark')
-      : false
-  );
   let draftTags = $state<string[]>([]);
   let inputValue = $state('');
   let highlightedSuggestionIndex = $state(0);
+  let expandedSuggestionState = $state(new Map<string, boolean>());
   let containerEl: HTMLDivElement | null = $state(null);
   let inputEl: HTMLInputElement | null = $state(null);
 
@@ -85,40 +54,150 @@
   let visibleDisplayTags = $derived(displayTags.slice(0, 3));
   let hiddenDisplayTagCount = $derived(Math.max(0, displayTags.length - visibleDisplayTags.length));
 
-  let normalizedAvailableTags = $derived(
-    Array.from(new Set((availableTags || []).map((tag) => tag.trim()).filter(Boolean)))
-  );
+  function normalizeTagName(tag: string): string {
+    return tag.trim().replace(/^#/, '');
+  }
 
-  let filteredSuggestions = $derived.by(() => {
-    const selected = new Set(draftTags.map((tag) => tag.toLowerCase()));
+  let normalizedAvailableTags = $derived.by(() => {
+    const seen = new Set<string>();
+    const uniqueTags: string[] = [];
+
+    for (const rawTag of availableTags || []) {
+      const trimmed = rawTag.trim();
+      const normalized = normalizeTagName(trimmed);
+      const dedupeKey = normalized.toLowerCase();
+      if (!normalized || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      uniqueTags.push(trimmed);
+    }
+
+    return uniqueTags;
+  });
+
+  function sortSuggestionNodes(nodes: SuggestionNode[]) {
+    nodes.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+    for (const node of nodes) {
+      if (node.children.length > 0) {
+        sortSuggestionNodes(node.children);
+      }
+    }
+    return nodes;
+  }
+
+  function buildSuggestionTree(tags: string[]): SuggestionNode[] {
+    const roots: SuggestionNode[] = [];
+    const nodeMap = new Map<string, SuggestionNode>();
+
+    for (const tag of tags) {
+      const normalized = normalizeTagName(tag);
+      if (!normalized) continue;
+
+      const segments = normalized.split('/').map((segment) => segment.trim()).filter(Boolean);
+      if (segments.length === 0) continue;
+
+      let currentPath = '';
+      let parentNode: SuggestionNode | null = null;
+
+      segments.forEach((segment, index) => {
+        currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+        let node = nodeMap.get(currentPath);
+
+        if (!node) {
+          node = {
+            name: segment,
+            fullPath: currentPath,
+            originalTag: currentPath,
+            children: []
+          };
+          nodeMap.set(currentPath, node);
+
+          if (parentNode) {
+            parentNode.children.push(node);
+          } else {
+            roots.push(node);
+          }
+        }
+
+        if (index === segments.length - 1) {
+          node.originalTag = tag;
+        }
+
+        parentNode = node;
+      });
+    }
+
+    return sortSuggestionNodes(roots);
+  }
+
+  function isSuggestionExpanded(path: string): boolean {
+    return expandedSuggestionState.get(path) ?? true;
+  }
+
+  function toggleSuggestionExpanded(path: string) {
+    const nextState = new Map(expandedSuggestionState);
+    nextState.set(path, !isSuggestionExpanded(path));
+    expandedSuggestionState = nextState;
+  }
+
+  let suggestionTree = $derived(buildSuggestionTree(normalizedAvailableTags));
+
+  let visibleSuggestionRows = $derived.by(() => {
     const keyword = inputValue.trim().toLowerCase();
+    const rows: SuggestionRow[] = [];
 
-    const suggestions = normalizedAvailableTags.filter((tag) => {
-      if (selected.has(tag.toLowerCase())) return false;
-      if (!keyword) return true;
-      return tag.toLowerCase().includes(keyword);
-    });
+    const matchesKeyword = (node: SuggestionNode): boolean => {
+      const selfMatches = !keyword
+        || node.fullPath.toLowerCase().includes(keyword)
+        || node.name.toLowerCase().includes(keyword);
 
-    suggestions.sort((a, b) => {
-      if (!keyword) return a.localeCompare(b, 'zh-CN');
+      if (selfMatches) return true;
+      return node.children.some((child) => matchesKeyword(child));
+    };
 
-      const aStarts = a.toLowerCase().startsWith(keyword) ? 0 : 1;
-      const bStarts = b.toLowerCase().startsWith(keyword) ? 0 : 1;
-      if (aStarts !== bStarts) return aStarts - bStarts;
+    const walk = (node: SuggestionNode, depth: number) => {
+      if (!matchesKeyword(node)) {
+        return;
+      }
 
-      return a.localeCompare(b, 'zh-CN');
-    });
+      const expanded = keyword ? true : isSuggestionExpanded(node.fullPath);
 
-    return suggestions.slice(0, 8);
+      rows.push({
+        key: node.fullPath,
+        name: node.name,
+        fullPath: node.fullPath,
+        originalTag: node.originalTag,
+        depth,
+        hasChildren: node.children.length > 0,
+        expanded
+      });
+
+      if (!expanded && !keyword) {
+        return;
+      }
+
+      for (const child of node.children) {
+        walk(child, depth + 1);
+      }
+    };
+
+    for (const node of suggestionTree) {
+      walk(node, 0);
+    }
+
+    return rows;
   });
 
   $effect(() => {
+    inputValue;
+    visibleSuggestionRows.length;
     highlightedSuggestionIndex = 0;
   });
 
-  onMount(() => createThemeListener((isDark) => {
-    isDarkMode = isDark;
-  }));
+  $effect(() => {
+    if (highlightedSuggestionIndex >= visibleSuggestionRows.length) {
+      highlightedSuggestionIndex = Math.max(visibleSuggestionRows.length - 1, 0);
+    }
+  });
 
   function getTagColorIndex(tag: string): number {
     let hash = 0;
@@ -130,10 +209,10 @@
   }
 
   function getTagStyle(tag: string): string {
-    const palette = colorPalette[getTagColorIndex(tag)];
-    const background = isDarkMode ? palette.darkBg : palette.lightBg;
-    const color = isDarkMode ? palette.darkText : palette.lightText;
-    const border = `color-mix(in srgb, ${color} 18%, transparent)`;
+    const tone = colorPalette[getTagColorIndex(tag)];
+    const background = `color-mix(in srgb, ${tone} 18%, var(--weave-table-page-bg, var(--background-primary)))`;
+    const color = `color-mix(in srgb, ${tone} 72%, var(--text-normal))`;
+    const border = `color-mix(in srgb, ${tone} 36%, var(--background-modifier-border))`;
     return `background:${background};color:${color};border-color:${border};`;
   }
 
@@ -190,35 +269,49 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
+    const highlightedSuggestion = visibleSuggestionRows[highlightedSuggestionIndex];
+
     if (event.key === 'Enter') {
       event.preventDefault();
 
       if (inputValue.trim()) {
         addTag(inputValue);
-      } else if (filteredSuggestions.length > 0) {
-        addTag(filteredSuggestions[highlightedSuggestionIndex] ?? filteredSuggestions[0]);
+      } else if (highlightedSuggestion) {
+        addTag(highlightedSuggestion.originalTag);
       } else {
         finishEditing();
       }
       return;
     }
 
-    if (event.key === 'Tab' && filteredSuggestions.length > 0) {
+    if (event.key === 'Tab' && highlightedSuggestion) {
       event.preventDefault();
-      addTag(filteredSuggestions[highlightedSuggestionIndex] ?? filteredSuggestions[0]);
+      addTag(highlightedSuggestion.originalTag);
       return;
     }
 
-    if (event.key === 'ArrowDown' && filteredSuggestions.length > 0) {
+    if (event.key === 'ArrowDown' && visibleSuggestionRows.length > 0) {
       event.preventDefault();
-      highlightedSuggestionIndex = (highlightedSuggestionIndex + 1) % filteredSuggestions.length;
+      highlightedSuggestionIndex = (highlightedSuggestionIndex + 1) % visibleSuggestionRows.length;
       return;
     }
 
-    if (event.key === 'ArrowUp' && filteredSuggestions.length > 0) {
+    if (event.key === 'ArrowUp' && visibleSuggestionRows.length > 0) {
       event.preventDefault();
       highlightedSuggestionIndex =
-        (highlightedSuggestionIndex - 1 + filteredSuggestions.length) % filteredSuggestions.length;
+        (highlightedSuggestionIndex - 1 + visibleSuggestionRows.length) % visibleSuggestionRows.length;
+      return;
+    }
+
+    if (event.key === 'ArrowRight' && highlightedSuggestion?.hasChildren && !highlightedSuggestion.expanded) {
+      event.preventDefault();
+      toggleSuggestionExpanded(highlightedSuggestion.fullPath);
+      return;
+    }
+
+    if (event.key === 'ArrowLeft' && highlightedSuggestion?.hasChildren && highlightedSuggestion.expanded) {
+      event.preventDefault();
+      toggleSuggestionExpanded(highlightedSuggestion.fullPath);
       return;
     }
 
@@ -326,32 +419,61 @@
     {/if}
 
     {#if isEditing}
-      <div class="weave-tags-suggestions">
-        <div class="weave-suggestions-header">
-          <span class="weave-suggestions-title">{labels.suggestionsTitle}</span>
-          <span class="weave-suggestions-shortcuts">{labels.shortcutsHint}</span>
-        </div>
-        {#if filteredSuggestions.length > 0}
-          {#each filteredSuggestions as suggestion, index (suggestion)}
-            <button
-              type="button"
-              class="weave-suggestion-chip"
-              class:is-highlighted={index === highlightedSuggestionIndex}
+      <div class="suggestion-container mod-suggestion weave-tags-suggestions" role="listbox">
+        {#if visibleSuggestionRows.length > 0}
+          {#each visibleSuggestionRows as suggestion, index (suggestion.key)}
+            <div
+              class="suggestion-item weave-suggestion-row"
+              class:is-selected={index === highlightedSuggestionIndex}
+              style={`--weave-tag-depth:${suggestion.depth};`}
+              role="option"
+              tabindex="-1"
+              aria-selected={index === highlightedSuggestionIndex}
               onclick={(event) => {
                 isolateCellInteraction(event);
-                addTag(suggestion);
+                addTag(suggestion.originalTag);
+              }}
+              onkeydown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  isolateCellInteraction(event);
+                  addTag(suggestion.originalTag);
+                }
               }}
             >
-              <span class="weave-suggestion-dot" style={getTagStyle(suggestion)}></span>
-              <span class="weave-suggestion-text">{suggestion}</span>
-            </button>
+              <div class="weave-suggestion-content">
+                <span class="weave-suggestion-indent" aria-hidden="true"></span>
+                {#if suggestion.hasChildren}
+                  <button
+                    type="button"
+                    class="weave-suggestion-toggle"
+                    aria-label={suggestion.expanded ? '收起子标签' : '展开子标签'}
+                    onclick={(event) => {
+                      isolateCellInteraction(event);
+                      event.preventDefault();
+                      toggleSuggestionExpanded(suggestion.fullPath);
+                    }}
+                  >
+                    <EnhancedIcon name={suggestion.expanded ? "chevronDown" : "chevronRight"} size={12} />
+                  </button>
+                {:else}
+                  <span class="weave-suggestion-toggle-placeholder" aria-hidden="true"></span>
+                {/if}
+                <span class="weave-suggestion-icon" aria-hidden="true">
+                  <EnhancedIcon name="tag" size={13} />
+                </span>
+                <span class="weave-suggestion-text" title={suggestion.originalTag}>
+                  {suggestion.name}
+                </span>
+              </div>
+            </div>
           {/each}
         {:else if inputValue.trim()}
-          <div class="weave-suggestion-empty">
+          <div class="suggestion-item weave-suggestion-empty">
             {labels.createHintPrefix} “{inputValue.trim()}”
           </div>
         {:else if normalizedAvailableTags.length === 0}
-          <div class="weave-suggestion-empty">{labels.noSuggestions}</div>
+          <div class="suggestion-item weave-suggestion-empty">{labels.noSuggestions}</div>
         {/if}
       </div>
     {/if}
@@ -364,17 +486,22 @@
     min-width: 180px;
     max-width: 260px;
     overflow: visible;
+    padding: var(--weave-table-cell-padding-y, 6px) var(--weave-table-cell-padding-x, 16px);
+    border-right: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
+    border-bottom: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
+    vertical-align: middle;
+    box-sizing: border-box;
   }
 
   .weave-tags-cell {
     position: relative;
     display: flex;
     align-items: flex-start;
-    min-height: 34px;
+    min-height: 22px;
     width: 100%;
-    padding: 5px 8px;
+    padding: 1px 4px;
     border: 1px solid transparent;
-    border-radius: 10px;
+    border-radius: 8px;
     background: transparent;
     cursor: text;
     transition: background-color 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
@@ -389,17 +516,17 @@
   .weave-tags-cell.is-editing {
     background: var(--weave-table-page-bg, var(--background-primary));
     border-color: color-mix(in srgb, var(--interactive-accent) 42%, var(--background-modifier-border));
-    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.10);
+    box-shadow: var(--shadow-s, 0 6px 18px color-mix(in srgb, var(--background-modifier-border) 46%, transparent));
   }
 
   .weave-tags-flow {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 4px;
     width: 100%;
-    min-height: 22px;
-    padding-right: 20px;
+    min-height: 16px;
+    padding-right: 18px;
   }
 
   .weave-tag-pill {
@@ -407,11 +534,11 @@
     align-items: center;
     gap: 4px;
     max-width: 100%;
-    min-height: 22px;
-    padding: 0 8px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border: 1px solid transparent;
     border-radius: 999px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
     line-height: 1;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
@@ -419,14 +546,14 @@
 
   .weave-tags-cell:not(.is-editing) .weave-tag-pill:hover {
     transform: translateY(-1px);
-    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+    box-shadow: var(--shadow-xs, 0 2px 8px color-mix(in srgb, var(--background-modifier-border) 44%, transparent));
   }
 
   .weave-tag-summary {
     display: inline-flex;
     align-items: center;
-    min-height: 22px;
-    padding: 0 8px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border-radius: 999px;
     background: color-mix(in srgb, var(--weave-table-surface-bg, var(--background-secondary)) 78%, var(--weave-table-page-bg, var(--background-primary)) 22%);
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 72%, transparent);
@@ -440,7 +567,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 96px;
+    max-width: 92px;
   }
 
   @media (max-width: 768px) {
@@ -478,13 +605,13 @@
   }
 
   .weave-tag-remove:hover {
-    background: rgba(255, 255, 255, 0.28);
+    background: color-mix(in srgb, currentColor 18%, transparent);
   }
 
   .weave-tag-input {
     min-width: 86px;
     flex: 1 1 90px;
-    height: 24px;
+    height: 18px;
     padding: 0 2px;
     border: none;
     background: transparent;
@@ -500,15 +627,15 @@
   .weave-tags-placeholder {
     display: inline-flex;
     align-items: center;
-    min-height: 22px;
+    min-height: 16px;
     color: var(--text-faint);
-    font-size: 12px;
+    font-size: 11px;
   }
 
   .weave-tags-edit-hint {
     position: absolute;
     top: 50%;
-    right: 8px;
+    right: 6px;
     transform: translateY(-50%);
     display: flex;
     align-items: center;
@@ -527,86 +654,101 @@
     position: absolute;
     top: calc(100% + 6px);
     left: 0;
-    right: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px;
-    background: color-mix(in srgb, var(--weave-table-page-bg, var(--background-primary)) 94%, transparent);
+    min-width: max(100%, 280px);
+    max-width: min(420px, calc(100vw - 32px));
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 6px 0;
+    background: var(--background-primary);
     border: 1px solid var(--background-modifier-border);
-    border-radius: 12px;
-    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
-    backdrop-filter: blur(12px);
+    border-radius: 8px;
+    box-shadow: var(--shadow-s, 0 8px 18px color-mix(in srgb, var(--background-modifier-border) 46%, transparent));
     z-index: 30;
   }
 
-  .weave-suggestions-header {
+  .weave-suggestion-row {
+    display: block;
+    width: 100%;
+    min-height: 30px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-normal);
+    text-align: left;
+    cursor: pointer;
+    border-radius: 0;
+  }
+
+  .weave-suggestion-row:hover,
+  .weave-suggestion-row.is-selected {
+    background: var(--background-modifier-hover);
+  }
+
+  .weave-suggestion-content {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
+    gap: 6px;
+    min-height: 30px;
     width: 100%;
-    margin-bottom: 2px;
-    padding: 0 2px;
-  }
-
-  .weave-suggestions-title {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text-normal);
-    letter-spacing: 0.01em;
-  }
-
-  .weave-suggestions-shortcuts {
-    font-size: 10px;
-    color: var(--text-muted);
+    padding: 0 12px;
+    padding-left: calc(12px + (var(--weave-tag-depth, 0) * 18px));
     white-space: nowrap;
   }
 
-  .weave-suggestion-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 26px;
-    max-width: 100%;
-    padding: 0 10px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 999px;
-    background: var(--weave-table-surface-bg, var(--background-secondary));
-    color: var(--text-normal);
-    cursor: pointer;
-    transition: border-color 0.16s ease, background-color 0.16s ease, transform 0.16s ease;
-  }
-
-  .weave-suggestion-chip:hover,
-  .weave-suggestion-chip.is-highlighted {
-    border-color: color-mix(in srgb, var(--interactive-accent) 45%, var(--background-modifier-border));
-    background: color-mix(in srgb, var(--interactive-accent) 10%, var(--weave-table-surface-bg, var(--background-secondary)));
-    transform: translateY(-1px);
-  }
-
-  .weave-suggestion-dot {
-    width: 10px;
-    height: 10px;
-    border: 1px solid transparent;
-    border-radius: 50%;
+  .weave-suggestion-indent {
+    width: 0;
     flex-shrink: 0;
   }
 
+  .weave-suggestion-toggle,
+  .weave-suggestion-toggle-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  .weave-suggestion-toggle {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+
+  .weave-suggestion-toggle:hover {
+    color: var(--text-normal);
+  }
+
+  .weave-suggestion-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+
   .weave-suggestion-text {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
-    font-weight: 500;
+    font-size: 14px;
+    line-height: 1.35;
   }
 
   .weave-suggestion-empty {
     display: flex;
     align-items: center;
-    min-height: 26px;
+    min-height: 30px;
     color: var(--text-muted);
-    font-size: 12px;
-    padding: 0 2px;
+    padding: 0 12px;
+    font-size: 13px;
   }
 </style>

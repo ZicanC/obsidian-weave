@@ -9,7 +9,7 @@ import type {
 	TocItem,
 } from "./types";
 
-export type EpubReaderEngineType = "readium";
+export type EpubReaderEngineType = "foliate";
 
 export type FlashStyle = "pulse" | "highlight" | "none";
 export type ReaderHighlightPresentation = "highlight" | "conceal";
@@ -21,6 +21,9 @@ export interface NavigateAndHighlightOptions {
 	flashStyle?: FlashStyle;
 	flashColor?: string;
 	dismiss?: "click" | "auto";
+	sourceFile?: string;
+	sourceRef?: string;
+	createdTime?: number;
 }
 
 export interface ReaderNavigateOptions {
@@ -84,6 +87,24 @@ export interface ReaderSelectionChange {
 	frame: ReaderFrame;
 }
 
+export interface EpubChapterExportAsset {
+	placeholder: string;
+	suggestedName: string;
+	data: Uint8Array;
+	mimeType: string;
+	originalHref?: string;
+}
+
+export interface EpubChapterReadingPointDraft {
+	title: string;
+	text: string;
+	cfi: string;
+	chapterIndex: number;
+	chapterHref: string;
+	markdown?: string;
+	assets?: EpubChapterExportAsset[];
+}
+
 export interface EpubReaderEngine {
 	readonly engineType: EpubReaderEngineType;
 	loadEpub(filePath: string, existingBookId?: string): Promise<EpubBook>;
@@ -110,6 +131,10 @@ export interface EpubReaderEngine {
 	getCurrentChapterTitle(): string;
 	getCurrentChapterIndex(): number;
 	getCurrentChapterHref?(): string;
+	getChapterReadingPointDraft?(
+		href: string,
+		titleHint?: string
+	): Promise<EpubChapterReadingPointDraft | null>;
 	getSectionHrefForCfi?(cfi: string): string | null;
 	getCurrentCFI(): string;
 	prevPage(): Promise<void>;

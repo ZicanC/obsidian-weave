@@ -9,7 +9,7 @@ import { logger } from "../../utils/logger";
  * 4. 协调调用专用服务
  *
  * 设计原则：
- * - 所有AI功能（格式化/测试题/拆分）都通过此执行器
+ * - 所有AI功能（格式化/拆分）都通过此执行器
  * - 消除代码重复，确保一致性
  * - 类型安全，避免any类型
  */
@@ -18,7 +18,7 @@ import type { AIProvider } from "../../components/settings/constants/settings-co
 import { AI_PROVIDER_LABELS } from "../../components/settings/constants/settings-constants";
 import type { Card, Deck } from "../../data/types";
 import type { WeavePlugin } from "../../main";
-import type { AIAction, FormatPreviewResult, TestGenerationResponse } from "../../types/ai-types";
+import type { AIAction, FormatPreviewResult } from "../../types/ai-types";
 import type { ParseTemplate } from "../../types/newCardParsingTypes";
 import { AIFormatterService } from "./AIFormatterService";
 import {
@@ -27,7 +27,6 @@ import {
 	type SplitConfig,
 	type SplitResult as AISplitServiceResult,
 } from "./AISplitService";
-import { AITestGeneratorService } from "./AITestGeneratorService";
 import { AIConfigError, AIExecutionError, AIProviderError } from "./errors";
 
 /**
@@ -37,11 +36,6 @@ interface FormatContext {
 	template?: ParseTemplate;
 	deck?: Deck;
 }
-
-/**
- * 测试题生成结果
- */
-type TestGenResult = TestGenerationResponse;
 
 /**
  * 拆分结果
@@ -92,33 +86,6 @@ export class AIActionExecutor {
 			},
 			provider,
 			"format"
-		);
-	}
-
-	/**
-	 * 执行AI测试题生成
-	 *
-	 * @param action - AI功能配置
-	 * @param sourceCard - 源卡片
-	 * @returns 测试题生成结果
-	 */
-	async executeTestGen(action: AIAction, sourceCard: Card): Promise<TestGenResult> {
-		const provider = this.selectProvider(action);
-		this.validateProvider(provider);
-
-		const service = new AITestGeneratorService(this.plugin);
-
-		return await this.safeExecute(
-			async () => {
-				const actionWithProvider = { ...action, provider };
-				return await service.generateTests({
-					sourceCard,
-					action: actionWithProvider,
-					targetDeckId: undefined,
-				});
-			},
-			provider,
-			"testGen"
 		);
 	}
 

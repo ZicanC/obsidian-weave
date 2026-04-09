@@ -1,33 +1,22 @@
 import { App, Menu, Modal, Setting, normalizePath } from "obsidian";
-
-export type SelectionToIRSourceBacklinkPosition = "start" | "end";
+import { VaultFolderSuggestModal } from "./VaultFolderSuggestModal";
 
 export interface SelectionToIRSubmitPayload {
 	title: string;
-	body: string;
+	deckId: string;
 	folderPath: string;
-	deleteSourceSelection: boolean;
-	backlinkPosition: SelectionToIRSourceBacklinkPosition;
-	sourceDocumentBacklinkPosition: SelectionToIRSourceBacklinkPosition;
 }
 
 interface SelectionToIRPreferenceUpdate {
 	folderPath?: string;
-	deleteSourceSelection?: boolean;
-	backlinkPosition?: SelectionToIRSourceBacklinkPosition;
-	sourceDocumentBacklinkPosition?: SelectionToIRSourceBacklinkPosition;
 }
 
 interface SelectionToIRModalOptions {
-	sourceFileBasename: string;
+	deckOptions: Array<{ id: string; name: string }>;
+	initialDeckId?: string;
 	initialTitle: string;
-	initialBody: string;
 	initialFolder: string;
 	titleDetected: boolean;
-	folderOptions: string[];
-	deleteSourceSelection: boolean;
-	backlinkPosition: SelectionToIRSourceBacklinkPosition;
-	sourceDocumentBacklinkPosition: SelectionToIRSourceBacklinkPosition;
 	onSubmit: (payload: SelectionToIRSubmitPayload) => Promise<void>;
 	onPreferenceChange?: (update: SelectionToIRPreferenceUpdate) => Promise<void> | void;
 }
@@ -41,41 +30,23 @@ function normalizeFolderPath(folderPath: string): string {
 	return normalizePath(raw);
 }
 
-function escapeRegExp(value: string): string {
-	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 export class SelectionToIRModal extends Modal {
 	private readonly options: SelectionToIRModalOptions;
-	private readonly sourceBacklink: string;
 	private draftTitle: string;
-	private draftBody: string;
+	private selectedDeckId: string;
 	private selectedFolder: string;
-	private deleteSourceSelection: boolean;
-	private backlinkPosition: SelectionToIRSourceBacklinkPosition;
-	private sourceDocumentBacklinkPosition: SelectionToIRSourceBacklinkPosition;
-	private sourceBacklinkManaged = true;
 	private titleInputEl: HTMLInputElement | null = null;
-	private bodyTextareaEl: HTMLTextAreaElement | null = null;
+	private deckButtonEl: HTMLButtonElement | null = null;
 	private folderButtonEl: HTMLButtonElement | null = null;
 	private createButtonEl: HTMLButtonElement | null = null;
 	private creating = false;
 
 	constructor(app: App, options: SelectionToIRModalOptions) {
 		super(app);
-		this.options = {
-			...options,
-			folderOptions: Array.from(
-				new Set((options.folderOptions || []).map((folder) => normalizeFolderPath(folder)))
-			),
-		};
-		this.sourceBacklink = `[[${options.sourceFileBasename}]]`;
+		this.options = options;
 		this.draftTitle = options.initialTitle;
+		this.selectedDeckId = String(options.initialDeckId || "").trim();
 		this.selectedFolder = normalizeFolderPath(options.initialFolder);
-		this.deleteSourceSelection = Boolean(options.deleteSourceSelection);
-		this.backlinkPosition = options.backlinkPosition;
-		this.sourceDocumentBacklinkPosition = options.sourceDocumentBacklinkPosition;
-		this.draftBody = this.applyManagedSourceBacklinkPosition(options.initialBody);
 	}
 
 	onOpen(): void {
@@ -85,93 +56,75 @@ export class SelectionToIRModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 
-		const toolbarEl = contentEl.createDiv();
-		toolbarEl.setCssProps({
+		const headerPanelEl = contentEl.createDiv();
+		headerPanelEl.setCssProps({
 			display: "flex",
-			"align-items": "center",
-			"justify-content": "space-between",
+			"flex-direction": "column",
 			gap: "12px",
-			"margin-bottom": "12px",
+			padding: "16px",
+			"margin-bottom": "16px",
+			"border-radius": "12px",
+			border: "1px solid var(--background-modifier-border)",
+			"background-color": "var(--background-secondary)",
 		});
 
-		const folderInfoEl = toolbarEl.createDiv();
+		const deckToolbarEl = headerPanelEl.createDiv();
+		deckToolbarEl.setCssProps({
+			display: "flex",
+			"flex-direction": "column",
+			"align-items": "stretch",
+			gap: "8px",
+		});
+
+		const deckInfoEl = deckToolbarEl.createDiv();
+		deckInfoEl.setCssProps({ flex: "1" });
+		deckInfoEl.createDiv({
+			text: "所属专题",
+			cls: "setting-item-name",
+		});
+		deckInfoEl.createDiv({
+			text: "点击下拉菜单选择增量阅读专题。",
+			cls: "setting-item-description",
+		});
+
+		this.deckButtonEl = deckToolbarEl.createEl("button", {
+			text: this.getDeckButtonText(),
+		});
+		this.applyPickerButtonStyle(this.deckButtonEl);
+		this.deckButtonEl.addEventListener("click", (evt) => {
+			this.showDeckMenu(evt as MouseEvent);
+		});
+
+		const folderToolbarEl = headerPanelEl.createDiv();
+		folderToolbarEl.setCssProps({
+			display: "flex",
+			"flex-direction": "column",
+			"align-items": "stretch",
+			gap: "8px",
+		});
+
+		const folderInfoEl = folderToolbarEl.createDiv();
 		folderInfoEl.setCssProps({ flex: "1" });
 		folderInfoEl.createDiv({
 			text: "保存路径",
 			cls: "setting-item-name",
 		});
 		folderInfoEl.createDiv({
-			text: "使用 Obsidian 菜单选择保存位置。",
+			text: "默认保存在 Obsidian 库根目录，也可以切换到其他文件夹。",
 			cls: "setting-item-description",
 		});
 
-		this.folderButtonEl = toolbarEl.createEl("button", {
+		this.folderButtonEl = folderToolbarEl.createEl("button", {
 			text: this.getFolderButtonText(),
 		});
-		this.folderButtonEl.classList.add("mod-cta");
-		this.folderButtonEl.setCssProps({
-			"max-width": "320px",
-			"white-space": "nowrap",
-			overflow: "hidden",
-			"text-overflow": "ellipsis",
+		this.applyPickerButtonStyle(this.folderButtonEl);
+		this.folderButtonEl.addEventListener("click", () => {
+			void this.showFolderPicker();
 		});
-		this.folderButtonEl.addEventListener("click", (evt) => {
-			this.showFolderMenu(evt as MouseEvent);
-		});
-
-		const sourceHintEl = contentEl.createDiv({ cls: "setting-item-description" });
-		sourceHintEl.setText(`来源文档双链：${this.sourceBacklink}`);
-		sourceHintEl.setCssProps({ "margin-bottom": "12px" });
-
-		new Setting(contentEl)
-			.setName("阅读点正文来源双链位置")
-			.setDesc("切换后会同步更新下方正文中的来源文档双链位置。")
-			.addDropdown((dropdown) => {
-				dropdown
-					.addOption("start", "放在开头")
-					.addOption("end", "放在末尾")
-					.setValue(this.backlinkPosition)
-					.onChange((value) => {
-						const nextPosition = value === "end" ? "end" : "start";
-						this.backlinkPosition = nextPosition;
-
-						const rawBody = this.bodyTextareaEl?.value ?? this.draftBody;
-						if (this.sourceBacklinkManaged || !this.bodyContainsSourceBacklink(rawBody)) {
-							this.draftBody = this.applyManagedSourceBacklinkPosition(rawBody);
-							this.sourceBacklinkManaged = true;
-							if (this.bodyTextareaEl) {
-								this.bodyTextareaEl.value = this.draftBody;
-							}
-						} else {
-							this.draftBody = rawBody;
-						}
-
-						void Promise.resolve(
-							this.options.onPreferenceChange?.({ backlinkPosition: nextPosition })
-						).catch(() => undefined);
-					});
-			});
-
-		new Setting(contentEl)
-			.setName("源文档回链位置")
-			.setDesc("创建后会把新阅读点双链写回源文档，可放在 YAML 后开头或文末。")
-			.addDropdown((dropdown) => {
-				dropdown
-					.addOption("start", "放在开头")
-					.addOption("end", "放在末尾")
-					.setValue(this.sourceDocumentBacklinkPosition)
-					.onChange((value) => {
-						const nextPosition = value === "end" ? "end" : "start";
-						this.sourceDocumentBacklinkPosition = nextPosition;
-						void Promise.resolve(
-							this.options.onPreferenceChange?.({ sourceDocumentBacklinkPosition: nextPosition })
-						).catch(() => undefined);
-					});
-			});
 
 		const titleDesc = this.options.titleDetected
 			? "已从选中文本中自动提取标题，你可以继续修改。"
-			: "未检测到明确标题，已先用正文前缀生成标题。";
+			: "未检测到明确标题，已先用选中文本前缀生成标题。";
 
 		new Setting(contentEl)
 			.setName("标题")
@@ -183,48 +136,7 @@ export class SelectionToIRModal extends Modal {
 				this.titleInputEl = text.inputEl;
 				text.onChange((value) => {
 					this.draftTitle = value;
-				});
-			});
-
-		const bodyWrapEl = contentEl.createDiv();
-		bodyWrapEl.setCssProps({
-			"margin-top": "12px",
-			"margin-bottom": "12px",
-		});
-
-		bodyWrapEl.createDiv({
-			text: "正文",
-			cls: "setting-item-name",
-		});
-		bodyWrapEl.createDiv({
-			text: "创建时会把标题放在 YAML 后的正文开头，正文内容默认已包含来源双链。",
-			cls: "setting-item-description",
-		});
-
-		this.bodyTextareaEl = bodyWrapEl.createEl("textarea");
-		this.bodyTextareaEl.value = this.draftBody;
-		this.bodyTextareaEl.rows = 14;
-		this.bodyTextareaEl.setCssProps({
-			width: "100%",
-			"min-height": "260px",
-			"margin-top": "8px",
-			resize: "vertical",
-		});
-		this.bodyTextareaEl.addEventListener("input", () => {
-			this.draftBody = this.bodyTextareaEl?.value ?? "";
-			this.sourceBacklinkManaged = this.hasManagedSourceBacklink(this.draftBody);
-		});
-
-		new Setting(contentEl)
-			.setName("创建后删除源文档选中文本")
-			.setDesc("会记住这次选择，方便下次继续使用。")
-			.addToggle((toggle) => {
-				toggle.setValue(this.deleteSourceSelection);
-				toggle.onChange((value) => {
-					this.deleteSourceSelection = value;
-					void Promise.resolve(
-						this.options.onPreferenceChange?.({ deleteSourceSelection: value })
-					).catch(() => undefined);
+					this.syncCreateButtonState();
 				});
 			});
 
@@ -244,6 +156,7 @@ export class SelectionToIRModal extends Modal {
 		this.createButtonEl.addEventListener("click", () => {
 			void this.handleCreate();
 		});
+		this.syncCreateButtonState();
 
 		this.scope.register([], "Enter", (evt: KeyboardEvent) => {
 			if (evt.metaKey || evt.ctrlKey) {
@@ -266,6 +179,11 @@ export class SelectionToIRModal extends Modal {
 		return `保存到：${this.getFolderDisplayName(this.selectedFolder)}`;
 	}
 
+	private getDeckButtonText(): string {
+		const selectedDeck = this.options.deckOptions.find((deck) => deck.id === this.selectedDeckId);
+		return selectedDeck ? `专题：${selectedDeck.name}` : "选择增量阅读专题";
+	}
+
 	private getFolderDisplayName(folderPath: string): string {
 		const normalized = normalizeFolderPath(folderPath);
 		if (normalized === "/") {
@@ -276,23 +194,38 @@ export class SelectionToIRModal extends Modal {
 		return exists ? normalized : `${normalized}（创建）`;
 	}
 
-	private showFolderMenu(evt: MouseEvent): void {
+	private applyPickerButtonStyle(buttonEl: HTMLButtonElement): void {
+		buttonEl.setCssProps({
+			display: "inline-flex",
+			"align-items": "center",
+			"justify-content": "space-between",
+			gap: "8px",
+			width: "100%",
+			padding: "8px 12px",
+			"border-radius": "8px",
+			border: "1px solid var(--background-modifier-border)",
+			"background-color": "var(--background-primary)",
+			"white-space": "nowrap",
+			overflow: "hidden",
+			"text-overflow": "ellipsis",
+			"box-shadow": "none",
+		});
+	}
+
+	private showDeckMenu(evt: MouseEvent): void {
 		const menu = new Menu();
 
-		for (const folderPath of this.options.folderOptions) {
-			const normalized = normalizeFolderPath(folderPath);
+		for (const deck of this.options.deckOptions) {
 			menu.addItem((item) => {
 				item
-					.setTitle(this.getFolderDisplayName(normalized))
-					.setChecked(normalized === this.selectedFolder)
+					.setTitle(deck.name)
+					.setChecked(deck.id === this.selectedDeckId)
 					.onClick(() => {
-						this.selectedFolder = normalized;
-						if (this.folderButtonEl) {
-							this.folderButtonEl.textContent = this.getFolderButtonText();
+						this.selectedDeckId = deck.id;
+						if (this.deckButtonEl) {
+							this.deckButtonEl.textContent = this.getDeckButtonText();
 						}
-						void Promise.resolve(
-							this.options.onPreferenceChange?.({ folderPath: normalized })
-						).catch(() => undefined);
+						this.syncCreateButtonState();
 					});
 			});
 		}
@@ -300,16 +233,38 @@ export class SelectionToIRModal extends Modal {
 		menu.showAtMouseEvent(evt);
 	}
 
+	private async showFolderPicker(): Promise<void> {
+		const picker = new VaultFolderSuggestModal(this.app, {
+			placeholder: "选择阅读点保存路径...",
+		});
+		const folderPath = await picker.openAndSelect();
+		if (!folderPath) {
+			return;
+		}
+
+		this.selectedFolder = normalizeFolderPath(folderPath);
+		if (this.folderButtonEl) {
+			this.folderButtonEl.textContent = this.getFolderButtonText();
+		}
+		void Promise.resolve(
+			this.options.onPreferenceChange?.({ folderPath: this.selectedFolder })
+		).catch(() => undefined);
+	}
+
 	private async handleCreate(): Promise<void> {
 		if (this.creating) {
 			return;
 		}
 
+		if (!this.selectedDeckId) {
+			return;
+		}
+
 		this.draftTitle = this.titleInputEl?.value ?? this.draftTitle;
-		const rawBody = this.bodyTextareaEl?.value ?? this.draftBody;
-		this.draftBody = this.sourceBacklinkManaged
-			? this.applyManagedSourceBacklinkPosition(rawBody)
-			: rawBody;
+		if (!this.draftTitle.trim()) {
+			this.syncCreateButtonState();
+			return;
+		}
 
 		this.creating = true;
 		if (this.createButtonEl) {
@@ -320,11 +275,8 @@ export class SelectionToIRModal extends Modal {
 		try {
 			await this.options.onSubmit({
 				title: this.draftTitle,
-				body: this.draftBody,
+				deckId: this.selectedDeckId,
 				folderPath: this.selectedFolder,
-				deleteSourceSelection: this.deleteSourceSelection,
-				backlinkPosition: this.backlinkPosition,
-				sourceDocumentBacklinkPosition: this.sourceDocumentBacklinkPosition,
 			});
 			this.close();
 		} catch {
@@ -332,59 +284,18 @@ export class SelectionToIRModal extends Modal {
 		} finally {
 			this.creating = false;
 			if (this.createButtonEl) {
-				this.createButtonEl.disabled = false;
 				this.createButtonEl.textContent = "创建阅读点";
 			}
+			this.syncCreateButtonState();
 		}
 	}
 
-	private normalizeBodyText(body: string): string {
-		return String(body || "")
-			.replace(/\r\n?/g, "\n")
-			.trim();
-	}
-
-	private bodyContainsSourceBacklink(body: string): boolean {
-		return this.normalizeBodyText(body).includes(this.sourceBacklink);
-	}
-
-	private hasManagedSourceBacklink(body: string): boolean {
-		const normalized = this.normalizeBodyText(body);
-		if (!normalized) {
-			return false;
+	private syncCreateButtonState(): void {
+		if (!this.createButtonEl) {
+			return;
 		}
 
-		const escapedBacklink = escapeRegExp(this.sourceBacklink);
-		const startsWithManagedBacklink = new RegExp(`^${escapedBacklink}(?:\\n{2,}|\\n|$)`).test(
-			normalized
-		);
-		const endsWithManagedBacklink = new RegExp(`(?:^|\\n|\\n{2,})${escapedBacklink}$`).test(
-			normalized
-		);
-		return startsWithManagedBacklink || endsWithManagedBacklink;
-	}
-
-	private stripManagedSourceBacklink(body: string): string {
-		const normalized = this.normalizeBodyText(body);
-		if (!normalized) {
-			return "";
-		}
-
-		const escapedBacklink = escapeRegExp(this.sourceBacklink);
-		return normalized
-			.replace(new RegExp(`^${escapedBacklink}(?:\\n{2,}|\\n)?`), "")
-			.replace(new RegExp(`(?:\\n{2,}|\\n)?${escapedBacklink}$`), "")
-			.trim();
-	}
-
-	private applyManagedSourceBacklinkPosition(body: string): string {
-		const content = this.stripManagedSourceBacklink(body);
-		if (!content) {
-			return this.sourceBacklink;
-		}
-
-		return this.backlinkPosition === "end"
-			? `${content}\n\n${this.sourceBacklink}`
-			: `${this.sourceBacklink}\n\n${content}`;
+		const title = (this.titleInputEl?.value ?? this.draftTitle).trim();
+		this.createButtonEl.disabled = this.creating || !this.selectedDeckId || !title;
 	}
 }

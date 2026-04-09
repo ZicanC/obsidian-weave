@@ -27,7 +27,6 @@
     onChangeDeck?: (deckId: string) => void | Promise<void>;
     onRecycleCard?: () => void;
     onAIFormatCustom?: (actionId: string) => void;
-    onTestGenerate?: (actionId: string) => void;
     onSplitCard?: (actionId: string) => void;
     onOpenAIConfig?: () => void;
     onGraphLinkToggle?: (enabled: boolean) => void;
@@ -55,7 +54,6 @@
     onChangeDeck,
     onRecycleCard,
     onAIFormatCustom,
-    onTestGenerate,
     onSplitCard,
     onOpenAIConfig,
     onGraphLinkToggle,
@@ -98,7 +96,6 @@
       showTimingInfo,
       aiActions: {
         format: customActions.format || [],
-        testGen: [],
         split: customActions.split || []
       }
     };
@@ -137,7 +134,6 @@
         onClose();
         onAIFormatCustom?.(actionId);
       },
-      onTestGenerate: () => {},
       onSplitCard: (actionId) => {
         onClose();
         onSplitCard?.(actionId);

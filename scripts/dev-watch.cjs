@@ -1,11 +1,16 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
+const { resolvePluginDir } = require("./hot-reload-utils.cjs");
 
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 const LOCK_FILE = path.join(PROJECT_ROOT, ".dev-watch.lock.json");
 const VITE_ENTRY = path.join("node_modules", "vite", "bin", "vite.js");
 const MAX_OLD_SPACE_SIZE = process.env.WEAVE_DEV_MEMORY_MB || "4096";
+const DESKTOP_SOURCE_DIR = process.env.WEAVE_DESKTOP_SOURCE_DIR?.trim()
+	? path.resolve(process.env.WEAVE_DESKTOP_SOURCE_DIR)
+	: path.resolve(PROJECT_ROOT, ".desktop-hot-reload");
+const PLUGIN_ID = "weave";
 
 function isProcessAlive(pid) {
 	if (!Number.isInteger(pid) || pid <= 0) {
@@ -45,7 +50,8 @@ function writeLockFile() {
 			{
 				pid: process.pid,
 				projectRoot: PROJECT_ROOT,
-				createdAt: new Date().toISOString()
+				sourceDir: DESKTOP_SOURCE_DIR,
+				createdAt: new Date().toISOString(),
 			},
 			null,
 			2
@@ -54,28 +60,19 @@ function writeLockFile() {
 	);
 }
 
-const existingLock = readLockFile();
-if (existingLock?.pid && existingLock.pid !== process.pid) {
-	if (isProcessAlive(existingLock.pid)) {
-		console.log(`开发监听已在运行，PID: ${existingLock.pid}`);
-		console.log("如需重启，请先执行: node scripts/kill-vite.cjs");
-		process.exit(0);
-	}
-
-	removeLockFile();
+function resolveTargetPluginDir() {
+	return resolvePluginDir(PLUGIN_ID, process.env);
 }
 
-writeLockFile();
-
-const child = spawn(
-	process.execPath,
-	[`--max-old-space-size=${MAX_OLD_SPACE_SIZE}`, VITE_ENTRY, "build", "--mode", "development"],
-	{
-		cwd: PROJECT_ROOT,
-		stdio: "inherit"
-	}
-);
-
+const targetPluginDir = resolveTargetPluginDir();
+const useDesktopStaging = Boolean(targetPluginDir);
+const childEnv = useDesktopStaging
+	? {
+			...process.env,
+			WEAVE_DESKTOP_HOT_RELOAD: "1",
+			WEAVE_DESKTOP_SOURCE_DIR: DESKTOP_SOURCE_DIR,
+	  }
+	: process.env;
 let cleanedUp = false;
 
 function cleanup() {
@@ -89,6 +86,51 @@ function cleanup() {
 		removeLockFile();
 	}
 }
+
+const existingLock = readLockFile();
+if (existingLock?.pid && existingLock.pid !== process.pid) {
+	if (isProcessAlive(existingLock.pid)) {
+		console.log(`Desktop watcher is already running. PID: ${existingLock.pid}`);
+		console.log("Run `node scripts/kill-vite.cjs` before restarting.");
+		process.exit(0);
+	}
+
+	removeLockFile();
+}
+
+writeLockFile();
+
+if (useDesktopStaging) {
+	console.log(`Desktop hot reload staging dir: ${DESKTOP_SOURCE_DIR}`);
+	console.log(`Desktop hot reload target dir: ${targetPluginDir}`);
+} else {
+	console.warn("OBSIDIAN_VAULT_PATH is not set. Falling back to Vite default dev output.");
+}
+
+const child = spawn(
+	process.execPath,
+	[
+		`--max-old-space-size=${MAX_OLD_SPACE_SIZE}`,
+		VITE_ENTRY,
+		"build",
+		"--mode",
+		"development",
+		"--watch",
+	],
+	{
+		cwd: PROJECT_ROOT,
+		env: childEnv,
+		stdio: ["inherit", "pipe", "pipe"],
+	}
+);
+
+child.stdout.on("data", (data) => {
+	process.stdout.write(data.toString());
+});
+
+child.stderr.on("data", (data) => {
+	process.stderr.write(data.toString());
+});
 
 process.on("SIGINT", () => {
 	if (!child.killed) {
@@ -107,6 +149,12 @@ process.on("SIGTERM", () => {
 });
 
 process.on("exit", cleanup);
+
+child.on("error", (error) => {
+	console.error(error?.message || error);
+	cleanup();
+	process.exit(1);
+});
 
 child.on("close", (code, signal) => {
 	cleanup();

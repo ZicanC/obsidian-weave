@@ -51,9 +51,9 @@
   .status-badge {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    min-height: 24px;
-    padding: 0 10px;
+    gap: 4px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border-radius: 999px;
     font-size: 11px;
     font-weight: 600;
@@ -79,9 +79,9 @@
 
   @media (max-width: 768px) {
     .status-badge {
-      gap: 5px;
-      min-height: 22px;
-      padding: 0 8px;
+      gap: 4px;
+      min-height: 20px;
+      padding: 0 7px;
       font-size: 10px;
     }
 

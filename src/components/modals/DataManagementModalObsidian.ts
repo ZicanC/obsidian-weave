@@ -8,7 +8,7 @@ export interface DataManagementModalObsidianOptions {
 	plugin: WeavePlugin;
 	cards?: Card[];
 	allCards?: Card[];
-	initialTab?: "data" | "quality";
+	initialTab?: "data";
 	onClose?: () => void;
 }
 
@@ -50,7 +50,7 @@ export class DataManagementModalObsidian extends Modal {
 				plugin: this.options.plugin,
 				cards: this.options.cards ?? [],
 				allCards: this.options.allCards ?? [],
-				initialTab: this.options.initialTab ?? "data",
+				initialTab: "data",
 			},
 		});
 	}

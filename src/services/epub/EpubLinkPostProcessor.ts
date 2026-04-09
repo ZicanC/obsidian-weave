@@ -23,9 +23,9 @@ export function createEpubLinkPostProcessor(app: App) {
 			const href = linkEl.getAttribute("href") || linkEl.getAttribute("data-href") || "";
 			const boundLinkEl = linkEl as BoundEpubLinkElement;
 
-			// EPUB wikilink format: [[book.epub#weave-cfi=...]] or legacy [[book.epub#tuanki-cfi-...]]
+			// EPUB wikilink format: [[book.epub#weave-loc=...]] / [[book.epub#weave-cfi=...]] or legacy [[book.epub#tuanki-cfi-...]]
 			if (
-				href.match(/\.epub#(?:weave-cfi=|tuanki-cfi=|tuanki-cfi-)/) ||
+				href.match(/\.epub#(?:weave-loc=|weave-cfi=|tuanki-cfi=|tuanki-cfi-)/) ||
 				(linkEl.classList.contains("internal-link") && href.match(/\.epub/))
 			) {
 				const hashIdx = href.indexOf("#");

@@ -427,18 +427,6 @@ export class CardMetadataService {
 		}
 	}
 
-	/**
-	 * 预热缓存
-	 * @param cards 卡片数组
-	 */
-	warmUpCache(cards: Card[]): void {
-		try {
-			const cache = getCardMetadataCache();
-			void cache.prefetchAsync(cards);
-		} catch {
-			// 缓存未初始化
-		}
-	}
 }
 
 // ===== 单例导出 =====

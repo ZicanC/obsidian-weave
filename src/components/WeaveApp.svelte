@@ -35,6 +35,14 @@
   let { plugin, dataStorage, fsrs, currentLeaf }: Props = $props();
   let activePage = $state<string>("deck-study");
 
+  function normalizeDeckStudyView(view: string | null | undefined): 'grid' | 'kanban' {
+    return view === 'kanban' ? 'kanban' : 'grid';
+  }
+
+  function getInitialDeckStudyView(): 'grid' | 'kanban' {
+    return normalizeDeckStudyView(plugin.getCachedDeckViewPreference());
+  }
+
   // 移动端检测状态
   let isMobileDevice = $state(false);
   
@@ -44,7 +52,7 @@
   // 侧边栏导航状态（用于与子页面同步）
   let sidebarDeckFilter = $state<'memory' | 'incremental-reading' | 'question-bank'>('memory');
   let sidebarCardView = $state<'table' | 'grid' | 'kanban'>('table');
-  let sidebarDeckStudyView = $state<'grid' | 'kanban'>('grid');
+  let sidebarDeckStudyView = $state<'grid' | 'kanban'>(getInitialDeckStudyView());
   // 卡片管理页面的数据源状态
   let cardDataSource = $state<'memory' | 'questionBank' | 'incremental-reading'>('memory');
 

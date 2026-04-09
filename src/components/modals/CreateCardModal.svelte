@@ -242,7 +242,7 @@
           : (decks.find(d => d.id === newDeckId)?.name ? [decks.find(d => d.id === newDeckId)?.name] : []);
         const yamlMetadata: Record<string, any> = {
           we_type: CardType.Basic,
-          we_created: new Date().toISOString()
+          created: new Date().toISOString()
         };
         if (nextDeckNames.length > 0) {
           yamlMetadata.we_decks = nextDeckNames;

@@ -161,6 +161,7 @@ describe('ReadingMaterialManager', () => {
     expect(storage.saveMaterial).toHaveBeenCalledWith(
       expect.objectContaining({
         uuid: imported[0].uuid,
+        nextDueAt: '2026-04-01T00:00:00.000Z',
         fsrs: expect.objectContaining({
           due: '2026-04-01T00:00:00.000Z'
         })

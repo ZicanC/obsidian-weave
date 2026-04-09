@@ -1,12 +1,9 @@
 import { Menu } from "obsidian";
 import { get } from "svelte/store";
 import type { Card } from "../../data/types";
-import type { WeavePlugin } from "../../main";
-//  导入AI配置Store
 import { customActionsForMenu } from "../../stores/ai-config.store";
 import type { AIAction } from "../../types/ai-types";
 import { logger } from "../../utils/logger";
-//  导入DerivationMethod
 import { DerivationMethod } from "../relation/types";
 
 /**
@@ -15,7 +12,6 @@ import { DerivationMethod } from "../relation/types";
  */
 export class AIAssistantMenuBuilder {
 	constructor(
-		private plugin: WeavePlugin,
 		private card: Card,
 		private onAIFormatCustom: (actionId: string) => void,
 		private onSplitCard: (actionId: string) => void,
@@ -55,14 +51,12 @@ export class AIAssistantMenuBuilder {
 	showMainMenu(evt: MouseEvent): void {
 		const menu = new Menu();
 
-		// AI格式化 - 悬停展开子菜单
 		menu.addItem((item) => {
 			item.setTitle("AI格式化");
 			const formatSubmenu = (item as any).setSubmenu();
 			this.buildFormatSubmenu(formatSubmenu);
 		});
 
-		// AI拆分（仅对非子卡片显示）- 悬停展开子菜单
 		if (!this.isChildCard(this.card)) {
 			menu.addItem((item) => {
 				item.setTitle("AI拆分");
@@ -80,7 +74,6 @@ export class AIAssistantMenuBuilder {
 	private buildFormatSubmenu(menu: Menu): void {
 		const actions = this.getFormatActions();
 
-		// 添加所有格式化功能
 		actions.forEach((action) => {
 			menu.addItem((item) => {
 				item.setTitle(action.name).onClick(() => {
@@ -89,7 +82,6 @@ export class AIAssistantMenuBuilder {
 			});
 		});
 
-		// 添加分隔线和管理设置
 		menu.addSeparator();
 		menu.addItem((item) => {
 			item.setTitle("管理功能...").onClick(() => {

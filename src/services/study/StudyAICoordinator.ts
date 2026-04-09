@@ -3,10 +3,8 @@
  *
  * 职责：
  * - AI格式化功能
- * - AI测试题生成
  * - AI拆分功能
  * - 子卡片管理
- * - 题库保存
  *
  * @created 2025-11-29
  */
@@ -18,6 +16,7 @@ import { CardState, CardType } from "../../data/types";
 import type { WeavePlugin } from "../../main";
 import type { AIAction, FormatPreviewResult, SplitCardRequest } from "../../types/ai-types";
 import type { ParseTemplate } from "../../types/newCardParsingTypes";
+import { getCardBack, getCardFront } from "../../utils/card-field-helper";
 import { cardToMarkdown, markdownToCard } from "../../utils/card-markdown-serializer";
 import { logger } from "../../utils/logger";
 import { getCardDeckIds } from "../../utils/yaml-utils";
@@ -33,7 +32,6 @@ export interface AICoordinatorContext {
 	decks: Deck[];
 	availableTemplates: ParseTemplate[];
 	formatActions: AIAction[];
-	testGenActions: AIAction[];
 }
 
 /**
@@ -45,7 +43,7 @@ export interface AIFormatCallbacks {
 }
 
 /**
- * AI拆分/测试题生成结果
+ * AI拆分结果
  */
 export interface AIGenerationResult {
 	success: boolean;
@@ -90,8 +88,8 @@ export class StudyAICoordinator {
 
 			if (!currentContent.trim()) {
 				// 降级方案：从fields构建
-				const front = card.fields?.front || card.fields?.question || "";
-				const back = card.fields?.back || card.fields?.answer || "";
+				const front = getCardFront(card);
+				const back = getCardBack(card);
 				currentContent = front;
 				if (back) {
 					currentContent += `\n\n---\n\n${back}`;
@@ -263,121 +261,6 @@ export class StudyAICoordinator {
 	}
 
 	/**
-	 * 生成测试题
-	 */
-	async generateTests(card: Card, actionId: string): Promise<AIGenerationResult> {
-		if (!card) {
-			new Notice("当前没有可生成测试题的卡片");
-			return { success: false, cards: [], error: "无卡片" };
-		}
-
-		try {
-			// 1. 获取测试题生成器配置
-			const action = this.context.testGenActions.find((a) => a.id === actionId);
-
-			if (!action || !action.testConfig) {
-				new Notice("找不到指定的测试题生成功能");
-				return { success: false, cards: [], error: "找不到生成器" };
-			}
-
-			new Notice("正在生成测试题...");
-
-			// 2. 使用专用的AI测试题生成服务
-			const { AITestGeneratorService } = await import("../ai/AITestGeneratorService");
-			const testGeneratorService = new AITestGeneratorService(this.context.plugin);
-
-			logger.debug("[测试题生成] 使用测试题生成服务:", action.id);
-
-			// 3. 构建测试题生成请求
-			const generateRequest = {
-				sourceCard: card,
-				action: action,
-				targetDeckId: undefined,
-			};
-
-			// 4. 调用专用的AI测试题生成服务
-			const response = await testGeneratorService.generateTests(generateRequest);
-
-			if (
-				!response.success ||
-				!response.generatedQuestions ||
-				response.generatedQuestions.length === 0
-			) {
-				throw new Error(response.error || "生成失败");
-			}
-
-			// 5. 转换为临时卡片数据（用于预览）
-			const tempChildCards: Card[] = response.generatedQuestions.map(
-				(question: any, index: number) => {
-					// 为选择题构建完整的content
-					let content: string;
-					if (question.type === "choice" && question.back) {
-						content = `${question.front}\n\n---div---\n\n${question.back}`;
-					} else if (question.back) {
-						content = `${question.front}\n\n${question.back}`;
-					} else {
-						content = question.front;
-					}
-
-					return {
-						id: `temp-${Date.now()}-${index}`,
-						uuid: `temp-uuid-${Date.now()}-${index}`,
-						deckId: card.deckId,
-						templateId: card.templateId,
-						type: question.type === "choice" ? CardType.Multiple : CardType.Basic,
-						content: content,
-						// ✅ Content-Only: 不再生成 fields
-						tags: ["AI生成", ...(card.tags || [])],
-						priority: 0,
-						difficulty: question.difficulty || action.testConfig?.difficultyLevel,
-						cardPurpose: "test",
-						sourceFile: card.sourceFile || "",
-						sourceBlock: card.sourceBlock,
-						sourceRange: card.sourceRange,
-						sourceExists: card.sourceExists,
-						sourceFileMtime: card.sourceFileMtime,
-						metadata: {
-							questionType: question.type || action.testConfig?.questionType || "single",
-							generatedBy: action.id,
-							generatedAt: new Date().toISOString(),
-							explanation: question.explanation,
-							sourceCardId: card.uuid,
-						},
-						fsrs: {
-							due: new Date().toISOString(),
-							stability: 0,
-							difficulty: 0,
-							elapsedDays: 0,
-							scheduledDays: 0,
-							reps: 0,
-							lapses: 0,
-							state: CardState.New,
-							retrievability: 0,
-						},
-						reviewHistory: [],
-						stats: {
-							totalReviews: 0,
-							totalTime: 0,
-							averageTime: 0,
-							memoryRate: 0,
-						},
-						created: new Date().toISOString(),
-						modified: new Date().toISOString(),
-					};
-				}
-			);
-
-			new Notice(`成功生成${tempChildCards.length}道测试题`);
-			return { success: true, cards: tempChildCards };
-		} catch (error) {
-			logger.error("[测试题生成] 失败:", error);
-			const errorMessage = error instanceof Error ? error.message : "生成失败";
-			new Notice(`生成失败: ${errorMessage}`);
-			return { success: false, cards: [], error: errorMessage };
-		}
-	}
-
-	/**
 	 * AI拆分卡片
 	 */
 	async splitCard(
@@ -413,8 +296,8 @@ export class StudyAICoordinator {
 			const request: SplitCardRequest = {
 				parentCardId: card.uuid,
 				content: {
-					front: card.fields?.front || card.content || "",
-					back: card.fields?.back || "",
+					front: getCardFront(card) || card.content || "",
+					back: getCardBack(card),
 				},
 				targetCount: targetCount,
 				instruction:
@@ -507,42 +390,4 @@ export class StudyAICoordinator {
 		}
 	}
 
-	/**
-	 * 保存卡片到题库
-	 */
-	async saveToQuestionBank(cards: Card[], parentCard: Card): Promise<number> {
-		if (!this.context.plugin.questionBankService) {
-			throw new Error("题库服务未初始化");
-		}
-
-		try {
-			logger.debug("[题库保存] 准备保存卡片:", {
-				count: cards.length,
-				parentCardId: parentCard.uuid,
-			});
-
-			const qbService = this.context.plugin.questionBankService;
-			const parentDeckInfo = getCardDeckIds(parentCard, this.context.decks);
-			const parentDeckId = parentDeckInfo.primaryDeckId;
-			const parentDeckName = parentDeckId
-				? this.context.decks.find((d) => d.id === parentDeckId)?.name || "默认"
-				: "默认";
-
-			const questionBankName = `${parentDeckName} - 题库`;
-			let bank = qbService.getAllQuestionBanks().find((b: any) => b.name === questionBankName);
-			if (!bank) {
-				bank = await qbService.createBank({
-					name: questionBankName,
-					description: `从牌组\"${parentDeckName}\"自动生成的题库`,
-					deckType: "question-bank",
-				});
-			}
-
-			await qbService.addQuestions(bank.id, cards);
-			return cards.length;
-		} catch (error) {
-			logger.error("[题库保存] 失败:", error);
-			throw error;
-		}
-	}
 }

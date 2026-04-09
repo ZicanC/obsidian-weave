@@ -226,7 +226,7 @@ D) 选项4
 | \`we_type\` | 卡片类型 |
 | \`we_priority\` | 优先级 |
 | \`we_difficulty\` | 难度 |
-| \`we_created\` | 创建时间 |
+| \`created\` | 创建时间 |
 | \`tags\` | 标签列表 |`,
 		tags: ["元数据", "YAML"],
 	},

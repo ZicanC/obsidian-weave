@@ -8,7 +8,7 @@
 
   import type { Card, Deck } from "../../data/types";
   import type { TimeFilterType } from "../../types/time-filter-types";
-  import { MarkdownView, Platform, Menu, TFile, Modal, FuzzySuggestModal } from "obsidian";
+  import { MarkdownView, Platform, Menu, TFile, Modal, FuzzySuggestModal, normalizePath } from "obsidian";
   import type { WorkspaceLeaf } from "obsidian";
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
   import BouncingBallsLoader from "../ui/BouncingBallsLoader.svelte";
@@ -26,11 +26,12 @@
   // 🆕 v2.0 增量阅读牌组模态窗
   import BuildIRDeckModal from "../modals/BuildIRDeckModal.svelte";
   // 🆕 v2.2 数据管理模态窗
+  import { ColumnManagerModalObsidian } from "../modals/ColumnManagerModalObsidian";
   import { DataManagementModalObsidian } from "../modals/DataManagementModalObsidian";
+  import CardToMarkdownModal from "../modals/CardToMarkdownModal.svelte";
   // EditCardModal 已改为全局方法，不再局部导入
   import { EmbeddableEditorManager } from "../../services/editor/EmbeddableEditorManager";
 
-  import ColumnManager from "../ui/ColumnManager.svelte";
   import TablePagination from "../ui/TablePagination.svelte";
   import { DEFAULT_COLUMN_ORDER, type ColumnOrder, type ColumnKey } from "../tables/types/table-types";
 
@@ -41,13 +42,13 @@
   import { getCardContentBySide } from "../../utils/helpers";
   import { showNotification } from "../../utils/notifications";
   // 源文档路径筛选工具
-  import { filterCardsBySourceDocument } from "../../utils/source-path-matcher";
+  import { extractSourceBlock, extractSourcePath, filterCardsBySourceDocument } from "../../utils/source-path-matcher";
   // 🆕 标签层级筛选工具
   import { matchesTagFilter } from "../../utils/tag-utils";
   // 旧的三位一体模板系统已完全移除
   import { Notice } from "obsidian";
   // 🆕 v2.2: 导入牌组获取工具和内容解析工具（Content-Only 架构）
-  import { getCardMetadata, setCardProperties, getCardDeckIds, getCardDeckNames as getCardDeckNamesFromYaml, extractBodyContent, parseSourceInfo, parseYAMLFromContent } from "../../utils/yaml-utils";
+  import { getCardMetadata, setCardProperties, getCardDeckIds, getCardDeckNames as getCardDeckNamesFromYaml, extractBodyContent, parseSourceInfo, parseYAMLFromContent, buildContentWithYAML } from "../../utils/yaml-utils";
   import { MAIN_SEPARATOR } from "../../constants/markdown-delimiters";
   import { cardsToCSV, groupCardsBySource, groupCardsByMonth, groupCardsByDeck, sanitizeFileName, type ExportGroupMode } from "../../utils/card-export-utils";
   import { showObsidianConfirm } from "../../utils/obsidian-confirm";
@@ -63,6 +64,7 @@
   import { migrateCardsErrorTracking, getMigrationStats } from "../../utils/data-migration-utils";
   import { calculateTagCounts } from "../../utils/tag-utils";
   import { FilterManager } from "../../services/filter-manager";
+  import { openWeaveMainMenu } from "../../utils/weave-main-menu";
   import { TFolder } from "obsidian";
   
   // 🆕 v2.1 YAML 元数据服务
@@ -77,6 +79,7 @@
   // 🆕 题库数据存储
   import { QuestionBankStorage } from "../../services/question-bank/QuestionBankStorage";
   import type { QuestionTestStats } from "../../types/question-bank-types";
+  import { BatchTagSuggestModal, type BatchTagSuggestItem } from "../../modals/BatchTagSuggestModal";
   
   
   // 🆕 移动端组件
@@ -98,6 +101,7 @@
   import { IRPdfBookmarkTaskService, isPdfBookmarkTaskId } from "../../services/incremental-reading/IRPdfBookmarkTaskService";
   import type { IRPdfBookmarkTask } from "../../services/incremental-reading/IRPdfBookmarkTaskService";
   import type { IRBlock, IRDeck } from "../../types/ir-types";
+  import { getChunkTopicIds, getTaskTopicId } from "../../utils/ir-topic-compat";
   
   // 进度条模态窗
   import { executeBatchWithProgress } from "../../utils/progress-modal";
@@ -160,6 +164,7 @@
     kanbanLayoutMode: 'comfortable',
     tableViewMode: 'basic',
     enableCardLocationJump: false,
+    showTableGridBorders: true,
     ...(plugin.settings.cardManagementViewPreferences ?? {})
   }));
   
@@ -202,6 +207,10 @@
       ? value
       : 'fixed';
   }
+
+  function resolveShowTableGridBorders(value: unknown): boolean {
+    return typeof value === 'boolean' ? value : true;
+  }
   
   // 🔒 视图权限检查和降级
   function getInitialView(): 'table' | 'grid' | 'kanban' {
@@ -232,6 +241,7 @@
   let kanbanLayoutMode = $state<'compact' | 'comfortable' | 'spacious'>(resolveKanbanLayoutMode(viewPrefs.kanbanLayoutMode));
   let tableViewMode = $state<'basic' | 'review' | 'questionBank' | 'irContent'>(resolveTableViewMode(viewPrefs.tableViewMode));
   let enableCardLocationJump = $state(viewPrefs.enableCardLocationJump);
+  let showTableGridBorders = $state(resolveShowTableGridBorders(viewPrefs.showTableGridBorders));
   let gridCardAttribute = $state<GridCardAttributeType>(resolveGridCardAttribute(viewPrefs.gridCardAttribute));
   
   // 🆕 全局筛选状态（从FilterStateService同步）
@@ -277,11 +287,8 @@
 
   // 🆕 字段管理器状态
   let showColumnManager = $state(false);
-  let columnManagerAnchorEl = $state<HTMLElement | null>(null);
-  let columnManagerPanelEl = $state<HTMLDivElement | null>(null);
-  let columnManagerPopoverTop = $state(96);
-  let columnManagerPopoverLeft = $state(24);
-  let columnManagerPopoverPlacement = $state<'top' | 'bottom'>('bottom');
+  let columnManagerModalInstance: ColumnManagerModalObsidian | null = null;
+  let isRefreshingColumnManagerModal = false;
   
   async function saveViewPreferences() {
     try {
@@ -292,7 +299,8 @@
           gridCardAttribute: 'uuid',
           kanbanLayoutMode: 'comfortable',
           tableViewMode: 'basic',
-          enableCardLocationJump: false
+          enableCardLocationJump: false,
+          showTableGridBorders: true
         };
       }
       
@@ -302,6 +310,7 @@
       plugin.settings.cardManagementViewPreferences.kanbanLayoutMode = kanbanLayoutMode;
       plugin.settings.cardManagementViewPreferences.tableViewMode = tableViewMode;
       plugin.settings.cardManagementViewPreferences.enableCardLocationJump = enableCardLocationJump;
+      plugin.settings.cardManagementViewPreferences.showTableGridBorders = true;
       
       await plugin.saveSettings();
     } catch (error) {
@@ -312,13 +321,16 @@
   // showBatchTemplateModal 已删除（基于弃用的字段模板系统）
   // showBatchDeckModal、showBatchRemoveTagsModal、showBatchAddTagsModal 已移除（改用 Obsidian Menu API）
   
-  // 🆕 v2.2 数据管理模态窗（含质量扫描）
+  // 🆕 v2.2 数据管理模态窗
   let showDataManagementModal = $state(false);
   let dataManagementModalInstance: DataManagementModalObsidian | null = null;
   // 🆕 v2.0 引用式牌组系统模态窗状态
   let showBuildDeckModal = $state(false);
   // 🆕 v2.0 增量阅读牌组模态窗状态
   let showBuildIRDeckModal = $state(false);
+  let showCardToMarkdownModal = $state(false);
+  let cardToMarkdown = $state<Card | null>(null);
+  let isConvertingCardToMarkdown = $state(false);
   let filterManager = $state<FilterManager | null>(null);
   let savedFilters = $state<SavedFilter[]>([]);
 
@@ -627,9 +639,9 @@
         case "tags":
           return (card.tags || []).join(" ").toLowerCase();
         case "obsidian_block_link":
-          return (card.fields?.obsidian_block_link || '').toLowerCase();
+          return ((extractSourceBlock(card) || '')).toLowerCase();
         case "source_document":
-          return (card.fields?.source_document || '').toLowerCase();
+          return (extractSourcePath(card) || '').toLowerCase();
         case "uuid":
           return (card.uuid || '').toLowerCase();
         case "deck":
@@ -1202,8 +1214,8 @@
     if (currentSource === 'incremental-reading') {
       // IR模式：从 ir_deck_ids 或 ir_deck 统计
       statsCards.forEach(card => {
-        const deckIds = (card as any).ir_deck_ids as string[] | undefined;
-        if (deckIds && deckIds.length > 0) {
+        const deckIds = resolveIRDeckIds((card as any).ir_deck_ids || (card as any).metadata?.deckIds || []);
+        if (deckIds.length > 0) {
           deckIds.forEach((did: string) => {
             deckMap.set(did, (deckMap.get(did) || 0) + 1);
           });
@@ -1701,7 +1713,7 @@
           void handleKanbanLayoutModeChange('spacious');
           break;
         case 'open-data-management':
-          openDataManagementModal('data');
+          openDataManagementModal();
           break;
         case 'open-column-manager':
           toggleColumnManager(anchor);
@@ -1716,6 +1728,15 @@
     };
     window.addEventListener('Weave:card-management-toolbar-action', handleCardManagementToolbarAction as EventListener);
 
+    /**
+     * 仅移动端由页面自己接管主菜单请求。
+     *
+     * 原因：
+     * - 移动端的卡片管理头部是页面内自定义头部，菜单状态以页面实时状态为准
+     * - 桌面端则应继续交给 WeaveView/SidebarNavHeader 的桌面菜单逻辑处理
+     * - 如果这里在桌面端也拦截，就会绕开桌面专用的“顶部已承担则菜单去重”规则，
+     *   从而出现内容区重复显示
+     */
     const handleMainInterfaceMenuRequest = (e: Event) => {
       const detail = (e as CustomEvent<{
         page?: string;
@@ -1728,6 +1749,10 @@
       }
 
       if (!(detail.event instanceof MouseEvent)) {
+        return;
+      }
+
+      if (!isMobile) {
         return;
       }
 
@@ -1929,6 +1954,8 @@
   // 🔧 修复：添加onDestroy，确保组件销毁时清理资源
   onDestroy(() => {
     logger.debug('[卡片管理] 🗑️ 组件销毁，清理资源');
+    columnManagerModalInstance?.close();
+    columnManagerModalInstance = null;
     dataManagementModalInstance?.close();
     dataManagementModalInstance = null;
     isViewVisible = false;  // 标记视图不可见
@@ -1996,9 +2023,30 @@
     return deck?.name || deckId;
   }
 
+  function resolveIRDeckId(deckIdentifier?: string | null): string {
+    const normalized = String(deckIdentifier || '').trim();
+    if (!normalized) return '';
+
+    const deck = getDecksForDataSource('incremental-reading').find(
+      (candidate: any) => candidate.id === normalized || String(candidate?.path || '').trim() === normalized
+    ) as any;
+    return deck?.id || normalized;
+  }
+
+  function resolveIRDeckIds(deckIds: Array<string | null | undefined>): string[] {
+    return Array.from(
+      new Set(
+        (Array.isArray(deckIds) ? deckIds : [])
+          .map((deckId) => resolveIRDeckId(deckId))
+          .filter(Boolean)
+      )
+    );
+  }
+
   function getIRDeckName(deckId?: string | null, fallback: string = '未分配'): string {
-    if (!deckId) return fallback;
-    return getDeckName(deckId, getDecksForDataSource('incremental-reading')) || fallback;
+    const resolvedDeckId = resolveIRDeckId(deckId);
+    if (!resolvedDeckId) return fallback;
+    return getDeckName(resolvedDeckId, getDecksForDataSource('incremental-reading')) || fallback;
   }
   
   // 🆕 v2.2: 获取卡片所属的所有牌组名称（Content-Only 架构）
@@ -2007,7 +2055,7 @@
     if (dataSource === 'incremental-reading') {
       const names: string[] = [];
       const seen = new Set<string>();
-      const ids = (card as any).ir_deck_ids || (card as any).metadata?.deckIds || [];
+      const ids = resolveIRDeckIds((card as any).ir_deck_ids || (card as any).metadata?.deckIds || []);
       if (Array.isArray(ids)) {
         for (const id of ids) {
           const name = getIRDeckName(id, String(id));
@@ -2307,8 +2355,8 @@
             }
           } else {
             // 回退到 fields（兼容 Anki 同步格式）
-            front = card.fields?.front || card.fields?.question || '';
-            back = card.fields?.back || card.fields?.answer || '';
+            front = getCardContentBySide(card, 'front', []);
+            back = getCardContentBySide(card, 'back', []);
           }
           
           content = { front, back };
@@ -2339,8 +2387,8 @@
         nextReview: card.fsrs?.due,
         sourceDocumentStatus: getSourceDocumentStatus(card),
         // 🔧 修复：添加块引用字段映射
-        obsidian_block_link: card.sourceBlock || '-',
-        source_document: card.sourceFile || '-',
+        obsidian_block_link: extractSourceBlock(card) || '-',
+        source_document: extractSourcePath(card) || '-',
         // 添加复习历史相关数据（保持字符串类型以兼容Card接口）
         modified: modifiedTime ? modifiedTime.toISOString() : new Date().toISOString(),
         next_review: nextReview,
@@ -2695,8 +2743,7 @@
 
     async function checkCard(card: Card): Promise<'存在' | '缺失' | '无源文档'> {
       try {
-        const fields = (card as any).fields || {};
-        const link: string | undefined = fields.obsidian_block_link;
+        const link = extractSourceBlock(card) || undefined;
         let filePath: string | undefined;
         let blockId: string | undefined;
 
@@ -2710,9 +2757,14 @@
           }
         } else if (typeof link === 'string' && link.startsWith('^')) {
           blockId = link.replace(/^\^/, '');
-          const fileName = typeof fields.source_document === 'string' ? fields.source_document : undefined;
+          const fileName = extractSourcePath(card) || undefined;
           if (fileName) filePath = findFileByName(fileName)?.path;
-          if (!filePath && typeof fields.source_file === 'string') filePath = fields.source_file;
+        } else if (typeof link === 'string') {
+          blockId = link.replace(/^\^/, '');
+        }
+
+        if (!filePath) {
+          filePath = extractSourcePath(card) || undefined;
         }
 
         if (!filePath) return '无源文档';
@@ -3344,8 +3396,8 @@
     const copyText = selectedCardData.map(card => {
       const { primaryDeckId } = getCardDeckIds(card, currentDataSourceDecks);
       const deck = currentDataSourceDecks.find(d => d.id === (primaryDeckId || card.deckId));
-      return `正面: ${card.fields?.front || card.fields?.question || ''}
-背面: ${card.fields?.back || card.fields?.answer || ''}
+      return `正面: ${getCardContentBySide(card, 'front', [])}
+背面: ${getCardContentBySide(card, 'back', [])}
 标签: ${card.tags?.join(', ') || '无'}
 牌组: ${deck?.name || '默认'}
 ---`;
@@ -3606,6 +3658,287 @@
     return candidate;
   }
 
+  type CardToMarkdownMode = 'create' | 'append';
+
+  interface CardToMarkdownOptions {
+    mode: CardToMarkdownMode;
+    folderPath: string;
+    fileName: string;
+    targetFilePath: string;
+    deleteOriginal: boolean;
+  }
+
+  function closeCardToMarkdownModal() {
+    showCardToMarkdownModal = false;
+    cardToMarkdown = null;
+  }
+
+  function openCardToMarkdownModal(card: Card) {
+    cardToMarkdown = card;
+    showCardToMarkdownModal = true;
+  }
+
+  function getCardMarkdownTitle(card: Card): string {
+    const body = extractBodyContent(card.content || '').trim();
+    const frontPart = (body.split(MAIN_SEPARATOR)[0] || body).trim();
+    const lines = frontPart
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    for (const line of lines) {
+      const cleaned = line.replace(/^#{1,6}\s+/, '').replace(/^>\s*/, '').trim();
+      if (!cleaned) continue;
+      if (/^---+$/.test(cleaned)) continue;
+      if (/^[A-Za-z_][\w-]*\s*:\s*/.test(cleaned)) continue;
+      if (/^-\s+/.test(cleaned)) continue;
+      return cleaned;
+    }
+
+    return `Weave Card ${card.uuid.slice(0, 8)}`;
+  }
+
+  function buildCardMarkdownNote(card: Card, mode: CardToMarkdownMode): string {
+    const body = formatCardForExport(card).trim();
+    const rawBody = extractBodyContent(card.content || '')
+      .trim()
+      .replace(/^\s*---div---\s*$/gm, '---');
+    const yaml = parseYAMLFromContent(card.content || '');
+    const hasYaml = Object.keys(yaml).length > 0;
+
+    if (!body) {
+      return hasYaml && mode === 'create'
+        ? `${buildContentWithYAML(yaml, '')}\n`
+        : `${mode === 'append' ? '##' : '#'} ${getCardMarkdownTitle(card)}\n`;
+    }
+
+    if (mode === 'create' && hasYaml) {
+      return `${buildContentWithYAML(yaml, rawBody).trim()}\n`;
+    }
+
+    const hasHeading = /^\s{0,3}#\s+/.test(body);
+    if (mode === 'create') {
+      const headingPrefix = hasHeading ? '' : `# ${getCardMarkdownTitle(card)}\n\n`;
+      return `${headingPrefix}${body}\n`;
+    }
+
+    const headingPrefix = hasHeading ? '' : `## ${getCardMarkdownTitle(card)}\n\n`;
+    return `${headingPrefix}${body}\n`;
+  }
+
+  function appendMarkdownToFile(existingContent: string, nextBlock: string): string {
+    const trimmedExisting = existingContent.trimEnd();
+    const trimmedBlock = nextBlock.trim();
+
+    if (!trimmedExisting) {
+      return `${trimmedBlock}\n`;
+    }
+
+    return `${trimmedExisting}\n\n---\n\n${trimmedBlock}\n`;
+  }
+
+  async function ensureFolderPathExists(folderPath: string): Promise<void> {
+    const normalizedFolderPath = normalizePath(folderPath || '');
+    if (!normalizedFolderPath) return;
+
+    const parts = normalizedFolderPath.split('/').filter(Boolean);
+    let currentPath = '';
+
+    for (const part of parts) {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      if (!plugin.app.vault.getAbstractFileByPath(currentPath)) {
+        await plugin.app.vault.createFolder(currentPath);
+      }
+    }
+  }
+
+  async function handleCardToMarkdownConfirm(options: CardToMarkdownOptions) {
+    if (!cardToMarkdown) {
+      return;
+    }
+
+    const sourceCard = cardToMarkdown;
+    isConvertingCardToMarkdown = true;
+
+    try {
+      const markdownContent = buildCardMarkdownNote(sourceCard, options.mode);
+      let targetPath = '';
+
+      if (options.mode === 'create') {
+        const rawName = options.fileName.trim().replace(/\.md$/i, '');
+        const safeName = sanitizeFileName(rawName).trim();
+        if (!safeName) {
+          throw new Error('请输入有效的文件名');
+        }
+
+        const normalizedFileName = `${safeName}.md`;
+        const normalizedPath = normalizePath(
+          options.folderPath ? `${options.folderPath}/${normalizedFileName}` : normalizedFileName
+        );
+        const lastSlashIndex = normalizedPath.lastIndexOf('/');
+        const folder = lastSlashIndex >= 0 ? normalizedPath.slice(0, lastSlashIndex) : '';
+        await ensureFolderPathExists(folder);
+
+        targetPath = await getUniqueFilePath(normalizedPath);
+        await plugin.app.vault.create(targetPath, markdownContent);
+      } else {
+        const normalizedTargetFilePath = normalizePath(options.targetFilePath || '');
+        const targetFile = plugin.app.vault.getAbstractFileByPath(normalizedTargetFilePath);
+
+        if (!(targetFile instanceof TFile) || targetFile.extension !== 'md') {
+          throw new Error('请选择一个已存在的 Markdown 文件');
+        }
+
+        const currentContent = await plugin.app.vault.read(targetFile);
+        await plugin.app.vault.modify(targetFile, appendMarkdownToFile(currentContent, markdownContent));
+        targetPath = targetFile.path;
+      }
+
+      let deleteFailed = false;
+      if (options.deleteOriginal) {
+        try {
+          await deleteCardCore(sourceCard.uuid);
+        } catch (error) {
+          deleteFailed = true;
+          logger.error('[WeaveCardManagement] 转换为 Markdown 后删除卡片失败:', error);
+        }
+      }
+
+      closeCardToMarkdownModal();
+
+      const saveMessage = options.mode === 'append'
+        ? `已追加到 ${targetPath}`
+        : `已保存到 ${targetPath}`;
+
+      if (deleteFailed) {
+        showNotification(`${saveMessage}，但删除原卡片失败`, 'warning');
+      } else if (options.deleteOriginal) {
+        showNotification(`${saveMessage}，并已删除原卡片`, 'success');
+      } else {
+        showNotification(saveMessage, 'success');
+      }
+    } catch (error: any) {
+      logger.error('[WeaveCardManagement] 转换卡片为 Markdown 失败:', error);
+      showNotification(error?.message || '转换失败', 'error');
+    } finally {
+      isConvertingCardToMarkdown = false;
+    }
+  }
+
+  function getEventAnchorRect(event?: MouseEvent) {
+    const anchorEl =
+      event?.currentTarget instanceof HTMLElement
+        ? event.currentTarget
+        : event?.target instanceof HTMLElement
+          ? event.target
+          : null;
+
+    if (!anchorEl) {
+      return undefined;
+    }
+
+    const rect = anchorEl.getBoundingClientRect();
+    return {
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    };
+  }
+
+  function openBatchAddTagSuggestModal(selectedCardIds: string[], anchorRect?: ReturnType<typeof getEventAnchorRect>) {
+    const selectedIdSet = new Set(selectedCardIds);
+    const selectedCardData = currentSourceCards.filter((card) => selectedIdSet.has(card.uuid));
+    const existingTagsInSelection = new Set<string>();
+
+    selectedCardData.forEach((card) => {
+      card.tags?.forEach((tag) => existingTagsInSelection.add(tag));
+    });
+
+    const items: BatchTagSuggestItem[] = availableTags
+      .filter((tag) => !existingTagsInSelection.has(tag.name))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "zh-CN"))
+      .map((tag) => ({
+        tag: tag.name,
+        label: tag.name,
+        icon: "tag",
+        keywords: [String(tag.count)],
+      }));
+
+    if (items.length === 0) {
+      new Notice("没有可添加的标签");
+      return;
+    }
+
+    new BatchTagSuggestModal(
+      plugin.app,
+      items,
+      (item) => {
+        void handleBatchAddTags([item.tag]);
+      },
+      {
+        placeholder: "搜索要添加的标签...",
+        anchorRect,
+      }
+    ).open();
+  }
+
+  function openBatchRemoveTagSuggestModal(selectedCardIds: string[], anchorRect?: ReturnType<typeof getEventAnchorRect>) {
+    const selectedIdSet = new Set(selectedCardIds);
+    const selectedCardData = currentSourceCards.filter((card) => selectedIdSet.has(card.uuid));
+    const tagCounts = new Map<string, number>();
+
+    selectedCardData.forEach((card) => {
+      card.tags?.forEach((tag) => {
+        tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+      });
+    });
+
+    const sortedTags = Array.from(tagCounts.entries()).sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN")
+    );
+
+    if (sortedTags.length === 0) {
+      new Notice("选中卡片没有标签");
+      return;
+    }
+
+    const allTags = sortedTags.map(([tag]) => tag);
+    const items: BatchTagSuggestItem[] = sortedTags.map(([tag, count]) => ({
+      tag,
+      label: tag,
+      icon: "tag",
+      keywords: [String(count)],
+    }));
+
+    if (sortedTags.length > 1) {
+      items.unshift({
+        tag: "__remove_all__",
+        label: `删除全部 ${sortedTags.length} 个标签`,
+        icon: "trash-2",
+        keywords: ["全部", "all"],
+      });
+    }
+
+    new BatchTagSuggestModal(
+      plugin.app,
+      items,
+      (item) => {
+        if (item.tag === "__remove_all__") {
+          void handleBatchRemoveTagsConfirm(allTags);
+          return;
+        }
+        void handleBatchRemoveTagsConfirm([item.tag]);
+      },
+      {
+        placeholder: "搜索要移除的标签...",
+        anchorRect,
+      }
+    ).open();
+  }
+
   // 🆕 标签操作菜单（合并增加标签和移除标签）
   function handleBatchTagsMenu(event?: MouseEvent) {
     const selectedCardIds = Array.from(selectedCards);
@@ -3613,79 +3946,31 @@
       new Notice("请先选择卡片");
       return;
     }
+    const anchorRect = getEventAnchorRect(event);
 
     const menu = new Menu();
     (menu as any).app = plugin.app;
 
-    // 增加标签子菜单
     menu.addItem((item) => {
-      item.setTitle('增加标签').setIcon('plus');
-      const submenu = (item as any).setSubmenu();
-
-      const sourceCards = currentSourceCards;
-      const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
-      const existingTagsInSelection = new Set<string>();
-      selectedCardData.forEach(card => {
-        card.tags?.forEach(tag => existingTagsInSelection.add(tag));
-      });
-
-      const tagsToShow = availableTags
-        .filter(t => !existingTagsInSelection.has(t.name))
-        .slice(0, 20);
-
-      if (tagsToShow.length > 0) {
-        tagsToShow.forEach((tag) => {
-          submenu.addItem((subItem: any) => {
-            subItem.setTitle(tag.name).setIcon('tag');
-            subItem.onClick(() => { handleBatchAddTags([tag.name]); });
-          });
+      item
+        .setTitle("增加标签")
+        .setIcon("plus")
+        .onClick(() => {
+          openBatchAddTagSuggestModal(selectedCardIds, anchorRect);
         });
-      } else {
-        submenu.addItem((subItem: any) => {
-          subItem.setTitle('没有可添加的标签').setDisabled(true);
-        });
-      }
     });
 
-    // 移除标签子菜单
     menu.addItem((item) => {
-      item.setTitle('移除标签').setIcon('minus');
-      const submenu = (item as any).setSubmenu();
-
-      const sourceCards = currentSourceCards;
-      const selectedCardData = sourceCards.filter(c => selectedCardIds.includes(c.uuid));
-      const tagCounts = new Map<string, number>();
-      selectedCardData.forEach(card => {
-        card.tags?.forEach(tag => {
-          tagCounts.set(tag, (tagCounts.get(tag) || 0) + 1);
+      item
+        .setTitle("移除标签")
+        .setIcon("minus")
+        .onClick(() => {
+          openBatchRemoveTagSuggestModal(selectedCardIds, anchorRect);
         });
-      });
-
-      if (tagCounts.size > 0) {
-        const sortedTags = Array.from(tagCounts.entries()).sort((a, b) => b[1] - a[1]);
-        sortedTags.forEach(([tag, count]) => {
-          submenu.addItem((subItem: any) => {
-            subItem.setTitle(`${tag} (${count})`).setIcon('tag');
-            subItem.onClick(() => { handleBatchRemoveTagsConfirm([tag]); });
-          });
-        });
-        if (sortedTags.length > 1) {
-          submenu.addSeparator();
-          submenu.addItem((subItem: any) => {
-            subItem.setTitle(`删除全部 ${sortedTags.length} 个标签`).setIcon('trash-2');
-            subItem.onClick(() => { handleBatchRemoveTagsConfirm(sortedTags.map(([tag]) => tag)); });
-          });
-        }
-      } else {
-        submenu.addItem((subItem: any) => {
-          subItem.setTitle('选中卡片没有标签').setDisabled(true);
-        });
-      }
     });
 
     if (event) {
-      const rect = (event.target as HTMLElement).getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.top - 8 });
+      menu.showAtMouseEvent(event);
     } else {
       menu.showAtPosition({ x: window.innerWidth / 2, y: window.innerHeight - 100 });
     }
@@ -4266,10 +4551,12 @@
         
         const readingSeconds = getIRReadingSeconds(chunk.chunkId, readingSecondsById, chunk.stats?.totalReadingTimeSec);
 
+        const chunkDeckIds = resolveIRDeckIds(getChunkTopicIds(chunk));
+
         const card: Card & Record<string, any> = {
           ...buildIRCardBase({
             id: chunk.chunkId,
-            deckId: '',
+            deckId: chunkDeckIds[0] || '',
             templateId: CardType.IRChunk,
             type: CardType.IRChunk,
             content: displayContent,
@@ -4300,14 +4587,14 @@
               sourceId: chunk.sourceId,
               sourceTitle: sourceTitle,
               deckTag: chunk.deckTag,
-              deckIds: chunk.deckIds || []
+              deckIds: chunkDeckIds
             }
           }),
           ...buildIRTableFields({
             title,
             sourceFile: chunk.filePath,
-            deckName: chunk.deckIds?.length ? getIRDeckName(chunk.deckIds[0]) : (chunk.deckTag ? chunk.deckTag.replace('#IR_deck_', '') : '未分配'),
-            deckIds: chunk.deckIds || [],
+            deckName: chunkDeckIds.length > 0 ? getIRDeckName(chunkDeckIds[0]) : (chunk.deckTag ? chunk.deckTag.replace('#IR_deck_', '') : '未分配'),
+            deckIds: chunkDeckIds,
             state: chunk.scheduleStatus,
             priority: chunk.priorityEff <= 3 ? 1 : chunk.priorityEff <= 7 ? 2 : 3,
             tags,
@@ -4334,8 +4621,9 @@
           // 跳过已完成/已移除的任务
           if (task.status === 'done' || task.status === 'removed') continue;
           
-          // 查找所属牌组名称
-          const deckName = getIRDeckName(task.deckId);
+          const canonicalDeckId = resolveIRDeckId(getTaskTopicId(task));
+          const canonicalDeckIds = canonicalDeckId ? [canonicalDeckId] : [];
+          const deckName = getIRDeckName(canonicalDeckId || getTaskTopicId(task));
           
           const displayContent = `# ${task.title}\n\nPDF: ${task.pdfPath}\n链接: ${task.link}`;
           
@@ -4347,7 +4635,7 @@
           const card: Card & Record<string, any> = {
             ...buildIRCardBase({
               id: task.id,
-              deckId: task.deckId || '',
+              deckId: canonicalDeckId,
               templateId: CardType.IRChunk,
               type: CardType.IRChunk,
               content: displayContent,
@@ -4374,14 +4662,14 @@
                 pdfPath: task.pdfPath,
                 link: task.link,
                 annotationId: task.annotationId,
-                deckIds: [task.deckId]
+                deckIds: canonicalDeckIds
               }
             }),
             ...buildIRTableFields({
               title: task.title,
               sourceFile: task.pdfPath,
               deckName,
-              deckIds: task.deckId ? [task.deckId] : [],
+              deckIds: canonicalDeckIds,
               state: task.status,
               priority: displayPriority,
               tags: task.tags || [],
@@ -4668,10 +4956,64 @@
   }
 
   // 删除卡片（并清理源文档中的 Weave 元数据与块锚点）
-  async function handleDeleteCard(cardUuid: string) {
+  async function deleteCardCore(cardUuid: string) {
     logger.debug('[WeaveCardManagement] 删除单个卡片:', cardUuid, '数据源:', dataSource);
-    
-    // 🎯 根据数据源选择正确的卡片数据
+
+    const sourceCards = currentSourceCards;
+    const cardToDelete = sourceCards.find(c => c.uuid === cardUuid);
+    if (!cardToDelete) {
+      throw new Error('未找到要删除的卡片');
+    }
+
+    if (dataSource === 'questionBank') {
+      if (!questionBankStorage) {
+        throw new Error('题库存储服务未初始化');
+      }
+
+      const bankId = cardToDelete.deckId || '';
+      if (!plugin.questionBankService) {
+        throw new Error('题库服务未初始化');
+      }
+
+      await plugin.questionBankService.deleteQuestion(bankId, cardUuid);
+      await loadQuestionBankCards();
+      logger.debug(`成功从题库 ${bankId} 删除卡片 ${cardUuid}`);
+    } else if (dataSource === 'incremental-reading') {
+      irContentCards = irContentCards.filter(c => c.uuid !== cardUuid);
+
+      if (!irStorageService) {
+        irStorageService = new IRStorageService(plugin.app);
+        await irStorageService.initialize();
+      }
+
+      if (isPdfBookmarkTaskId(cardUuid)) {
+        const pdfService = new IRPdfBookmarkTaskService(plugin.app);
+        await pdfService.initialize();
+        await pdfService.deleteTask(cardUuid);
+        logger.debug(`[IR] 已删除PDF书签任务: ${cardUuid}`);
+      } else if (cardToDelete.metadata?.irChunk) {
+        await irStorageService.deleteChunkData(cardUuid);
+        logger.debug(`[IR] 已删除chunk: ${cardUuid}`);
+      } else if (cardToDelete.metadata?.irBlock) {
+        await irStorageService.deleteBlock(cardUuid);
+        logger.debug(`[IR] 已删除旧版block: ${cardUuid}`);
+      }
+
+      loadIRContentCards().catch(err => {
+        logger.error('[IR] 重新加载失败:', err);
+      });
+    } else {
+      cards = cards.filter(c => c.uuid !== cardUuid);
+      await dataStorage.deleteCard(cardUuid);
+      loadCards().catch(err => {
+        logger.error('重新加载卡片失败:', err);
+      });
+    }
+
+    plugin.app.workspace.trigger('Weave:data-changed');
+  }
+
+  async function handleDeleteCard(cardUuid: string) {
     const sourceCards = currentSourceCards;
     const cardToDelete = sourceCards.find(c => c.uuid === cardUuid);
     if (!cardToDelete) {
@@ -4680,7 +5022,6 @@
     }
 
     const frontContent = getCardContentBySide(cardToDelete, 'front', [], " / ");
-    // ✅ 使用 Obsidian Modal 代替 confirm()，避免焦点劫持问题
     const confirmed = await showObsidianConfirm(
       plugin.app,
       `确定要删除卡片 "${frontContent}" 吗？`,
@@ -4689,81 +5030,14 @@
     if (!confirmed) return;
 
     try {
-      if (dataSource === 'questionBank') {
-        // 🎯 考试牌组模式：从题库中删除单个题目
-        if (!questionBankStorage) {
-          showNotification("题库存储服务未初始化", "error");
-          return;
-        }
-
-        const bankId = cardToDelete.deckId || '';
-        if (!plugin.questionBankService) {
-          showNotification("题库服务未初始化", "error");
-          return;
-        }
-
-        await plugin.questionBankService.deleteQuestion(bankId, cardUuid);
-        
-        // 4. 重新加载题库数据
-        await loadQuestionBankCards();
-        
-        logger.debug(`成功从题库 ${bankId} 删除卡片 ${cardUuid}`);
-      } else if (dataSource === 'incremental-reading') {
-        // 🎯 增量阅读模式：从IR存储中删除
-        irContentCards = irContentCards.filter(c => c.uuid !== cardUuid);
-        
-        if (!irStorageService) {
-          irStorageService = new IRStorageService(plugin.app);
-          await irStorageService.initialize();
-        }
-        
-        if (isPdfBookmarkTaskId(cardUuid)) {
-          // PDF书签任务：从 pdf-bookmark-tasks.json 删除
-          const pdfService = new IRPdfBookmarkTaskService(plugin.app);
-          await pdfService.initialize();
-          await pdfService.deleteTask(cardUuid);
-          logger.debug(`[IR] 已删除PDF书签任务: ${cardUuid}`);
-        } else if (cardToDelete.metadata?.irChunk) {
-          // 新版 chunk：从 chunks.json 删除
-          await irStorageService.deleteChunkData(cardUuid);
-          logger.debug(`[IR] 已删除chunk: ${cardUuid}`);
-        } else if (cardToDelete.metadata?.irBlock) {
-          // 旧版 block：从 blocks.json 删除
-          await irStorageService.deleteBlock(cardUuid);
-          logger.debug(`[IR] 已删除旧版block: ${cardUuid}`);
-        }
-        
-        // 后台重新加载确保一致性
-        loadIRContentCards().catch(err => {
-          logger.error('[IR] 重新加载失败:', err);
-        });
-      } else {
-        // 记忆牌组模式：使用记忆存储删除
-        // 1️⃣ 立即从UI中移除（乐观更新）
-        cards = cards.filter(c => c.uuid !== cardUuid);
-        
-        // 修复：移除 tick()，避免强制同步刷新导致 reconciliation 错误
-        // 乐观更新后让 Svelte 自然处理 DOM 更新即可
-        
-        // 2️⃣ 删除卡片数据
-        await dataStorage.deleteCard(cardUuid);
-        
-        // 4️⃣ 后台重新加载（确保数据一致性）
-        loadCards().catch(err => {
-          logger.error('重新加载卡片失败:', err);
-        });
-      }
-      
-      // 通知全局侧边栏刷新
-      plugin.app.workspace.trigger('Weave:data-changed');
-      
+      await deleteCardCore(cardUuid);
       showNotification('卡片已删除', 'success');
-      
     } catch (error) {
-      // 删除失败，重新加载数据恢复状态
       logger.error('删除卡片失败:', error);
       if (dataSource === 'questionBank') {
         await loadQuestionBankCards();
+      } else if (dataSource === 'incremental-reading') {
+        await loadIRContentCards();
       } else {
         await loadCards();
       }
@@ -5453,7 +5727,7 @@
 
   // handleBatchRemoveTagsCancel 已移除（改用 Obsidian Menu API）
 
-  function openDataManagementModal(tab: 'data' | 'quality' = 'data') {
+  function openDataManagementModal() {
     dataManagementModalInstance?.close();
 
     showDataManagementModal = true;
@@ -5461,7 +5735,6 @@
       plugin,
       cards: filteredCards,
       allCards: cards,
-      initialTab: tab,
       onClose: () => {
         showDataManagementModal = false;
         dataManagementModalInstance = null;
@@ -5471,45 +5744,53 @@
   }
 
   function closeColumnManager() {
+    columnManagerModalInstance?.close();
+    columnManagerModalInstance = null;
     showColumnManager = false;
   }
 
-  async function positionColumnManagerPopover() {
-    if (!showColumnManager || isMobile) return;
-
-    await tick();
-
-    if (!columnManagerPanelEl) return;
-
-    const panelWidth = Math.min(columnManagerPanelEl.offsetWidth || 560, window.innerWidth - 24);
-    const panelHeight = Math.min(columnManagerPanelEl.offsetHeight || 520, window.innerHeight - 24);
-    const margin = 12;
-    const gap = 10;
-
-    if (!columnManagerAnchorEl) {
-      columnManagerPopoverLeft = Math.max(margin, Math.round((window.innerWidth - panelWidth) / 2));
-      columnManagerPopoverTop = Math.max(72, Math.round((window.innerHeight - panelHeight) / 2));
-      columnManagerPopoverPlacement = 'bottom';
-      return;
+  function createColumnManagerModal() {
+    const previousModal = columnManagerModalInstance;
+    if (previousModal) {
+      isRefreshingColumnManagerModal = true;
+      previousModal.close();
+      isRefreshingColumnManagerModal = false;
     }
 
-    const rect = columnManagerAnchorEl.getBoundingClientRect();
-    const fitsBelow = rect.bottom + gap + panelHeight <= window.innerHeight - margin;
+    const modal = new ColumnManagerModalObsidian(plugin.app, {
+      visibility: columnVisibility,
+      columnOrder,
+      quickPresets: getColumnManagerPresets(),
+      activePresetId: resolveCurrentColumnManagerPreset(),
+      onVisibilityChange: handleVisibilityChange,
+      onOrderChange: (newOrder) => {
+        handleOrderChange(newOrder);
+        refreshColumnManagerModal();
+      },
+      onApplyPreset: (presetId) => {
+        applyColumnManagerPreset(presetId as ColumnManagerPresetId);
+        refreshColumnManagerModal();
+      },
+      onResetToDefaults: () => {
+        resetColumnManagerConfig();
+        refreshColumnManagerModal();
+      },
+      onClose: () => {
+        if (columnManagerModalInstance === modal) {
+          columnManagerModalInstance = null;
+        }
+        if (!isRefreshingColumnManagerModal) {
+          showColumnManager = false;
+        }
+      }
+    });
+    columnManagerModalInstance = modal;
+    return modal;
+  }
 
-    columnManagerPopoverPlacement = fitsBelow ? 'bottom' : 'top';
-    columnManagerPopoverTop = Math.round(
-      fitsBelow
-        ? rect.bottom + gap
-        : Math.max(margin, rect.top - panelHeight - gap)
-    );
-
-    const preferredLeft = rect.right - panelWidth;
-    columnManagerPopoverLeft = Math.round(
-      Math.min(
-        Math.max(margin, preferredLeft),
-        window.innerWidth - panelWidth - margin
-      )
-    );
+  function refreshColumnManagerModal() {
+    if (!showColumnManager || !columnManagerModalInstance) return;
+    createColumnManagerModal().open();
   }
 
   function toggleColumnManager(anchor?: HTMLElement | null) {
@@ -5521,11 +5802,11 @@
     void openColumnManager(anchor);
   }
 
-  async function openColumnManager(anchor?: HTMLElement | null) {
-    columnManagerAnchorEl = anchor ?? null;
+  function openColumnManager(anchor?: HTMLElement | null) {
+    void anchor;
+    if (currentView !== 'table') return;
     showColumnManager = true;
-    await positionColumnManagerPopover();
-    columnManagerPanelEl?.focus();
+    createColumnManagerModal().open();
   }
 
   // 视图切换
@@ -5581,48 +5862,14 @@
 
   const modalActive = $derived(
     showBuildDeckModal ||
-        showBuildIRDeckModal ||
+      showBuildIRDeckModal ||
+      showCardToMarkdownModal ||
+      showColumnManager ||
       showDataManagementModal ||
       showActivationPrompt
   );
 
   const showBatchToolbar = $derived(selectedCards.size > 0 && !modalActive);
-
-  $effect(() => {
-    if (!showColumnManager) return;
-
-    void positionColumnManagerPopover();
-
-    const handleViewportChange = () => {
-      void positionColumnManagerPopover();
-    };
-
-    const handleOutsidePointerDown = (event: PointerEvent) => {
-      const target = event.target as Node | null;
-      if (!target) return;
-      if (columnManagerPanelEl?.contains(target)) return;
-      if (columnManagerAnchorEl?.contains(target)) return;
-      closeColumnManager();
-    };
-
-    const handleEscapeKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        closeColumnManager();
-      }
-    };
-
-    window.addEventListener('resize', handleViewportChange);
-    window.addEventListener('scroll', handleViewportChange, true);
-    window.addEventListener('pointerdown', handleOutsidePointerDown, true);
-    window.addEventListener('keydown', handleEscapeKey);
-
-    return () => {
-      window.removeEventListener('resize', handleViewportChange);
-      window.removeEventListener('scroll', handleViewportChange, true);
-      window.removeEventListener('pointerdown', handleOutsidePointerDown, true);
-      window.removeEventListener('keydown', handleEscapeKey);
-    };
-  });
 
   $effect(() => {
     if (showColumnManager && currentView !== 'table') {
@@ -5654,402 +5901,29 @@
 
   // 🆕 移动端菜单项点击处理 - 使用 Obsidian Menu API
   function showMobileCardManagementMenu(evt: MouseEvent) {
-    const menu = new Menu();
-    
-    // 功能切换分组
-    menu.addItem((item) => {
-      item
-        .setTitle('牌组学习')
-        .setIcon('graduation-cap')
-        .onClick(() => {
-          // 🔧 修复：使用 window.dispatchEvent 与 WeaveApp.svelte 的监听器匹配
-          window.dispatchEvent(new CustomEvent('Weave:navigate', { 
-            detail: 'deck-study' 
-          }));
-        });
-    });
-    
-    menu.addItem((item) => {
-      item
-        .setTitle('卡片管理')
-        .setIcon('list')
-        .setChecked(true)
-        .onClick(() => {
-          // 当前页面，无需操作
-        });
-    });
-    
-    menu.addItem((item) => {
-      item
-        .setTitle('AI助手')
-        .setIcon('bot')
-        .onClick(() => {
-          // 🔧 修复：使用 window.dispatchEvent 与 WeaveApp.svelte 的监听器匹配
-          window.dispatchEvent(new CustomEvent('Weave:navigate', { 
-            detail: 'ai-assistant' 
-          }));
-        });
-    });
-    
-    menu.addSeparator();
-    
-    // 🆕 数据源切换子菜单（移动端）
-    menu.addItem((item) => {
-      item
-        .setTitle('数据源切换')
-        .setIcon('database');
-      const submenu = (item as any).setSubmenu();
-      
-      submenu.addItem((subItem: any) => {
-        subItem
-          .setTitle('记忆牌组')
-          .setIcon('brain')
-          .setChecked(dataSource === 'memory')
-          .onClick(async () => {
-            await switchDataSource('memory');
-          });
-      });
-      
-      if (premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.INCREMENTAL_READING)) {
-        submenu.addItem((subItem: any) => {
-          const irLocked = premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.INCREMENTAL_READING);
-          subItem
-            .setTitle(irLocked ? '增量阅读 (高级)' : '增量阅读')
-            .setIcon('book-open')
-            .setChecked(dataSource === 'incremental-reading')
-            .onClick(async () => {
-              await switchDataSource('incremental-reading');
-            });
-        });
-      }
-      
-      if (premiumGuard.shouldShowFeatureEntry(PREMIUM_FEATURES.QUESTION_BANK)) {
-        submenu.addItem((subItem: any) => {
-          const questionBankLocked = premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.QUESTION_BANK);
-          subItem
-            .setTitle(questionBankLocked ? '考试牌组 (高级)' : '考试牌组')
-            .setIcon('edit-3')
-            .setChecked(dataSource === 'questionBank')
-            .onClick(async () => {
-              await switchDataSource('questionBank');
-            });
-        });
+    openWeaveMainMenu({
+      currentPage: 'weave-card-management',
+      leaf: currentLeaf,
+      isMobile,
+      isInSidebarMode: isInSidebar,
+      currentView,
+      cardDataSource: dataSource,
+      tableViewMode,
+      gridLayoutMode: gridLayout,
+      kanbanLayoutMode,
+      irTypeFilter,
+      documentFilterMode,
+      currentActiveDocument,
+      enableCardLocationJump,
+      event: evt,
+      onNavigate: (pageId) => handleNavigate(pageId),
+      onCardDataSourceChange: (source) => {
+        void switchDataSource(source);
+      },
+      onViewChange: (view) => {
+        void switchView(view);
       }
     });
-    
-    // 🆕 IR类型筛选子菜单（仅增量阅读数据源时显示）
-    if (dataSource === 'incremental-reading') {
-      menu.addItem((item) => {
-        item
-          .setTitle('内容类型')
-          .setIcon('filter');
-        const submenu = (item as any).setSubmenu();
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('MD文件')
-            .setIcon('file-text')
-            .setChecked(irTypeFilter === 'md')
-            .onClick(() => { irTypeFilter = irTypeFilter === 'md' ? 'all' : 'md'; });
-        });
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('PDF书签')
-            .setIcon('file')
-            .setChecked(irTypeFilter === 'pdf')
-            .onClick(() => { irTypeFilter = irTypeFilter === 'pdf' ? 'all' : 'pdf'; });
-        });
-      });
-    }
-    
-    menu.addSeparator();
-    
-    // 📱 表格视图专用功能（仅在表格视图下显示）
-    if (currentView === 'table') {
-      // 表格视图模式切换子菜单
-      menu.addItem((item) => {
-        item
-          .setTitle('基础信息模式')
-          .setIcon('table')
-          .setChecked(tableViewMode === 'basic')
-          .onClick(async () => {
-            tableViewMode = 'basic';
-            await saveViewPreferences();
-          });
-      });
-      
-      menu.addItem((item) => {
-        item
-          .setTitle('复习历史模式')
-          .setIcon('history')
-          .setChecked(tableViewMode === 'review')
-          .onClick(async () => {
-            tableViewMode = 'review';
-            await saveViewPreferences();
-          });
-      });
-      
-      menu.addItem((item) => {
-        item
-          .setTitle('考试牌组模式')
-          .setIcon('edit-3')
-          .setChecked(tableViewMode === 'questionBank')
-          .onClick(async () => {
-            tableViewMode = 'questionBank';
-            await saveViewPreferences();
-          });
-      });
-      
-      menu.addSeparator();
-      
-      menu.addItem((item) => {
-        item
-          .setTitle('字段管理')
-          .setIcon('columns')
-          .onClick(() => {
-            openColumnManager();
-          });
-      });
-    }
-    
-    // 📱 网格视图专用功能（仅在网格视图下显示）
-    if (currentView === 'grid') {
-      menu.addItem((item) => {
-        item
-          .setTitle('固定布局')
-          .setIcon('grid')
-          .setChecked(gridLayout === 'fixed')
-          .onClick(async () => {
-            gridLayout = 'fixed';
-            await saveViewPreferences();
-          });
-      });
-      
-      menu.addItem((item) => {
-        item
-          .setTitle('瀑布流布局')
-          .setIcon('layout-grid')
-          .setChecked(gridLayout === 'masonry')
-          .onClick(async () => {
-            await handleLayoutModeChange('masonry');
-          });
-      });
-
-      const timelineLayoutLocked = premiumGuard.isFeatureRestricted(PREMIUM_FEATURES.TIMELINE_VIEW);
-      menu.addItem((item) => {
-        item
-          .setTitle(timelineLayoutLocked ? '时间线布局 (高级)' : '时间线布局')
-          .setIcon('history')
-          .setChecked(gridLayout === 'timeline')
-          .onClick(async () => {
-            await handleLayoutModeChange('timeline');
-          });
-      });
-      
-      menu.addSeparator();
-      
-      // 🆕 卡片属性显示选项 - 使用子菜单
-      menu.addItem((item) => {
-        const currentAttrLabel = gridCardAttribute === 'none' ? '不显示' :
-          gridCardAttribute === 'uuid' ? 'UUID' :
-          gridCardAttribute === 'source' ? '来源' :
-          gridCardAttribute === 'priority' ? '优先级' :
-          gridCardAttribute === 'retention' ? '记忆率' :
-          gridCardAttribute === 'modified' ? '修改时间' : '未知';
-        
-        item
-          .setTitle(`卡片属性：${currentAttrLabel}`)
-          .setIcon('tag');
-        
-        const submenu = (item as any).setSubmenu();
-        
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('不显示')
-            .setIcon('eye-off')
-            .setChecked(gridCardAttribute === 'none')
-            .onClick(async () => {
-              setGridCardAttribute('none');
-            });
-        });
-        
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('UUID')
-            .setIcon('hash')
-            .setChecked(gridCardAttribute === 'uuid')
-            .onClick(async () => {
-              setGridCardAttribute('uuid');
-            });
-        });
-        
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('来源')
-            .setIcon('file-text')
-            .setChecked(gridCardAttribute === 'source')
-            .onClick(async () => {
-              setGridCardAttribute('source');
-            });
-        });
-        
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('优先级')
-            .setIcon('flag')
-            .setChecked(gridCardAttribute === 'priority')
-            .onClick(async () => {
-              setGridCardAttribute('priority');
-            });
-        });
-        
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('记忆率')
-            .setIcon('activity')
-            .setChecked(gridCardAttribute === 'retention')
-            .onClick(async () => {
-              setGridCardAttribute('retention');
-            });
-        });
-        
-        submenu.addItem((subItem: any) => {
-          subItem
-            .setTitle('修改时间')
-            .setIcon('clock')
-            .setChecked(gridCardAttribute === 'modified')
-            .onClick(async () => {
-              setGridCardAttribute('modified');
-            });
-        });
-      });
-      
-      // 📱 侧边栏专用功能：关联当前活动文档、定位跳转模式
-      if (isInSidebar) {
-        menu.addSeparator();
-        
-        menu.addItem((item) => {
-          item
-            .setTitle('关联当前活动文档')
-            .setIcon(documentFilterMode === 'current' ? 'file-text' : 'file')
-            .setChecked(documentFilterMode === 'current')
-            .setDisabled(!currentActiveDocument)
-            .onClick(() => {
-              toggleDocumentFilter();
-            });
-        });
-        
-        menu.addItem((item) => {
-          item
-            .setTitle('定位跳转模式')
-            .setIcon('bullseye')
-            .setChecked(enableCardLocationJump)
-            .onClick(async () => {
-              await toggleCardLocationJump();
-            });
-        });
-      }
-    }
-    
-    // 📱 看板视图专用功能（仅在看板视图下显示）
-    if (currentView === 'kanban') {
-      menu.addItem((item) => {
-        item
-          .setTitle('紧凑模式')
-          .setIcon('minimize-2')
-          .setChecked(kanbanLayoutMode === 'compact')
-          .onClick(async () => {
-            await handleKanbanLayoutModeChange('compact');
-          });
-      });
-      
-      menu.addItem((item) => {
-        item
-          .setTitle('舒适模式')
-          .setIcon('maximize-2')
-          .setChecked(kanbanLayoutMode === 'comfortable')
-          .onClick(async () => {
-            await handleKanbanLayoutModeChange('comfortable');
-          });
-      });
-      
-      menu.addItem((item) => {
-        item
-          .setTitle('宽松模式')
-          .setIcon('expand')
-          .setChecked(kanbanLayoutMode === 'spacious')
-          .onClick(async () => {
-            await handleKanbanLayoutModeChange('spacious');
-          });
-      });
-      
-      menu.addSeparator();
-      
-      // 🆕 列属性设置入口（所有位置都显示）
-      menu.addItem((item) => {
-        item
-          .setTitle('列属性设置')
-          .setIcon('sliders')
-          .onClick(() => {
-            // 触发看板视图的列设置
-            const kanbanView = document.querySelector('.weave-kanban-view');
-            if (kanbanView) {
-              const columnButton = kanbanView.querySelector('[title="列设置"]') as HTMLButtonElement;
-              if (columnButton) {
-                columnButton.click();
-              }
-            }
-          });
-      });
-      
-      // 📱 侧边栏专用功能：关联当前活动文档、定位跳转模式
-      if (isInSidebar) {
-        menu.addSeparator();
-        
-        menu.addItem((item) => {
-          item
-            .setTitle('关联当前活动文档')
-            .setIcon(documentFilterMode === 'current' ? 'file-text' : 'file')
-            .setChecked(documentFilterMode === 'current')
-            .setDisabled(!currentActiveDocument)
-            .onClick(() => {
-              toggleDocumentFilter();
-            });
-        });
-        
-        menu.addItem((item) => {
-          item
-            .setTitle('定位跳转模式')
-            .setIcon('bullseye')
-            .setChecked(enableCardLocationJump)
-            .onClick(async () => {
-              await toggleCardLocationJump();
-            });
-        });
-      }
-    }
-    
-    menu.addSeparator();
-    
-    // 工具分组
-    menu.addItem((item) => {
-      item
-        .setTitle('数据管理')
-        .setIcon('database')
-        .onClick(() => {
-          openDataManagementModal('data');
-        });
-    });
-    
-    menu.addItem((item) => {
-      item
-        .setTitle('质量扫描')
-        .setIcon('search')
-        .onClick(() => {
-          openDataManagementModal('quality');
-        });
-    });
-    
-    menu.showAtMouseEvent(evt);
   }
 
   // 🆕 移动端搜索按钮点击处理
@@ -6201,6 +6075,10 @@
   // 网格视图卡片查看处理
   function handleGridCardView(card: Card) {
     handleViewCard(card.uuid);
+  }
+
+  function handleGridCardConvertToMarkdown(card: Card) {
+    openCardToMarkdownModal(card);
   }
 
   // 看板视图处理函数
@@ -6534,12 +6412,13 @@
             attributeType={gridCardAttribute}
             {isMobile}
             onCardClick={handleGridCardClick}
-            onCardEdit={handleGridCardEdit}
-            onCardDelete={handleGridCardDelete}
-            onCardView={handleGridCardView}
-            onSourceJump={jumpToSourceDocument}
-            onCardLongPress={handleGridCardLongPress}
-            loading={isLoading}
+             onCardEdit={handleGridCardEdit}
+             onCardDelete={handleGridCardDelete}
+             onCardView={handleGridCardView}
+             onCardConvertToMarkdown={handleGridCardConvertToMarkdown}
+             onSourceJump={jumpToSourceDocument}
+             onCardLongPress={handleGridCardLongPress}
+             loading={isLoading}
           />
         {:else if gridLayout === "timeline"}
           <GridTimelineView
@@ -6551,12 +6430,13 @@
             documentFilterMode={documentFilterMode}
             activeDocumentName={currentActiveDocument ? getFileName(currentActiveDocument) : null}
             onCardClick={handleGridCardClick}
-            onCardEdit={handleGridCardEdit}
-            onCardDelete={handleGridCardDelete}
-            onCardView={handleGridCardView}
-            onSourceJump={jumpToSourceDocument}
-            onCardLongPress={handleGridCardLongPress}
-            loading={isLoading}
+             onCardEdit={handleGridCardEdit}
+             onCardDelete={handleGridCardDelete}
+             onCardView={handleGridCardView}
+             onCardConvertToMarkdown={handleGridCardConvertToMarkdown}
+             onSourceJump={jumpToSourceDocument}
+             onCardLongPress={handleGridCardLongPress}
+             loading={isLoading}
           />
         {:else}
           <GridView
@@ -6570,6 +6450,7 @@
             onCardEdit={handleGridCardEdit}
             onCardDelete={handleGridCardDelete}
             onCardView={handleGridCardView}
+            onCardConvertToMarkdown={handleGridCardConvertToMarkdown}
             onSourceJump={jumpToSourceDocument}
             onCardLongPress={handleGridCardLongPress}
             loading={isLoading}
@@ -6621,47 +6502,16 @@
       onCreated={handleBuildIRDeckCreated}
     />
   {/if}
-  <!-- 字段管理器（全局，支持侧边栏和完整模式） -->
-  {#if showColumnManager}
-    <div
-      class="column-manager-popover-root"
-      class:is-mobile-sheet={isMobile || !columnManagerAnchorEl}
-      aria-hidden="true"
-    >
-      <div
-        bind:this={columnManagerPanelEl}
-        class="column-manager-wrapper"
-        class:is-mobile-sheet={isMobile || !columnManagerAnchorEl}
-        class:placement-top={columnManagerPopoverPlacement === 'top'}
-        role="dialog"
-        aria-label="字段管理器"
-        tabindex="-1"
-        style={isMobile || !columnManagerAnchorEl ? '' : `top: ${columnManagerPopoverTop}px; left: ${columnManagerPopoverLeft}px;`}
-      >
-        <ColumnManager
-          visibility={columnVisibility}
-          columnOrder={columnOrder}
-          onVisibilityChange={handleVisibilityChange}
-          onOrderChange={handleOrderChange}
-          quickPresets={getColumnManagerPresets()}
-          activePresetId={resolveCurrentColumnManagerPreset()}
-          onApplyPreset={(presetId) => applyColumnManagerPreset(presetId as ColumnManagerPresetId)}
-          onResetToDefaults={resetColumnManagerConfig}
-        />
-        <button 
-          class="column-manager-close"
-          onclick={() => {
-            logger.debug('[字段管理] 点击关闭按钮');
-            closeColumnManager();
-          }}
-          aria-label="关闭"
-        >
-          <EnhancedIcon name="x" size={20} />
-        </button>
-      </div>
-    </div>
-  {/if}
-  
+
+  <CardToMarkdownModal
+    open={showCardToMarkdownModal}
+    {plugin}
+    card={cardToMarkdown}
+    busy={isConvertingCardToMarkdown}
+    onClose={closeCardToMarkdownModal}
+    onConfirm={handleCardToMarkdownConfirm}
+  />
+
   <!-- 高级功能激活提示 -->
   <ActivationPrompt
     featureId={promptFeatureId}
@@ -6731,115 +6581,6 @@
     min-height: 0;
   }
 
-  .column-manager-popover-root {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    z-index: var(--weave-z-overlay);
-    animation: fadeIn 0.18s ease;
-  }
-
-  .column-manager-popover-root.is-mobile-sheet {
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    padding: 12px;
-    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
-  }
-
-  /* 字段管理器包装器 */
-  .column-manager-wrapper {
-    position: fixed;
-    pointer-events: auto;
-    background: var(--background-primary);
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 16px;
-    box-shadow:
-      0 24px 48px rgba(15, 23, 42, 0.18),
-      0 8px 20px rgba(15, 23, 42, 0.12);
-    width: min(640px, calc(100vw - 24px));
-    max-height: min(76vh, 720px);
-    overflow: auto;
-    padding: 18px 18px 16px;
-  }
-
-  .column-manager-wrapper::before {
-    content: '';
-    position: absolute;
-    top: -6px;
-    right: 28px;
-    width: 12px;
-    height: 12px;
-    background: var(--background-primary);
-    border-top: 1px solid var(--background-modifier-border);
-    border-left: 1px solid var(--background-modifier-border);
-    transform: rotate(45deg);
-  }
-
-  .column-manager-wrapper.placement-top::before {
-    top: auto;
-    bottom: -6px;
-    border-top: none;
-    border-left: none;
-    border-right: 1px solid var(--background-modifier-border);
-    border-bottom: 1px solid var(--background-modifier-border);
-  }
-
-  .column-manager-wrapper.is-mobile-sheet {
-    position: relative;
-    width: min(680px, 100%);
-    max-height: min(82vh, 720px);
-    border-radius: 18px;
-    padding: 18px 16px 16px;
-  }
-
-  .column-manager-wrapper.is-mobile-sheet::before {
-    display: none;
-  }
-  
-  /* 📱 移动端字段管理器适配 */
-  @media (max-width: 600px) {
-    .column-manager-popover-root {
-      align-items: flex-end;
-      padding: 12px;
-      padding-bottom: calc(12px + env(safe-area-inset-bottom, 0));
-    }
-
-    .column-manager-wrapper {
-      width: calc(100vw - 24px);
-      max-height: 82vh;
-    }
-  }
-
-  /* 字段管理器关闭按钮 */
-  .column-manager-close {
-    position: absolute;
-    top: 14px;
-    right: 14px;
-    width: 30px;
-    height: 30px;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
-    z-index: calc(var(--weave-z-overlay) + 1);
-  }
-
-  .column-manager-close:hover {
-    background: var(--background-modifier-hover);
-    color: var(--text-normal);
-  }
-
-  .column-manager-close:active {
-    transform: scale(0.95);
-  }
-
   /* 重复的样式已在上面定义 */
 
   /* 加载动画 */
@@ -6852,17 +6593,17 @@
   
   /* 正确率颜色样式 */
   :global(.accuracy-high) {
-    color: #22c55e;
+    color: var(--color-green, var(--text-success, var(--text-normal)));
     font-weight: 600;
   }
   
   :global(.accuracy-medium) {
-    color: #f59e0b;
+    color: var(--color-orange, var(--text-warning, var(--text-normal)));
     font-weight: 600;
   }
   
   :global(.accuracy-low) {
-    color: #ef4444;
+    color: var(--color-red, var(--text-error, var(--text-normal)));
     font-weight: 600;
   }
 

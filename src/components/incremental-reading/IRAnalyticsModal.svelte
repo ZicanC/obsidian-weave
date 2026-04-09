@@ -17,6 +17,7 @@
     type IRAnalyticsSourceOption
   } from '../../services/incremental-reading/IRAnalyticsService';
   import { logger } from '../../utils/logger';
+  import { bindPinchRangeGesture } from '../../utils/pinch-range-gesture';
 
   echarts.use([
     TooltipComponent,
@@ -58,6 +59,7 @@
   let themeObserver: MutationObserver | null = null;
   let loadRequestId = 0;
   let wheelThrottle = false;
+  let pinchGestureCleanup: (() => void) | null = null;
   const WHEEL_THROTTLE_MS = 180;
 
   const isMobile = Platform.isMobile;
@@ -471,42 +473,58 @@
   function switchTab(tab: AnalyticsTab): void {
     activeTab = tab;
     if (tab === 'activity') {
-      unbindChartWheel();
+      unbindChartInteractions();
       disposeChart();
       return;
     }
     setTimeout(() => renderChart(), 0);
   }
 
-  function handleWheelScroll(event: WheelEvent): void {
-    event.preventDefault();
+  function adjustQuickRange(step: number): void {
     if (wheelThrottle || activeTab === 'activity') return;
 
     const currentIndex = quickRangeOptions.findIndex(option => option.value === selectedDays);
     if (currentIndex < 0) return;
 
-    wheelThrottle = true;
+    const nextIndex = Math.max(0, Math.min(quickRangeOptions.length - 1, currentIndex + step));
+    if (nextIndex === currentIndex) return;
 
-    const delta = event.deltaY < 0 ? 1 : -1;
-    const nextIndex = Math.max(0, Math.min(quickRangeOptions.length - 1, currentIndex + delta));
-    if (nextIndex !== currentIndex) {
-      selectedDays = quickRangeOptions[nextIndex].value;
-      void loadAnalytics();
-    }
+    wheelThrottle = true;
+    selectedDays = quickRangeOptions[nextIndex].value;
+    void loadAnalytics();
 
     window.setTimeout(() => {
       wheelThrottle = false;
     }, WHEEL_THROTTLE_MS);
   }
 
-  function bindChartWheel(): void {
-    if (!chartRef || activeTab === 'activity') return;
-    chartRef.removeEventListener('wheel', handleWheelScroll);
-    chartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+  function handleWheelScroll(event: WheelEvent): void {
+    event.preventDefault();
+    adjustQuickRange(event.deltaY < 0 ? 1 : -1);
   }
 
-  function unbindChartWheel(): void {
+  function bindChartInteractions(): void {
+    if (!chartRef || activeTab === 'activity') return;
+
+    chartRef.removeEventListener('wheel', handleWheelScroll);
+    chartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+
+    pinchGestureCleanup?.();
+    pinchGestureCleanup = null;
+
+    if (!isMobile) return;
+
+    pinchGestureCleanup = bindPinchRangeGesture(chartRef, {
+      onExpand: () => adjustQuickRange(-1),
+      onContract: () => adjustQuickRange(1),
+      cooldownMs: WHEEL_THROTTLE_MS
+    });
+  }
+
+  function unbindChartInteractions(): void {
     chartRef?.removeEventListener('wheel', handleWheelScroll);
+    pinchGestureCleanup?.();
+    pinchGestureCleanup = null;
   }
 
   function handleResize(): void {
@@ -602,20 +620,20 @@
 
   $effect(() => {
     if (!chartRef) {
-      unbindChartWheel();
+      unbindChartInteractions();
       disposeChart();
       return;
     }
     if (activeTab !== 'activity') {
-      bindChartWheel();
+      bindChartInteractions();
     } else {
-      unbindChartWheel();
+      unbindChartInteractions();
     }
     if (snapshot && activeTab !== 'activity') {
       setTimeout(() => renderChart(), 0);
     }
     return () => {
-      unbindChartWheel();
+      unbindChartInteractions();
     };
   });
 
@@ -643,7 +661,7 @@
   });
 
   onDestroy(() => {
-    unbindChartWheel();
+    unbindChartInteractions();
     disposeChart();
     themeObserver?.disconnect();
     window.removeEventListener('resize', handleResize);
@@ -652,20 +670,20 @@
 
 <div class="ir-analytics-modal">
       <div class="tabs-header" class:mobile={isMobile}>
-        <div class="tabs-nav">
-          <button type="button" class="tab-btn" class:active={activeTab === 'activity'} onclick={() => switchTab('activity')}>
+        <div class="tabs-nav weave-toolbar-tabs">
+          <button type="button" class="tab-btn weave-toolbar-tab" class:active={activeTab === 'activity'} onclick={() => switchTab('activity')}>
             活跃趋势
           </button>
-          <button type="button" class="tab-btn" class:active={activeTab === 'quantity'} onclick={() => switchTab('quantity')}>
+          <button type="button" class="tab-btn weave-toolbar-tab" class:active={activeTab === 'quantity'} onclick={() => switchTab('quantity')}>
             数量变化
           </button>
-          <button type="button" class="tab-btn" class:active={activeTab === 'timing'} onclick={() => switchTab('timing')}>
+          <button type="button" class="tab-btn weave-toolbar-tab" class:active={activeTab === 'timing'} onclick={() => switchTab('timing')}>
             调度时机
           </button>
-          <button type="button" class="tab-btn" class:active={activeTab === 'difficulty'} onclick={() => switchTab('difficulty')}>
+          <button type="button" class="tab-btn weave-toolbar-tab" class:active={activeTab === 'difficulty'} onclick={() => switchTab('difficulty')}>
             优先级矩阵
           </button>
-          <button type="button" class="tab-btn" class:active={activeTab === 'forecast'} onclick={() => switchTab('forecast')}>
+          <button type="button" class="tab-btn weave-toolbar-tab" class:active={activeTab === 'forecast'} onclick={() => switchTab('forecast')}>
             未来负荷
           </button>
         </div>
@@ -814,51 +832,21 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 4px;
-    border-radius: 12px;
-    border: 1px solid color-mix(in srgb, var(--background-modifier-border) 86%, transparent);
-    background: color-mix(in srgb, var(--background-secondary) 68%, transparent);
-    backdrop-filter: blur(8px);
+    padding: 0;
+    border-radius: 0;
+    border: none;
+    background: transparent;
+    backdrop-filter: none;
   }
 
   .tabs-nav {
-    display: flex;
-    gap: 4px;
-    padding: 2px;
-    border-radius: 9px;
-    flex-wrap: wrap;
     width: 100%;
+    -ms-overflow-style: none;
   }
 
   .tab-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0;
-    padding: 7px 12px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-    white-space: nowrap;
-    min-height: 34px;
-  }
-
-  .tab-btn:hover {
-    color: var(--text-normal);
-    background: color-mix(in srgb, var(--background-modifier-hover) 72%, transparent);
-    border-color: color-mix(in srgb, var(--background-modifier-border) 74%, transparent);
-  }
-
-  .tab-btn.active {
-    color: var(--text-normal);
-    background: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
-    border-color: color-mix(in srgb, var(--interactive-accent) 34%, var(--background-modifier-border));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 22%, transparent);
+    min-width: 0;
+    font-weight: 500;
   }
 
   .tab-btn:focus-visible {
@@ -1071,6 +1059,7 @@
     flex: 1;
     min-height: 420px;
     border-radius: 14px;
+    touch-action: pan-y;
     border: 1px solid color-mix(in srgb, var(--background-modifier-border) 86%, transparent);
     background: linear-gradient(
       180deg,
@@ -1141,6 +1130,7 @@
   .tabs-header.mobile .tab-btn {
     flex: 0 0 auto;
     min-width: 40px;
+    min-height: 40px;
     padding: 8px 10px;
   }
 

@@ -44,10 +44,6 @@ export { ProgressiveClozeGateway, getProgressiveClozeGateway } from "./Progressi
 export { OrphanCardCleaner, getOrphanCardCleaner } from "./OrphanCardCleaner";
 export type { OrphanDetectionResult, CleanupResult } from "./OrphanCardCleaner";
 
-//  内容迁移工具（V1→V2架构升级）
-export { ContentMigrationTool, getContentMigrationTool } from "./ContentMigrationTool";
-export type { MigrationResult } from "./ContentMigrationTool";
-
 // ============================================================================
 //  V1.5 服务（兼容性保留）
 // ============================================================================
@@ -55,11 +51,6 @@ export type { MigrationResult } from "./ContentMigrationTool";
 // 保留仍在使用的工具类
 export { ProgressiveClozeAnalyzer } from "./ProgressiveClozeAnalyzer";
 
-/**
- * Compatibility note: 将在V3移除
- */
-export { CardSaveProcessor } from "./CardSaveProcessor";
-export type { HistoryInheritanceStrategy, InheritanceOptions } from "./CardSaveProcessor";
 
 // ============================================================================
 //  V2 类型定义（混合架构）
@@ -126,7 +117,7 @@ export type {
  * 1. 新项目应使用：
  *    - ProgressiveClozeConverter 替代 ProgressiveClozeSplitter
  *    - CardAccessor 替代 ProgressiveClozeHandler
- *    - ProgressiveClozeCardManager 替代 CardSaveProcessor
+ *    - ProgressiveClozeCardManager 替代旧的渐进式挖空保存兼容层
  *
  * 2. 类型迁移：
  *    - 使用 progressive-cloze-v2 中的类型

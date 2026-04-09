@@ -8,6 +8,7 @@
   import { Platform } from 'obsidian';
   import EnhancedIcon from '../../ui/EnhancedIcon.svelte';
   import { formatRelativeTimeDetailed } from '../../../utils/helpers';
+  import { extractSourcePath } from '../../../utils/source-path-matcher';
   import { truncateText } from '../../../utils/ui-helpers';
   import { Notice, MarkdownView } from 'obsidian';
   import type { WeavePlugin } from '../../../main';
@@ -95,20 +96,16 @@
   async function navigateToSource() {
     try {
       const contextPath = plugin.app.workspace.getActiveFile()?.path ?? '';
-      let filePath: string | undefined;
-      let blockId: string | undefined;
-      
-      // 使用响应式 sourceInfo 从 content YAML 获取来源
-      if (sourceInfo.sourceFile) {
-        filePath = sourceInfo.sourceFile;
-        blockId = sourceInfo.sourceBlock?.replace(/^\^/, ''); // 移除^前缀
-      } else if (card.customFields?.obsidianFilePath) {
-        // 向后兼容
-        filePath = card.customFields.obsidianFilePath as string;
-        blockId = card.customFields.blockId as string;
-      } else if (card.fields?.source_document) {
-        filePath = card.fields.source_document as string;
-      }
+      const filePath =
+        sourceInfo.sourceFile ||
+        card.sourceFile ||
+        (card.customFields?.obsidianFilePath as string | undefined) ||
+        extractSourcePath(card) ||
+        undefined;
+      const blockId =
+        sourceInfo.sourceBlock?.replace(/^\^/, '') ||
+        card.sourceBlock?.replace(/^\^/, '') ||
+        (card.customFields?.blockId as string | undefined);
       
       if (!filePath) {
         new Notice(t('modals.cardInfoTab.noSource'));
@@ -577,18 +574,18 @@
         <div class="timeline-simple">
           {#if parentCard}
             <span class="timeline-item">
-              <EnhancedIcon name="file-text" size={14} /> 父卡片
+              父卡片
             </span>
             <span class="timeline-arrow">→</span>
           {/if}
           <span class="timeline-item">
-            <EnhancedIcon name="robot" size={14} /> {card.relationMetadata?.derivationMetadata ? getDerivationMethodName(card.relationMetadata.derivationMetadata.method) : '创建'}
+            {card.relationMetadata?.derivationMetadata ? getDerivationMethodName(card.relationMetadata.derivationMetadata.method) : '创建'}
             {#if siblingCards.length > 0}
               ({siblingCards.length + 1}张)
             {/if}
           </span>
           <span class="timeline-arrow">→</span>
-          <span class="timeline-item current"><EnhancedIcon name="star" size={14} /> 当前</span>
+          <span class="timeline-item current">当前</span>
           
           <div class="timeline-actions">
             {#if parentCard}
@@ -614,15 +611,6 @@
                 {event.type === 'split' ? '●' : '○'}
               </div>
               <div class="event-content">
-                <span class="event-icon">
-                  {#if event.type === 'created'}
-                    <EnhancedIcon name="file-text" size={14} />
-                  {:else if event.type === 'split'}
-                    <EnhancedIcon name="robot" size={14} />
-                  {:else if event.type === 'modified'}
-                    <EnhancedIcon name="edit" size={14} />
-                  {/if}
-                </span>
                 <span class="event-description">{event.description}</span>
                 {#if event.type === 'split' && parentCard}
                   <button class="link-button-small" onclick={() => parentCard && viewCard(parentCard)}>
@@ -635,7 +623,7 @@
           
           {#if siblingCards.length > 0}
             <div class="siblings-preview">
-              <span class="siblings-label"><EnhancedIcon name="users" size={14} /> 兄弟卡片:</span>
+              <span class="siblings-label">兄弟卡片:</span>
               {#each siblingCards.slice(0, 3) as sibling, index}
                 <span class="sibling-tag">#{index + 1} {getCardPreview(sibling, 20)}</span>
               {/each}
@@ -661,15 +649,6 @@
                 </div>
                 <div class="event-body">
                   <div class="event-title">
-                    <span class="event-icon">
-                      {#if event.type === 'created'}
-                        <EnhancedIcon name="file-text" size={14} />
-                      {:else if event.type === 'split'}
-                        <EnhancedIcon name="robot" size={14} />
-                      {:else if event.type === 'modified'}
-                        <EnhancedIcon name="edit" size={14} />
-                      {/if}
-                    </span>
                     <span>{event.description}</span>
                   </div>
                   
@@ -1737,4 +1716,3 @@
     color: var(--text-normal);
   }
 </style>
-

@@ -262,4 +262,55 @@ describe('IRQueueGeneratorV4', () => {
       expect(result.stats.groupDistribution['B']).toBeUndefined();
     });
   });
+
+  describe('软交错倾向', () => {
+    function consecutiveWhileOthersRemain(sequence: string[]): number {
+      const remaining = new Map<string, number>();
+      sequence.forEach(group => {
+        remaining.set(group, (remaining.get(group) || 0) + 1);
+      });
+
+      let previous = '';
+      let currentRun = 0;
+      let worstRun = 0;
+
+      sequence.forEach(group => {
+        remaining.set(group, (remaining.get(group) || 1) - 1);
+        if (group === previous) {
+          currentRun += 1;
+        } else {
+          currentRun = 1;
+          previous = group;
+        }
+
+        const alternativesRemain = Array.from(remaining.entries()).some(
+          ([otherGroup, count]) => otherGroup !== group && count > 0
+        );
+        if (alternativesRemain) {
+          worstRun = Math.max(worstRun, currentRun);
+        }
+      });
+
+      return worstRun;
+    }
+
+    test('超过软阈值后会倾向切换到其他仍有候选的主题', () => {
+      generator.setInterleavePreferences(true, 2);
+      const blocks: IRBlockV4[] = [
+        createTestBlock('A1', 'A', 5, 1),
+        createTestBlock('A2', 'A', 5, 1),
+        createTestBlock('A3', 'A', 5, 1),
+        createTestBlock('A4', 'A', 5, 1),
+        createTestBlock('B1', 'B', 5, 5),
+        createTestBlock('B2', 'B', 5, 5),
+        createTestBlock('C1', 'C', 5, 5)
+      ];
+      const groupMapping = Object.fromEntries(blocks.map(block => [block.id, block.meta?.tagGroup || 'default']));
+
+      const result = generator.generateQueue(blocks, groupMapping, undefined, 20);
+      const sequence = result.queue.map(block => block.meta?.tagGroup || 'default');
+
+      expect(consecutiveWhileOthersRemain(sequence)).toBeLessThanOrEqual(2);
+    });
+  });
 });

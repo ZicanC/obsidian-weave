@@ -64,8 +64,8 @@ describe('SimplifiedCardParser', () => {
       
       expect(card).not.toBeNull();
       expect(card?.type).toBe(CardType.Basic);
-      expect(card?.front).toContain('什么是间隔重复');
-      expect(card?.back).toContain('最佳时机复习');
+      expect(card?.content).toContain('什么是间隔重复');
+      expect(card?.content).toContain('最佳时机复习');
       expect(card?.tags).toContain('学习方法');
       expect(card?.tags).toContain('weave');
     });
@@ -79,8 +79,8 @@ FSRS是一种现代化的间隔重复算法。
       
       expect(card).not.toBeNull();
       expect(card?.type).toBe(CardType.Basic);
-      expect(card?.front).toContain('FSRS算法');
-      expect(card?.back).toBe('');
+      expect(card?.content).toContain('FSRS算法');
+      expect(card?.content).not.toContain('---div---');
       expect(card?.tags).toContain('算法');
     });
 
@@ -93,8 +93,8 @@ FSRS是一种现代化的间隔重复算法。
       
       expect(card).not.toBeNull();
       expect(card?.type).toBe('cloze');
-      expect(card?.front).toContain('艾宾浩斯遗忘曲线');
-      expect(card?.front).toContain('20分钟');
+      expect(card?.content).toContain('艾宾浩斯遗忘曲线');
+      expect(card?.content).toContain('20分钟');
     });
 
     test('应该检测选择题', async () => {
@@ -110,8 +110,8 @@ String是引用类型，不是基本数据类型。`;
       
       expect(card).not.toBeNull();
       expect(card?.type).toBe(CardType.Multiple);
-      expect(card?.front).toContain('基本数据类型');
-      expect(card?.back).toContain('引用类型');
+      expect(card?.content).toContain('基本数据类型');
+      expect(card?.content).toContain('引用类型');
     });
   });
 
@@ -153,15 +153,15 @@ Markdown使用**文本**或__文本__表示粗体。
       
       // 检查第一张卡片
       expect(result.cards[0].type).toBe(CardType.Basic);
-      expect(result.cards[0].front).toContain('Obsidian');
+      expect(result.cards[0].content).toContain('Obsidian');
       
       // 检查第二张卡片
       expect(result.cards[1].type).toBe(CardType.Multiple);
-      expect(result.cards[1].front).toContain('Markdown语法');
+      expect(result.cards[1].content).toContain('Markdown语法');
       
       // 检查第三张卡片
       expect(result.cards[2].type).toBe(CardType.Cloze);
-      expect(result.cards[2].front).toContain('遗忘临界点');
+      expect(result.cards[2].content).toContain('遗忘临界点');
     });
   });
 

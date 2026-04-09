@@ -3,13 +3,20 @@ import { createRequire } from "module";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import builtins from "builtin-modules";
 import UnoCSS from "unocss/vite";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 import commonjs from "vite-plugin-commonjs";
 import path from "path";
 import fs from "fs";
 
 const require = createRequire(import.meta.url);
+const {
+	DEFAULT_PRUNABLE_RUNTIME_FILES,
+	copyFileAtomicWithRetry,
+	pruneManagedRuntimeFiles,
+	resolvePluginDir,
+	syncRuntimeFiles,
+} = require("./scripts/hot-reload-utils.cjs");
 
 function resolveInstalledPackageVersion(packageName: string): string {
 	const packageJsonPath = path.resolve(
@@ -36,31 +43,37 @@ function sleep(ms: number) {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function copyFileWithRetry(source: string, destination: string, retries = 8, delayMs = 120) {
-	for (let attempt = 0; attempt <= retries; attempt += 1) {
-		try {
-			fs.mkdirSync(path.dirname(destination), { recursive: true });
-			fs.copyFileSync(source, destination);
-			return;
-		} catch (error: any) {
-			const code = error?.code;
-			if ((code === "EBUSY" || code === "EPERM") && attempt < retries) {
-				await sleep(delayMs);
-				continue;
-			}
-			throw error;
+async function waitForFiles(filePaths: string[], timeoutMs = 4000, intervalMs = 120) {
+	const deadline = Date.now() + timeoutMs;
+
+	while (Date.now() <= deadline) {
+		if (filePaths.every((filePath) => fs.existsSync(filePath))) {
+			return true;
 		}
+
+		await sleep(intervalMs);
 	}
+
+	return filePaths.every((filePath) => fs.existsSync(filePath));
 }
 
 export default defineConfig(({ mode }) => {
-	const env = loadEnv(mode, process.cwd(), '');
-	console.log(`🔧 Vite mode: ${mode}`);
+	console.log(`[vite] mode: ${mode}`);
+
 	const isDev = mode === "development";
+	const watchPollingEnv = process.env.WEAVE_WATCH_USE_POLLING?.trim();
+	const usePollingWatcher =
+		watchPollingEnv != null && watchPollingEnv !== ""
+			? watchPollingEnv !== "0"
+			: process.platform === "win32";
 	const isMobileHotReloadBuild = process.env.WEAVE_MOBILE_HOT_RELOAD === "1";
+	const isDesktopHotReloadBuild = process.env.WEAVE_DESKTOP_HOT_RELOAD === "1";
 	const mobileHotReloadOutputDir = process.env.WEAVE_MOBILE_SOURCE_DIR?.trim()
 		? path.resolve(process.env.WEAVE_MOBILE_SOURCE_DIR)
 		: path.resolve(process.cwd(), ".mobile-hot-reload");
+	const desktopHotReloadOutputDir = process.env.WEAVE_DESKTOP_SOURCE_DIR?.trim()
+		? path.resolve(process.env.WEAVE_DESKTOP_SOURCE_DIR)
+		: path.resolve(process.cwd(), ".desktop-hot-reload");
 	const shouldMinifyOutput = !isDev || isMobileHotReloadBuild;
 	const buildSourceMap = isMobileHotReloadBuild ? "hidden" : isDev ? "inline" : false;
 
@@ -73,142 +86,223 @@ export default defineConfig(({ mode }) => {
 		"css_unused_selector",
 	]);
 
-	// 环境变量配置
-	// 开发模式需设置 OBSIDIAN_VAULT_PATH 环境变量（指向 .obsidian 所在目录）
-	// 示例: OBSIDIAN_VAULT_PATH=C:/Users/you/my-vault/.obsidian
-	const obsidianVaultPath = env.OBSIDIAN_VAULT_PATH ? path.resolve(env.OBSIDIAN_VAULT_PATH) : null;
-	const PLUGIN_DIR = isMobileHotReloadBuild
+	const resolvedPluginDir =
+		resolvePluginDir("weave", process.env) ?? path.resolve(process.cwd(), "dist");
+	const buildOutDir = isMobileHotReloadBuild
 		? mobileHotReloadOutputDir
-		: isDev
-			? obsidianVaultPath
-				? `${obsidianVaultPath}/plugins/weave`
-				: "dist"
-			: obsidianVaultPath
-				? `${obsidianVaultPath}/plugins/weave`
-				: "dist";
-
+		: isDesktopHotReloadBuild
+			? desktopHotReloadOutputDir
+			: resolvedPluginDir;
+	const displayOutputDir =
+		isDesktopHotReloadBuild && !isMobileHotReloadBuild ? resolvedPluginDir : buildOutDir;
+	let buildWatchAnnounced = false;
 
 	return {
 		cacheDir: path.resolve(process.cwd(), `node_modules/.vite-${svelteCacheFingerprint}`),
 		resolve: {
-			conditions: ['browser', 'import', 'module', 'default']
+			conditions: ["browser", "import", "module", "default"],
 		},
 		define: {
-			'process.env.NODE_ENV': JSON.stringify(mode),
-			'global': 'globalThis'
+			"process.env.NODE_ENV": JSON.stringify(mode),
+			global: "globalThis",
 		},
-		server: isDev ? {
-			watch: {
-				usePolling: false,
-				useFsEvents: true,
-				// 增加监听深度和间隔优化
-				depth: 10,
-				interval: 100,
-				binaryInterval: 300
-			},
-			hmr: {
-				overlay: false
-			}
-		} : undefined,
+		server: isDev
+			? {
+					watch: {
+						usePolling: false,
+						useFsEvents: true,
+						depth: 10,
+						interval: 100,
+						binaryInterval: 300,
+					},
+					hmr: {
+						overlay: false,
+					},
+			  }
+			: undefined,
 		clearScreen: false,
 		plugins: [
 			commonjs(),
-			// 增强的构建监控和热重载日志
 			{
-				name: 'build-monitor',
-				configureServer(server) {
+				name: "build-monitor",
+				handleHotUpdate({ file }) {
 					if (isDev) {
-						console.log(`🚀 开发服务器启动 - 监听文件变化...`);
-						console.log(`📁 输出目录: ${PLUGIN_DIR}`);
-					}
-				},
-				handleHotUpdate({ file, server }) {
-					if (isDev) {
-						console.log(`🔥 文件变更: ${path.basename(file)}`);
+						console.log(`[watch] file changed: ${path.basename(file)}`);
 					}
 				},
 				buildStart() {
 					if (isDev) {
-						console.log(`⚡ 开始构建...`);
+						if (!buildWatchAnnounced) {
+							buildWatchAnnounced = true;
+							console.log("[watch] development build watcher started");
+							console.log(
+								`[watch] backend: ${usePollingWatcher ? "polling" : "fs-events"}`
+							);
+							if (isDesktopHotReloadBuild && buildOutDir !== displayOutputDir) {
+								console.log(`[watch] staging output: ${buildOutDir}`);
+								console.log(`[watch] final desktop target: ${displayOutputDir}`);
+							} else {
+								console.log(`[watch] output: ${buildOutDir}`);
+							}
+						}
+
+						console.log("[build] started");
 					}
 				},
 				buildEnd() {
-					if (isDev) {
-						const timestamp = new Date().toLocaleTimeString('zh-CN');
-						console.log(`✅ 构建完成 [${timestamp}]`);
-						console.log(`📦 文件已输出到: ${PLUGIN_DIR}`);
+					if (!isDev) return;
+
+					const timestamp = new Date().toLocaleTimeString("zh-CN");
+					console.log(`[build] finished [${timestamp}]`);
+					if (isDesktopHotReloadBuild && buildOutDir !== displayOutputDir) {
+						console.log(`[build] staged at: ${buildOutDir}`);
+						console.log(`[build] syncing desktop target: ${displayOutputDir}`);
+						return;
 					}
+
+					console.log(`[build] output written to: ${buildOutDir}`);
 				},
 				watchChange(id, change) {
 					if (isDev && id) {
 						const fileName = path.basename(id);
-						console.log(`👀 监听到变化: ${fileName} (${change.event})`);
+						console.log(`[watch] detected change: ${fileName} (${change.event})`);
 					}
-				}
+				},
 			},
 			{
-				name: 'copy-manifest-with-retry',
+				name: "copy-manifest-with-retry",
 				async writeBundle() {
 					const manifestSource = path.resolve(process.cwd(), "manifest.json");
-					const manifestTarget = path.resolve(PLUGIN_DIR, "manifest.json");
+					const manifestTarget = path.resolve(buildOutDir, "manifest.json");
 
 					try {
-						await copyFileWithRetry(manifestSource, manifestTarget);
+						await copyFileAtomicWithRetry(manifestSource, manifestTarget, {
+							retries: 8,
+							delayMs: 120,
+						});
 					} catch (error: any) {
-						console.warn(`[manifest-copy] Failed to copy manifest.json to ${manifestTarget}: ${error?.message || error}`);
+						console.warn(
+							`[manifest-copy] Failed to copy manifest.json to ${manifestTarget}: ${error?.message || error}`
+						);
 					}
-				}
+				},
 			},
 			viteStaticCopy({
-			targets: [
-				{
-					src: "node_modules/sql.js/dist/sql-wasm.wasm",
-					dest: ".",
-				},
-				...(isDev ? [] : [
+				targets: [
 					{
-						src: "README.md",
+						src: "node_modules/sql.js/dist/sql-wasm.wasm",
 						dest: ".",
 					},
-					{
-						src: "public/versions.json",
-						dest: ".",
-					}
-				])
-			],
-		}),
-		svelte({
-			emitCss: true,
-			onwarn(warning, handler) {
-				if (warning?.code && suppressedSvelteWarnings.has(warning.code)) return;
-				handler(warning);
-			},
-			compilerOptions: {
-				runes: true,
-				compatibility: {
-					componentApi: 4
-				}
-			}
-		}),
+					...(isDev
+						? []
+						: [
+								{
+									src: "README.md",
+									dest: ".",
+								},
+								{
+									src: "public/versions.json",
+									dest: ".",
+								},
+						  ]),
+				],
+			}),
+			svelte({
+				emitCss: true,
+				onwarn(warning, handler) {
+					if (warning?.code && suppressedSvelteWarnings.has(warning.code)) return;
+					handler(warning);
+				},
+				compilerOptions: {
+					runes: true,
+					compatibility: {
+						componentApi: 4,
+					},
+				},
+			}),
 			UnoCSS(),
+			{
+				name: "desktop-hot-reload-sync",
+				buildStart() {
+					if (!isDesktopHotReloadBuild || buildOutDir === resolvedPluginDir) {
+						return;
+					}
+
+					pruneManagedRuntimeFiles(buildOutDir, new Set(), DEFAULT_PRUNABLE_RUNTIME_FILES);
+				},
+				async closeBundle() {
+					if (!isDesktopHotReloadBuild || buildOutDir === resolvedPluginDir) {
+						return;
+					}
+
+					try {
+						const expectedFiles = [
+							path.join(buildOutDir, "main.js"),
+							path.join(buildOutDir, "styles.css"),
+							path.join(buildOutDir, "manifest.json"),
+							path.join(buildOutDir, "sql-wasm.wasm"),
+						];
+						const filesReady = await waitForFiles(expectedFiles);
+						if (!filesReady) {
+							const missingFiles = expectedFiles
+								.filter((filePath) => !fs.existsSync(filePath))
+								.map((filePath) => path.basename(filePath));
+							console.warn(
+								`[desktop-sync] Delayed file(s) still missing before sync: ${missingFiles.join(", ")}`
+							);
+						}
+
+						const { runtimeFiles, removed } = await syncRuntimeFiles(
+							buildOutDir,
+							resolvedPluginDir,
+							{
+								pruneStaleManagedFiles: true,
+								managedFiles: DEFAULT_PRUNABLE_RUNTIME_FILES,
+							}
+						);
+
+						const timestamp = new Date().toLocaleTimeString("zh-CN");
+						console.log(
+							`[desktop-sync] synced ${runtimeFiles.length} file(s) to ${resolvedPluginDir} [${timestamp}]`
+						);
+						if (removed.length > 0) {
+							console.log(`[desktop-sync] removed stale file(s): ${removed.join(", ")}`);
+						}
+					} catch (error: any) {
+						console.warn(
+							`[desktop-sync] Failed to sync desktop build to ${resolvedPluginDir}: ${error?.message || error}`
+						);
+					}
+				},
+			},
 		],
-		
-		build: {
+
+			build: {
 			lib: {
 				entry: "src/main",
 				formats: ["cjs"],
 			},
 			cssCodeSplit: false,
 			assetsInlineLimit: 4096000,
-		...(isDev && {
-			watch: {
-				include: ["src/**", "manifest.json"],
-				exclude: ["node_modules/**", "dist/**", "**/*.test.*", ".git/**"],
-				// 优化监听性能
-				skipWrite: false,
-				clearScreen: false
-			}
-		}),
+			...(isDev && {
+				watch: {
+					include: ["src/**", "manifest.json"],
+					exclude: ["node_modules/**", "dist/**", "**/*.test.*", ".git/**"],
+					buildDelay: 120,
+					chokidar: {
+						usePolling: usePollingWatcher,
+						interval: usePollingWatcher ? 220 : undefined,
+						binaryInterval: usePollingWatcher ? 360 : undefined,
+						awaitWriteFinish: {
+							stabilityThreshold: 240,
+							pollInterval: 80,
+						},
+						ignoreInitial: true,
+					},
+					skipWrite: false,
+					clearScreen: false,
+				},
+			}),
 			rollupOptions: {
 				onwarn(warning, warn) {
 					if (warning.code === "UNUSED_EXTERNAL_IMPORT") return;
@@ -221,9 +315,9 @@ export default defineConfig(({ mode }) => {
 					assetFileNames: "styles.css",
 					sourcemapBaseUrl:
 						isDev && !isMobileHotReloadBuild
-							? pathToFileURL(`${PLUGIN_DIR}/`).toString()
+							? pathToFileURL(`${displayOutputDir}/`).toString()
 							: undefined,
-					exports: "named", // 🔧 解决混合导出警告
+					exports: "named",
 				},
 				external: [
 					"obsidian",
@@ -234,26 +328,26 @@ export default defineConfig(({ mode }) => {
 					...builtins,
 				],
 				treeshake: {
-				moduleSideEffects: (id) => {
-					if (id && (id.includes('demo.ts') || id.includes('integration-demo.ts'))) {
-						return false;
-					}
-					return true;
-				}
-			}
+					moduleSideEffects: (id) => {
+						if (id && (id.includes("demo.ts") || id.includes("integration-demo.ts"))) {
+							return false;
+						}
+						return true;
+					},
+				},
 			},
-		outDir: isDev ? PLUGIN_DIR : "dist",
-	copyPublicDir: false,
-		emptyOutDir: false, // 禁用vite清空，改用prebuild脚本手动清理
-		sourcemap: buildSourceMap,
-		target: ["es2020"],
-		minify: shouldMinifyOutput ? "esbuild" : false
-	},
-	esbuild: shouldMinifyOutput
-		? {
-			...(isDev ? {} : { drop: ['console', 'debugger'] }),
-			legalComments: 'none'
-		}
-		: undefined,
-};
+			outDir: isDev ? buildOutDir : "dist",
+			copyPublicDir: false,
+			emptyOutDir: false,
+			sourcemap: buildSourceMap,
+			target: ["es2020"],
+			minify: shouldMinifyOutput ? "esbuild" : false,
+		},
+		esbuild: shouldMinifyOutput
+			? {
+					...(isDev ? {} : { drop: ["console", "debugger"] }),
+					legalComments: "none",
+			  }
+			: undefined,
+	};
 });

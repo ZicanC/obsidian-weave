@@ -67,8 +67,7 @@ export class SingleCardParser {
 
 			const parsedCard: ParsedCard = {
 				type: CardType.Basic,
-				front,
-				back,
+				content: back ? `${front}\n---div---\n${back}` : front,
 				tags,
 				metadata: {
 					sourceFile: file.path,

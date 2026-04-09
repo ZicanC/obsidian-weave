@@ -1,89 +1,50 @@
 /**
  * 增量阅读队列生成器 v4.0
  *
- * 对齐《增量阅读-算法实施权威规范.md》Section 6
- *
- * 核心特性：
- * - DRR 时间赤字版（Section 6.3）
- * - 成本估计（Section 6.2）
- * - 尾部碎片处理（允许轻微超出）
- * - 候选块选择分数（Section 7）
- *
- * @module services/incremental-reading/IRQueueGeneratorV4
- * @version 4.0.0
+ * 回退于统一计划生成器之后，负责在给定时间预算内生成一条
+ * 兼顾组公平性、成本估计和轻度交错倾向的学习队列。
  */
 
-import type { IRBlockStatus, IRBlockV4 } from "../../types/ir-types";
+import type { IRBlockV4 } from "../../types/ir-types";
 import { logger } from "../../utils/logger";
-import {
-	SPEED_AVG,
-	calculateAgeBoost,
-	calculateSelectionScore,
-	estimateBlockCost,
-} from "./IRCoreAlgorithmsV4";
+import { calculateSelectionScore, estimateBlockCost } from "./IRCoreAlgorithmsV4";
 
-// ============================================
-// 类型定义
-// ============================================
-
-/**
- * 队列项（带元数据）
- */
 export interface QueueItemV4 {
 	block: IRBlockV4;
 	groupId: string;
-	estimatedCost: number; // 分钟
+	estimatedCost: number;
 	score: number;
 }
 
-/**
- * 组状态（用于 DRR）
- */
 interface GroupState {
 	groupId: string;
 	deficit: number;
 	items: QueueItemV4[];
-	weight: number; // 组目标时间占比
+	weight: number;
 }
 
-/**
- * 队列生成结果
- */
 export interface QueueGenerationResultV4 {
-	/** 生成的队列 */
 	queue: IRBlockV4[];
-	/** 预估总时间（分钟） */
 	totalEstimatedMinutes: number;
-	/** 统计信息 */
 	stats: {
-		/** 候选池总数 */
 		candidateCount: number;
-		/** 实际入队数 */
 		scheduledCount: number;
-		/** 组分布 */
 		groupDistribution: Record<string, number>;
-		/** 是否超出预算 */
 		overBudget: boolean;
-		/** 超出比例 */
 		overBudgetRatio: number;
 	};
 }
 
-/**
- * 组权重配置
- */
 export interface GroupWeights {
-	[groupId: string]: number; // 权重，需要满足 ΣW_i = 1
+	[groupId: string]: number;
 }
 
-// ============================================
-// IRQueueGeneratorV4 类
-// ============================================
-
 export class IRQueueGeneratorV4 {
-	private defaultTimeBudget = 40; // 分钟
-	private tailThreshold = 0.8; // 尾部碎片阈值
+	private defaultTimeBudget = 40;
+	private tailThreshold = 0.8;
 	private agingStrength: "low" | "medium" | "high" = "low";
+	private interleaveMode = true;
+	private maxConsecutiveSameTopic = 3;
 
 	constructor(timeBudget?: number, agingStrength?: "low" | "medium" | "high") {
 		if (timeBudget) {
@@ -94,30 +55,19 @@ export class IRQueueGeneratorV4 {
 		}
 	}
 
-	/**
-	 * 设置时间预算
-	 */
 	setTimeBudget(minutes: number): void {
 		this.defaultTimeBudget = minutes;
 	}
 
-	/**
-	 * 设置 aging 强度
-	 */
 	setAgingStrength(strength: "low" | "medium" | "high"): void {
 		this.agingStrength = strength;
 	}
 
-	/**
-	 * 生成会话队列（主入口）
-	 *
-	 * @param candidatePool scheduled 状态的候选块
-	 * @param groupMapping 块ID到组ID的映射
-	 * @param groupWeights 组权重配置（可选，默认均分）
-	 * @param timeBudget 时间预算（分钟）
-	 * @param currentSourcePath 当前展示的源文件路径（用于切换惩罚）
-	 * @returns 队列生成结果
-	 */
+	setInterleavePreferences(enabled: boolean, maxConsecutiveSameTopic: number): void {
+		this.interleaveMode = enabled;
+		this.maxConsecutiveSameTopic = Math.max(1, Math.floor(maxConsecutiveSameTopic || 3));
+	}
+
 	generateQueue(
 		candidatePool: IRBlockV4[],
 		groupMapping: Record<string, string>,
@@ -125,35 +75,26 @@ export class IRQueueGeneratorV4 {
 		timeBudget: number = this.defaultTimeBudget,
 		currentSourcePath: string | null = null
 	): QueueGenerationResultV4 {
-		// 1. 过滤：只处理 scheduled 状态的块
-		const scheduled = candidatePool.filter((b) => b.status === "scheduled");
+		const scheduled = candidatePool.filter((block) => block.status === "scheduled");
 
 		if (scheduled.length === 0) {
 			return this.emptyResult();
 		}
 
-		// 2. 构建队列项
 		const items = this.buildQueueItems(scheduled, groupMapping, currentSourcePath);
-
-		// 3. 按组分桶
 		const groups = this.groupByTagGroup(items, groupWeights, timeBudget);
-
-		// 4. DRR 时间赤字版
 		const { queue, totalMinutes } = this.deficitRoundRobin(groups, timeBudget);
 
-		// 5. 统计组分布
 		const groupDistribution: Record<string, number> = {};
 		for (const block of queue) {
 			const groupId = groupMapping[block.id] || "default";
 			groupDistribution[groupId] = (groupDistribution[groupId] || 0) + 1;
 		}
 
-		const overBudgetRatio = totalMinutes / timeBudget;
+		const overBudgetRatio = timeBudget > 0 ? totalMinutes / timeBudget : 0;
 
 		logger.info(
-			`[IRQueueGeneratorV4] 队列生成完成: 候选=${scheduled.length}, 入队=${
-				queue.length
-			}, 预估时间=${totalMinutes.toFixed(1)}min/${timeBudget}min`
+			`[IRQueueGeneratorV4] 队列生成完成: 候选=${scheduled.length}, 入队=${queue.length}, 预估时间=${totalMinutes.toFixed(1)}min/${timeBudget}min`
 		);
 
 		return {
@@ -169,9 +110,6 @@ export class IRQueueGeneratorV4 {
 		};
 	}
 
-	/**
-	 * 构建队列项
-	 */
 	private buildQueueItems(
 		blocks: IRBlockV4[],
 		groupMapping: Record<string, string>,
@@ -191,37 +129,25 @@ export class IRQueueGeneratorV4 {
 		});
 	}
 
-	/**
-	 * 按标签组分桶
-	 */
 	private groupByTagGroup(
 		items: QueueItemV4[],
 		groupWeights: GroupWeights | undefined,
 		timeBudget: number
 	): Map<string, GroupState> {
 		const groups = new Map<string, GroupState>();
+		const groupIds = new Set(items.map((item) => item.groupId));
+		const defaultWeight = groupIds.size > 0 ? 1 / groupIds.size : 1;
 
-		// 收集所有组
-		const groupIds = new Set<string>();
-		for (const item of items) {
-			groupIds.add(item.groupId);
-		}
-
-		// 计算权重（默认均分）
-		const defaultWeight = 1 / groupIds.size;
-
-		// 初始化组状态
 		for (const groupId of groupIds) {
 			const weight = groupWeights?.[groupId] ?? defaultWeight;
 			groups.set(groupId, {
 				groupId,
-				deficit: timeBudget * weight, // 初始赤字 = T_budget × W_i
+				deficit: timeBudget * weight,
 				items: [],
 				weight,
 			});
 		}
 
-		// 分配项目到组
 		for (const item of items) {
 			const group = groups.get(item.groupId);
 			if (group) {
@@ -229,7 +155,6 @@ export class IRQueueGeneratorV4 {
 			}
 		}
 
-		// 按分数排序每组内的项
 		for (const group of groups.values()) {
 			group.items.sort((a, b) => b.score - a.score);
 		}
@@ -237,102 +162,120 @@ export class IRQueueGeneratorV4 {
 		return groups;
 	}
 
-	/**
-	 * DRR 时间赤字版（权威规范 Section 6.3）
-	 */
 	private deficitRoundRobin(
 		groups: Map<string, GroupState>,
 		timeBudget: number
 	): { queue: IRBlockV4[]; totalMinutes: number } {
 		const queue: IRBlockV4[] = [];
-		let tSum = 0;
-
-		// 转为数组便于操作
-		const groupList = Array.from(groups.values()).filter((g) => g.items.length > 0);
+		let totalMinutes = 0;
+		let lastGroupId: string | null = null;
+		let consecutiveCount = 0;
+		const groupList = Array.from(groups.values()).filter((group) => group.items.length > 0);
 
 		if (groupList.length === 0) {
 			return { queue: [], totalMinutes: 0 };
 		}
 
-		while (tSum < timeBudget && this.hasAvailableItems(groupList)) {
-			// 1. 取赤字最大的非空组
-			const gMax = this.getMaxDeficitGroup(groupList);
-			if (!gMax || gMax.items.length === 0) {
+		while (totalMinutes < timeBudget && this.hasAvailableItems(groupList)) {
+			const selectedGroup = this.selectNextGroup(groupList, lastGroupId, consecutiveCount);
+			if (!selectedGroup || selectedGroup.items.length === 0) {
 				break;
 			}
 
-			// 2. 组内选择最高分项
-			const item = gMax.items[0];
+			const item = selectedGroup.items[0];
 			const cost = item.estimatedCost;
 
-			// 3. 预算检查（尾部碎片处理）
-			if (tSum + cost > timeBudget) {
-				if (tSum === 0) {
+			if (totalMinutes + cost > timeBudget) {
+				if (totalMinutes === 0) {
 					queue.push(item.block);
-					tSum += cost;
-					gMax.items.shift();
-					gMax.deficit -= cost;
+					totalMinutes += cost;
+					selectedGroup.items.shift();
+					selectedGroup.deficit -= cost;
+					({ lastGroupId, consecutiveCount } = this.updateRunState(
+						lastGroupId,
+						consecutiveCount,
+						selectedGroup.groupId
+					));
 					continue;
 				}
-				// 如果已达到 80% 预算，允许轻微超出
-				if (tSum / timeBudget >= this.tailThreshold) {
+
+				if (timeBudget > 0 && totalMinutes / timeBudget >= this.tailThreshold) {
 					queue.push(item.block);
-					tSum += cost;
-					gMax.items.shift();
-					gMax.deficit -= cost;
+					totalMinutes += cost;
+					selectedGroup.items.shift();
+					selectedGroup.deficit -= cost;
+					({ lastGroupId, consecutiveCount } = this.updateRunState(
+						lastGroupId,
+						consecutiveCount,
+						selectedGroup.groupId
+					));
 					logger.debug(
-						`[IRQueueGeneratorV4] 尾部碎片: 允许轻微超出, block=${
-							item.block.id
-						}, cost=${cost.toFixed(1)}min`
+						`[IRQueueGeneratorV4] 尾部碎片：允许轻微超出, block=${item.block.id}, cost=${cost.toFixed(1)}min`
 					);
 				} else {
-					// 尝试同组下一个更小块
-					const smallerItem = this.findSmallerItem(gMax, timeBudget - tSum);
+					const smallerItem = this.findSmallerItem(selectedGroup, timeBudget - totalMinutes);
 					if (smallerItem) {
 						queue.push(smallerItem.block);
-						tSum += smallerItem.estimatedCost;
-						const idx = gMax.items.indexOf(smallerItem);
-						if (idx >= 0) gMax.items.splice(idx, 1);
-						gMax.deficit -= smallerItem.estimatedCost;
+						totalMinutes += smallerItem.estimatedCost;
+						const index = selectedGroup.items.indexOf(smallerItem);
+						if (index >= 0) {
+							selectedGroup.items.splice(index, 1);
+						}
+						selectedGroup.deficit -= smallerItem.estimatedCost;
+						({ lastGroupId, consecutiveCount } = this.updateRunState(
+							lastGroupId,
+							consecutiveCount,
+							selectedGroup.groupId
+						));
 					} else {
-						// 无合适块，跳过该组
-						gMax.items.shift();
+						selectedGroup.items.shift();
 					}
 				}
 				continue;
 			}
 
-			// 4. 正常加入
 			queue.push(item.block);
-			tSum += cost;
-			gMax.items.shift();
-			gMax.deficit -= cost;
+			totalMinutes += cost;
+			selectedGroup.items.shift();
+			selectedGroup.deficit -= cost;
+			({ lastGroupId, consecutiveCount } = this.updateRunState(
+				lastGroupId,
+				consecutiveCount,
+				selectedGroup.groupId
+			));
 		}
 
 		logger.debug(
-			`[IRQueueGeneratorV4] DRR 完成: ${queue.length} 块, ` + `总时间=${tSum.toFixed(1)}min`
+			`[IRQueueGeneratorV4] DRR 完成: ${queue.length} 块, 总时间=${totalMinutes.toFixed(1)}min`
 		);
 
-		return { queue, totalMinutes: tSum };
+		return { queue, totalMinutes };
 	}
 
-	/**
-	 * 检查是否还有可用项
-	 */
 	private hasAvailableItems(groups: GroupState[]): boolean {
-		return groups.some((g) => g.items.length > 0);
+		return groups.some((group) => group.items.length > 0);
 	}
 
-	/**
-	 * 获取赤字最大的组
-	 */
-	private getMaxDeficitGroup(groups: GroupState[]): GroupState | null {
+	private selectNextGroup(
+		groups: GroupState[],
+		lastGroupId: string | null,
+		consecutiveCount: number
+	): GroupState | null {
 		let maxGroup: GroupState | null = null;
 		let maxDeficit = -Infinity;
+		const alternativesRemain = this.hasAlternativeGroup(groups, lastGroupId);
 
 		for (const group of groups) {
-			if (group.items.length > 0 && group.deficit > maxDeficit) {
-				maxDeficit = group.deficit;
+			if (group.items.length === 0) {
+				continue;
+			}
+
+			const adjustedDeficit =
+				group.deficit +
+				this.getInterleaveBias(group.groupId, lastGroupId, consecutiveCount, alternativesRemain);
+
+			if (adjustedDeficit > maxDeficit) {
+				maxDeficit = adjustedDeficit;
 				maxGroup = group;
 			}
 		}
@@ -340,9 +283,51 @@ export class IRQueueGeneratorV4 {
 		return maxGroup;
 	}
 
-	/**
-	 * 在组内找一个更小的块
-	 */
+	private getInterleaveBias(
+		groupId: string,
+		lastGroupId: string | null,
+		consecutiveCount: number,
+		alternativesRemain: boolean
+	): number {
+		if (!this.interleaveMode || !lastGroupId || !alternativesRemain) {
+			return 0;
+		}
+
+		const overflow = consecutiveCount + 1 - this.maxConsecutiveSameTopic;
+		if (overflow <= 0) {
+			return 0;
+		}
+
+		const bias = Math.min(2.4, overflow * 0.9);
+		return groupId === lastGroupId ? -bias : bias;
+	}
+
+	private hasAlternativeGroup(groups: GroupState[], lastGroupId: string | null): boolean {
+		if (!lastGroupId) {
+			return false;
+		}
+
+		return groups.some((group) => group.groupId !== lastGroupId && group.items.length > 0);
+	}
+
+	private updateRunState(
+		lastGroupId: string | null,
+		consecutiveCount: number,
+		selectedGroupId: string
+	): { lastGroupId: string; consecutiveCount: number } {
+		if (selectedGroupId === lastGroupId) {
+			return {
+				lastGroupId: selectedGroupId,
+				consecutiveCount: consecutiveCount + 1,
+			};
+		}
+
+		return {
+			lastGroupId: selectedGroupId,
+			consecutiveCount: 1,
+		};
+	}
+
 	private findSmallerItem(group: GroupState, maxCost: number): QueueItemV4 | null {
 		for (const item of group.items) {
 			if (item.estimatedCost <= maxCost) {
@@ -352,9 +337,6 @@ export class IRQueueGeneratorV4 {
 		return null;
 	}
 
-	/**
-	 * 返回空结果
-	 */
 	private emptyResult(): QueueGenerationResultV4 {
 		return {
 			queue: [],
@@ -369,9 +351,6 @@ export class IRQueueGeneratorV4 {
 		};
 	}
 
-	/**
-	 * 获取队列预览（不修改状态）
-	 */
 	previewQueue(
 		candidatePool: IRBlockV4[],
 		groupMapping: Record<string, string>,
@@ -384,9 +363,6 @@ export class IRQueueGeneratorV4 {
 		};
 	}
 
-	/**
-	 * 计算过载统计
-	 */
 	getOverloadStats(
 		candidatePool: IRBlockV4[],
 		groupMapping: Record<string, string>,
@@ -398,9 +374,7 @@ export class IRQueueGeneratorV4 {
 		overloadRatio: number;
 		groupOverload: Record<string, { count: number; cost: number; ratio: number }>;
 	} {
-		const scheduled = candidatePool.filter((b) => b.status === "scheduled");
-
-		// 计算总成本
+		const scheduled = candidatePool.filter((block) => block.status === "scheduled");
 		let totalCost = 0;
 		const groupCosts: Record<string, { count: number; cost: number }> = {};
 
@@ -416,19 +390,17 @@ export class IRQueueGeneratorV4 {
 			groupCosts[groupId].cost += cost;
 		}
 
-		const overloadRatio = totalCost / timeBudget;
+		const overloadRatio = timeBudget > 0 ? totalCost / timeBudget : 0;
 		const isOverloaded = overloadRatio > 1.5;
-
-		// 计算各组过载
 		const groupCount = Object.keys(groupCosts).length || 1;
-		const fairShare = timeBudget / groupCount;
+		const fairShare = groupCount > 0 ? timeBudget / groupCount : timeBudget;
 
 		const groupOverload: Record<string, { count: number; cost: number; ratio: number }> = {};
 		for (const [groupId, data] of Object.entries(groupCosts)) {
 			groupOverload[groupId] = {
 				count: data.count,
 				cost: data.cost,
-				ratio: data.cost / fairShare,
+				ratio: fairShare > 0 ? data.cost / fairShare : 0,
 			};
 		}
 
@@ -442,9 +414,6 @@ export class IRQueueGeneratorV4 {
 	}
 }
 
-/**
- * 导出工厂函数
- */
 export function createQueueGenerator(timeBudget?: number): IRQueueGeneratorV4 {
 	return new IRQueueGeneratorV4(timeBudget);
 }

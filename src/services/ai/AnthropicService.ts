@@ -115,27 +115,12 @@ export class AnthropicService extends AIService {
 
 			// 转换为GeneratedCard格式
 			const cards: GeneratedCard[] = parsedCards.map((card) => {
-				// 优先使用content字段，向后兼容front/back格式
-				let content: string;
-				if (card.content) {
-					content = this.ensureString(card.content);
-				} else if (card.front || card.back) {
-					const front = this.ensureString(card.front);
-					const back = this.ensureString(card.back);
-					content = back ? `${front}\n\n---div---\n\n${back}` : front;
-				} else {
-					content = "";
-				}
+				const content = this.getParsedCardContent(card);
 
 				return {
 					uuid: this.generateCardId(),
 					type: card.type || "qa",
-					content: content,
-					front: card.front ? this.ensureString(card.front) : undefined,
-					back: card.back ? this.ensureString(card.back) : undefined,
-					choices: card.choices,
-					correctAnswer: card.correctAnswer,
-					clozeText: card.clozeText,
+					content,
 					tags: card.tags || [],
 					images: card.images || [],
 					explanation: card.explanation,
@@ -329,24 +314,4 @@ export class AnthropicService extends AIService {
 		};
 	}
 
-	private ensureString(value: unknown): string {
-		if (value === null || value === undefined) {
-			return "";
-		}
-
-		if (typeof value === "string") {
-			return value;
-		}
-
-		if (typeof value === "object") {
-			logger.warn("Claude返回了非字符串类型的卡片内容:", value);
-			try {
-				return JSON.stringify(value);
-			} catch {
-				return String(value);
-			}
-		}
-
-		return String(value);
-	}
 }

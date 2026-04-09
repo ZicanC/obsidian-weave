@@ -7,7 +7,15 @@ import { logger } from "../../utils/logger";
 
 import type { WeaveDataStorage } from "../../data/storage";
 import type { Card, CardType, Deck } from "../../data/types";
-import type { DeckGroupByType, DeckTagGroup } from "../../types/deck-kanban-types";
+import {
+	createDeckTagColumnKey,
+	DECK_TAG_EMPTY_GROUP_KEY,
+	DECK_TAG_GROUP_OTHER_KEY,
+	normalizeDeckTagGroupTags,
+	normalizeDeckTagName,
+	type DeckGroupByType,
+	type DeckTagGroup,
+} from "../../types/deck-kanban-types";
 import { getCardMetadataService } from "../CardMetadataService";
 
 /**
@@ -205,10 +213,8 @@ export class DeckAggregationService {
 	 */
 	analyzeTag(deck: Deck): string {
 		// 牌组的tags数组中，只取第一个标签（单选）
-		if (deck.tags && deck.tags.length > 0) {
-			return deck.tags[0];
-		}
-		return "noTag";
+		const firstTag = deck.tags?.map((tag) => normalizeDeckTagName(tag)).find(Boolean);
+		return firstTag ? createDeckTagColumnKey(firstTag) : DECK_TAG_EMPTY_GROUP_KEY;
 	}
 
 	/**
@@ -219,16 +225,16 @@ export class DeckAggregationService {
 	 * @returns 匹配的标签名称或'__other__'
 	 */
 	analyzeTagGroup(deck: Deck, tagGroup: DeckTagGroup): string {
-		// 检查牌组的标签是否包含标签组中的任意标签
-		if (deck.tags && deck.tags.length > 0) {
-			for (const tag of tagGroup.tags) {
-				if (deck.tags.includes(tag)) {
-					return tag; // 返回第一个匹配的标签
+		const candidateTags = normalizeDeckTagGroupTags(tagGroup.tags);
+		if (deck.tags && deck.tags.length > 0 && candidateTags.length > 0) {
+			const deckTagSet = new Set(deck.tags.map((tag) => normalizeDeckTagName(tag)).filter(Boolean));
+			for (const tag of candidateTags) {
+				if (deckTagSet.has(tag)) {
+					return createDeckTagColumnKey(tag);
 				}
 			}
 		}
-		// 不在标签组中，归类到"其他"
-		return "__other__";
+		return DECK_TAG_GROUP_OTHER_KEY;
 	}
 
 	/**
@@ -288,14 +294,14 @@ export class DeckAggregationService {
 					case "tag":
 						groupKey = this.analyzeTag(deck);
 						break;
-					case "tagGroup":
-						// 按标签组分组，需要传入tagGroup
-						if (!tagGroup) {
-							logger.error('tagGroup is required when groupBy is "tagGroup"');
-							groupKey = "__other__";
-						} else {
-							groupKey = this.analyzeTagGroup(deck, tagGroup);
-						}
+										case "tagGroup":
+												// 按标签组分组，需要传入tagGroup
+												if (!tagGroup) {
+														logger.error('tagGroup is required when groupBy is "tagGroup"');
+														groupKey = DECK_TAG_GROUP_OTHER_KEY;
+												} else {
+														groupKey = this.analyzeTagGroup(deck, tagGroup);
+												}
 						break;
 					default:
 						groupKey = "unknown";

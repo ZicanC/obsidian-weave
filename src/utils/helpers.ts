@@ -6,6 +6,7 @@ import type { App, TFile } from "obsidian";
 import { MAIN_SEPARATOR } from "../constants/markdown-delimiters";
 import type { Card, Deck } from "../data/types";
 import { CardState, Rating } from "../data/types";
+import { getCardBack, getCardFront } from "./card-field-helper";
 
 // ============================================================================
 // ID Generation - Backward Compatibility Layer
@@ -704,8 +705,8 @@ export function getCardContentBySide(
 			}
 		} else {
 			// 步骤2: 降级到fields（向后兼容旧数据）
-			frontContent = card.fields?.front || card.fields?.question || "";
-			backContent = card.fields?.back || card.fields?.answer || "";
+			frontContent = getCardFront(card);
+			backContent = getCardBack(card);
 		}
 
 		// 缓存结果

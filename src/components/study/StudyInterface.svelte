@@ -6,7 +6,6 @@
   // UI组件导入
   import EnhancedButton from "../ui/EnhancedButton.svelte";
   import EnhancedIcon from "../ui/EnhancedIcon.svelte";
-  import ObsidianIcon from "../ui/ObsidianIcon.svelte";
   import FloatingMenu from "../ui/FloatingMenu.svelte";
   import MarkdownView from "../atoms/MarkdownRenderer.svelte";
   import StatsCards from "./StatsCards.svelte";
@@ -15,7 +14,6 @@
   import MobileTimingInfoBar from "./MobileTimingInfoBar.svelte";  // 卡片计时信息栏
   import VerticalToolbar from "./VerticalToolbar.svelte";
   import RatingSection from "./RatingSection.svelte";
-  import CardPreview from "./CardPreview.svelte";
   import PreviewContainer from "../preview/PreviewContainer.svelte";
   import StudyHeader from "./StudyHeader.svelte";
   import CardEditorContainer from "./CardEditorContainer.svelte";
@@ -62,7 +60,6 @@
   import { CardFormatService } from "../../services/CardFormatService";
   import { AIFormatterService } from "../../services/ai/AIFormatterService";
   import type { FormatRequest } from "../../services/ai/AIFormatterService";
-  import { AITestGeneratorService } from "../../services/ai/AITestGeneratorService";
   import { AISplitService } from "../../services/ai/AISplitService";
   
   // AI 格式化功能组件
@@ -107,7 +104,6 @@
     removeHoverCleanup,
     setupBlockLinkHandlers
   } from "../../utils/study/studyInterfaceUtils";
-  import { processFieldContent } from "../../utils/study/fieldProcessing";
   import { formatStudyTime } from "../../utils/study/timeCalculation";
   import { StepIndexCalculator } from "../../utils/learning-steps/StepIndexCalculator";
   import { applyLearningStepScheduling } from "../../utils/learning-steps/learningStepScheduling";
@@ -125,6 +121,7 @@
   import { openLinkWithExistingLeaf } from "../../utils/workspace-navigation";
   import { vaultStorage } from '../../utils/vault-local-storage';
   import { calculateMobileEditViewportHeight } from "../../utils/mobile-edit-viewport";
+  import { getCardBack, getCardFront } from "../../utils/card-field-helper";
   // 牌组信息获取工具
   import { getCardMetadata, parseEpubSourceInfo, parseSourceInfo, setCardProperties, getCardDeckIds, createContentWithMetadata } from "../../utils/yaml-utils";
   import { resolveStudySessionDeckId } from "../../utils/study/sessionDeckId";
@@ -389,7 +386,6 @@
   let childCardsOverlayRef: any = $state(null); // 浮层组件引用
   let regeneratingCardIds = $state(new Set<string>()); // 正在重新生成的卡片ID集合
   let isRegenerating = $derived(regeneratingCardIds.size > 0); // 是否正在重新生成
-  let currentTestGenAction = $state<AIAction | null>(null); // 当前使用的测试题生成器
   let currentSplitAction = $state<AIAction | null>(null); //  当前使用的AI拆分功能
   
   //  AI拆分目标牌组选择
@@ -874,7 +870,7 @@
       }
     }
 
-    //  从 Store 中查找 AI拂分配置（与 AI格式化、测试题生成一致）
+    //  从 Store 中查找 AI拆分配置（与 AI格式化使用相同数据源）
     const action = customActions.split.find((a: AIAction) => a.id === actionId);
     if (!action) {
       new Notice(t('studyInterface.notices.aiSplitActionNotFound'));
@@ -1007,11 +1003,10 @@
   }
 
   /**
-   * 重新生成子卡片/测试题
+   * 重新生成子卡片
    * - 如果有选中的卡片：只重新生成选中的部分，未选中的保留
    * - 如果没有选中：全部重新生成
    * - 重新生成的卡片替换原位置，未选中的卡片保持显示（待定状态）
-   * - 支持测试题重新生成模式
    */
   async function handleRegenerateChildCards() {
     if (!currentCard || !childCardsOverlayRef) return;
@@ -1021,8 +1016,6 @@
       const selectedIds = childCardsOverlayRef.getSelectedCardIds() || [];
       const hasSelection = selectedIds.length > 0;
       
-      //  判断是测试题生成模式还是AI拂分模式
-      const isTestGenMode = currentTestGenAction !== null;
       const isSplitMode = currentSplitAction !== null;
 
       if (hasSelection) {
@@ -1039,7 +1032,7 @@
         
         new Notice(t('studyInterface.notices.regenerateSelected', {
           count: selectedCount,
-          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+          itemType: t('studyInterface.notices.cardsLabel')
         }));
         
         // 将选中的卡片 ID 添加到 regeneratingCardIds（触发 UI 更新）
@@ -1048,10 +1041,7 @@
         // 清空选中状态
         childCardsOverlayRef.clearSelection();
         
-        //  根据模式选择调用不同的生成函数
-        if (isTestGenMode && currentTestGenAction) {
-          await regenerateTestsWithPositionMap(currentTestGenAction.id, selectedCount, positionMap);
-        } else if (isSplitMode && currentSplitAction) {
+        if (isSplitMode && currentSplitAction) {
           await handleAISplit(currentSplitAction.id, selectedCount, positionMap);
         } else {
           new Notice(t('studyInterface.notices.regenerateConfigMissing'));
@@ -1059,7 +1049,7 @@
         
         new Notice(t('studyInterface.notices.regenerateSelectedDone', {
           count: selectedCount,
-          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+          itemType: t('studyInterface.notices.cardsLabel')
         }));
       } else {
         // 无选中：全部重新生成
@@ -1073,7 +1063,7 @@
         
         new Notice(t('studyInterface.notices.regenerateAll', {
           count: totalCount,
-          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+          itemType: t('studyInterface.notices.cardsLabel')
         }));
         
         // 将所有卡片 ID 添加到 regeneratingCardIds
@@ -1082,10 +1072,7 @@
         // 清空选中状态
         childCardsOverlayRef.clearSelection();
         
-        //  根据模式选择调用不同的生成函数
-        if (isTestGenMode && currentTestGenAction) {
-          await regenerateTestsWithPositionMap(currentTestGenAction.id, totalCount, positionMap);
-        } else if (isSplitMode && currentSplitAction) {
+        if (isSplitMode && currentSplitAction) {
           await handleAISplit(currentSplitAction.id, totalCount > 0 ? totalCount : 0, positionMap);
         } else {
           new Notice(t('studyInterface.notices.regenerateConfigMissing'));
@@ -1093,7 +1080,7 @@
         
         new Notice(t('studyInterface.notices.regenerateAllDone', {
           count: totalCount,
-          itemType: isTestGenMode ? t('studyInterface.notices.testsLabel') : t('studyInterface.notices.cardsLabel')
+          itemType: t('studyInterface.notices.cardsLabel')
         }));
       }
     } catch (error) {
@@ -1103,101 +1090,6 @@
       // 清除 regeneratingCardIds 状态（恢复 UI 正常状态）
       regeneratingCardIds = new Set();
     }
-  }
-
-  /**
-   * 重新生成测试题（带位置映射）
-   */
-  async function regenerateTestsWithPositionMap(actionId: string, targetCount: number, positionMap: Map<number, string>) {
-    if (!currentCard) return;
-
-    // 捕获 currentCard 到局部变量，确保类型安全
-    const card = currentCard;
-    if (!card) return;
-
-    const allActions = customActions.testGen;
-    const action = allActions.find((a: AIAction) => a.id === actionId);
-    
-    if (!action || !action.testConfig) {
-      throw new Error(t('studyInterface.notices.testGenerateActionNotFound'));
-    }
-
-    // 使用专用的AI测试题生成服务
-    const { AITestGeneratorService } = await import('../../services/ai/AITestGeneratorService');
-    const testGeneratorService = new AITestGeneratorService(plugin);
-    
-    // 构建测试题生成请求
-    const generateRequest = {
-      sourceCard: card,
-      action: action,
-      targetDeckId: undefined // 暂时不指定目标牌组，由用户在预览时选择
-    };
-
-    // 调用专用的AI测试题生成服务
-    const response = await testGeneratorService.generateTests(generateRequest);
-
-    if (!response.success || !response.generatedQuestions || response.generatedQuestions.length === 0) {
-      throw new Error(response.error || '生成失败');
-    }
-
-    // 转换为临时卡片数据
-    // 使用工具函数获取牌组 ID
-    const { primaryDeckId: regenDeckId } = getCardDeckIds(card, decks);
-    const tempChildCards: Card[] = response.generatedQuestions.map((question: any, index: number) => ({
-      uuid: `temp-uuid-${Date.now()}-${index}`,
-      deckId: regenDeckId || card.deckId,
-      templateId: card.templateId,
-      type: question.type === 'choice' ? CardType.Basic : CardType.Basic, // 选择题也使用basic类型，选择题信息存储在content中
-      content: `${question.front}\n\n${question.back}`,
-      fields: {
-        front: question.front,
-        back: question.back
-      },
-      // choiceQuestionData已废弃，选择题信息存储在content字段中
-      tags: card.tags || [],
-      priority: 0,
-      difficulty: question.difficulty || currentTestGenAction?.testConfig?.difficultyLevel,
-      cardPurpose: 'test',
-      metadata: {
-        questionType: question.type || action.testConfig?.questionType || 'single',
-        generatedBy: action.id,
-        generatedAt: new Date().toISOString(),
-        explanation: question.explanation
-      },
-      fsrs: {
-        due: new Date().toISOString(),
-        stability: 0,
-        difficulty: 0,
-        elapsedDays: 0,
-        scheduledDays: 0,
-        reps: 0,
-        lapses: 0,
-        state: 0,
-        retrievability: 0
-      },
-      reviewHistory: [],
-      stats: {
-        totalReviews: 0,
-        totalTime: 0,
-        averageTime: 0,
-        memoryRate: 0
-      },
-      created: new Date().toISOString(),
-      modified: new Date().toISOString()
-    }));
-
-    // 按位置替换卡片
-    const newChildCards = [...childCards];
-    const positionArray = Array.from(positionMap.keys()).sort((a, b) => a - b);
-    
-    tempChildCards.forEach((newCard, i) => {
-      const targetIndex = positionArray[i];
-      if (targetIndex !== undefined && targetIndex < newChildCards.length) {
-        newChildCards[targetIndex] = newCard;
-      }
-    });
-    
-    childCards = newChildCards;
   }
 
   /**
@@ -1304,166 +1196,7 @@
   }
 
   /**
-   * 保存 AI 拆分生成的卡片到题库系统
-   * 自动创建或使用现有的题库牌组
-   * 
-   * 统一从 CardMetadataCache 获取牌组名称
-   */
-  async function saveToQuestionBank(cards: Card[], parentCard: Card): Promise<number> {
-    if (!plugin.questionBankService) {
-      throw new Error('题库服务未初始化');
-    }
-
-    try {
-      // 1. 统一从派生字段缓存获取牌组名称
-      let deckName: string;
-      let deckTags: string[] = parentCard.tags || [];
-      
-      // 优先从 CardMetadataCache 获取（派生字段）
-      if (plugin.cardMetadataCache) {
-        const metadata = plugin.cardMetadataCache.getMetadata(parentCard);
-        if (metadata.decks.length > 0) {
-          deckName = metadata.decks[0]; // 使用第一个牌组名称
-          deckTags = [...new Set([...deckTags, ...metadata.tags])]; // 合并标签
-          logger.debug(`[AI拆分] 从缓存获取牌组名称: ${deckName}`);
-        } else {
-          // 回退：从 YAML 直接解析
-          const { getCardMetadata } = await import('../../utils/yaml-utils');
-          const yamlMetadata = getCardMetadata(parentCard.content || '');
-          deckName = yamlMetadata.we_decks?.[0] || '默认';
-          logger.debug(`[AI拆分] 从 YAML 解析牌组名称: ${deckName}`);
-        }
-      } else {
-        // 缓存不可用时直接解析
-        const { getCardMetadata } = await import('../../utils/yaml-utils');
-        const yamlMetadata = getCardMetadata(parentCard.content || '');
-        deckName = yamlMetadata.we_decks?.[0] || '默认';
-        logger.debug(`[AI拆分] 缓存不可用，从 YAML 解析牌组名称: ${deckName}`);
-      }
-
-      // 2. 构造题库名称（牌组名称 + " - 题库"）
-      const questionBankName = `${deckName} - 题库`;
-      
-      // 3. 查找是否已有对应的题库
-      let questionBank = plugin.questionBankService.getAllQuestionBanks()
-        .find((bank: any) => bank.name === questionBankName);
-      
-      // 4. 如果不存在，创建新题库
-      if (!questionBank) {
-        logger.debug(`[AI拆分] 创建新题库: ${questionBankName}`);
-        questionBank = await plugin.questionBankService.createBank({
-          name: questionBankName,
-          description: `从牌组"${deckName}"自动生成的题库`,
-          tags: deckTags,
-          category: '未分类',
-          deckType: 'question-bank'
-        });
-      }
-
-      // 5. 将卡片转换为题库题目格式
-      let savedCount = 0;
-      
-      // 获取题库名称用于写入 we_decks（使用已有的 questionBankName 变量）
-      const qbNameForWeDecks = questionBank.name;
-      
-      for (const card of cards) {
-        try {
-          // 生成新的题目ID
-          const { generateId } = await import('../../utils/helpers');
-          const { generateCardUUID } = await import('../../services/identifier/WeaveIDGenerator');
-          
-          // 从卡片元数据中获取题目类型和难度（如果存在）
-          const questionType = card.metadata?.questionType || 'short_answer';
-          const rawDifficulty = card.difficulty || currentTestGenAction?.testConfig?.difficultyLevel || 'medium';
-          // 确保难度符合 Card 类型（不包含 'mixed'）
-          const difficulty: 'easy' | 'medium' | 'hard' = rawDifficulty === 'mixed' ? 'medium' : (rawDifficulty as 'easy' | 'medium' | 'hard');
-          
-          // 在 content 中写入 we_decks
-          let finalContent = card.content;
-          if (qbNameForWeDecks && card.content) {
-            finalContent = createContentWithMetadata({ we_decks: [qbNameForWeDecks] }, card.content);
-          }
-          
-          //  构造题目卡片（仅设置必要字段，不使用扩展运算符）
-          const questionCard: Card = {
-            // 基础标识
-            uuid: generateCardUUID(),
-            deckId: questionBank.id,
-            templateId: card.templateId,
-            type: card.type,
-            cardPurpose: 'test', //  强制设置为测试卡片
-            difficulty: difficulty,
-            
-            //  内容字段（包含 we_decks）
-            content: finalContent,
-            //  不包含已弃用的fields字段
-            
-            // 元数据
-            tags: card.tags || [],
-            priority: card.priority || 0,
-            
-            metadata: {
-              questionType: questionType,
-              generatedBy: card.metadata?.generatedBy,
-              generatedAt: card.metadata?.generatedAt,
-              explanation: card.metadata?.explanation,
-              questionMetadata: {
-                type: questionType as any,
-                correctAnswer: card.metadata?.questionMetadata?.correctAnswer || ''
-              },
-              sourceCardId: parentCard.uuid,
-              sourceDeckId: parentCard.deckId
-            },
-            
-            //  测试卡片专用统计（不包含memoryRate）
-            stats: {
-              totalReviews: 0,
-              totalTime: 0,
-              averageTime: 0,
-              testStats: {
-                totalAttempts: 0,
-                correctAttempts: 0,
-                incorrectAttempts: 0,
-                accuracy: 0,
-                bestScore: 0,
-                averageScore: 0,
-                lastScore: 0,
-                averageResponseTime: 0,
-                fastestTime: 0,
-                lastTestDate: new Date().toISOString(),
-                isInErrorBook: false,
-                consecutiveCorrect: 0
-              }
-            },
-            //  不包含fsrs和reviewHistory（测试卡片不需要）
-            
-            // 时间戳
-            created: new Date().toISOString(),
-            modified: new Date().toISOString()
-          };
-
-          // 添加到题库
-          await plugin.questionBankService.addQuestion(questionBank.id, questionCard);
-          savedCount++;
-          
-          logger.debug(`[测试题保存] 已添加题目到题库: ${questionCard.uuid}, 类型: ${questionType}, 难度: ${difficulty}`);
-        } catch (error) {
-          logger.error('[测试题保存] 添加题目失败:', error);
-        }
-      }
-
-      logger.debug(`[AI拆分] 成功保存${savedCount}道题目到题库: ${questionBankName}`);
-      return savedCount;
-    } catch (error) {
-      logger.error('[AI拆分] 保存到题库失败:', error);
-      throw error;
-    }
-  }
-
-  /**
-   *  保存选中的子卡片：区分AI拂分和测试题生成
-   * - AI拂分：保存到记忆牌组，建立父子关系
-   * - 测试题生成：保存到题库牌组
+   * 保存选中的子卡片到记忆牌组
    */
   async function handleSaveSelectedChildCards() {
     if (!currentCard || childCards.length === 0) return;
@@ -1480,9 +1213,7 @@
       // 过滤出选中的卡片
       const selectedCards = childCards.filter(card => selectedIds.includes(card.uuid));
 
-      //  区分AI拂分和测试题生成
       const isSplitMode = currentSplitAction !== null;
-      const isTestGenMode = currentTestGenAction !== null;
 
       if (isSplitMode) {
         //  AI拂分模式：保存到记忆牌组
@@ -1494,13 +1225,6 @@
         new Notice(t('studyInterface.notices.savingToMemoryDeck'));
         const savedCount = await saveChildCardsToMemoryDeck(selectedCards, currentCard, targetDeckIdForSplit);
         new Notice(t('studyInterface.notices.savedToMemoryDeck', { count: savedCount }));
-        
-      } else if (isTestGenMode) {
-        //  测试题生成模式：保存到题库
-        new Notice(t('studyInterface.notices.savingToQuestionBank'));
-        const savedCount = await saveToQuestionBank(selectedCards, currentCard);
-        new Notice(t('studyInterface.notices.savedToQuestionBank', { count: savedCount }));
-        
       } else {
         new Notice(t('studyInterface.notices.saveModeUndetermined'));
         return;
@@ -1512,7 +1236,6 @@
       
       //  清除当前使用的AI配置和目标牌组
       currentSplitAction = null;
-      currentTestGenAction = null;
       targetDeckIdForSplit = '';
       
       // 清空选中状态
@@ -1544,7 +1267,6 @@
     
     //  清除当前使用的AI配置和目标牌组
     currentSplitAction = null;
-    currentTestGenAction = null;
     targetDeckIdForSplit = '';
     
     // 清空选中状态
@@ -5132,8 +4854,8 @@
       
       if (!currentContent.trim()) {
         // 降级方案：从fields构建
-        const front = currentCard.fields?.front || currentCard.fields?.question || '';
-        const back = currentCard.fields?.back || currentCard.fields?.answer || '';
+        const front = getCardFront(currentCard);
+        const back = getCardBack(currentCard);
         currentContent = front;
         if (back) {
           currentContent += '\n\n---\n\n' + back;
@@ -5387,130 +5109,6 @@
     });
 
     aiActionManagerModalInstance.open();
-  }
-
-  // 处理测试题生成，使用现有预览流程
-  async function handleTestGenerate(actionId: string) {
-    if (!currentCard || aiSplitInProgress) {
-      new Notice(t('studyInterface.notices.noCardForTestGenerate'));
-      return;
-    }
-
-    // 捕获 currentCard 到局部变量，确保类型安全
-    const card = currentCard;
-    if (!card) return;
-
-    try {
-      aiSplitInProgress = true;
-      
-      // 1. 获取测试题生成器配置
-      const allActions = customActions.testGen;
-      const action = allActions.find((a: AIAction) => a.id === actionId);
-      
-      if (!action || !action.testConfig) {
-        new Notice(t('studyInterface.notices.testGenerateActionNotFound'));
-        return;
-      }
-
-      new Notice(t('studyInterface.notices.testGenerating'));
-
-      // 2. 使用专用的AI测试题生成服务
-      const { AITestGeneratorService } = await import('../../services/ai/AITestGeneratorService');
-      const testGeneratorService = new AITestGeneratorService(plugin);
-      
-      logger.debug('[测试题生成] 使用测试题生成服务:', action.id);
-
-      // 3. 构建测试题生成请求
-      const generateRequest = {
-        sourceCard: card,
-        action: action,
-        targetDeckId: undefined // 暂时不指定目标牌组，由用户在预览时选择
-      };
-
-      // 4. 调用专用的AI测试题生成服务
-      const response = await testGeneratorService.generateTests(generateRequest);
-
-      if (!response.success || !response.generatedQuestions || response.generatedQuestions.length === 0) {
-        throw new Error(response.error || '生成失败');
-      }
-
-      // 5. 转换为临时卡片数据（用于预览）
-      // 使用工具函数获取牌组 ID 和名称
-      const { primaryDeckId: testGenDeckId } = getCardDeckIds(card, decks);
-      const targetTestDeckId = testGenDeckId || card.deckId;
-      const targetTestDeck = decks.find(d => d.id === targetTestDeckId);
-      const targetTestDeckName = targetTestDeck?.name;
-      
-      const tempChildCards: Card[] = response.generatedQuestions.map((question: any, index: number) => {
-        // 构建带有 we_decks 的 content
-        const bodyContent = question.content || `${question.front}\n\n---div---\n\n${question.back}`;
-        const contentWithMetadata = targetTestDeckName 
-          ? createContentWithMetadata({ we_decks: [targetTestDeckName] }, bodyContent)
-          : bodyContent;
-        
-        return {
-          uuid: `temp-uuid-${Date.now()}-${index}`,
-          deckId: targetTestDeckId,
-          templateId: card.templateId,
-          type: CardType.Basic,
-          cardPurpose: 'test', //  标记为测试卡片
-          difficulty: question.difficulty || action.testConfig?.difficultyLevel || 'medium',
-          
-          //  内容字段（包含 we_decks）
-          content: contentWithMetadata,
-          //  不使用已弃用的 fields 字段
-          
-          tags: card.tags || [],
-          priority: 0,
-          
-          metadata: {
-            questionType: question.type || action.testConfig?.questionType || 'single',
-            generatedBy: action.id,
-            generatedAt: new Date().toISOString(),
-            explanation: question.explanation
-          },
-          
-          //  测试卡片使用 testStats，不使用 fsrs 和 memoryRate
-          stats: {
-            totalReviews: 0,
-            totalTime: 0,
-            averageTime: 0,
-            testStats: {
-              totalAttempts: 0,
-              correctAttempts: 0,
-              incorrectAttempts: 0,
-              accuracy: 0,
-              bestScore: 0,
-              averageScore: 0,
-              lastScore: 0,
-              averageResponseTime: 0,
-              fastestTime: 0,
-              lastTestDate: new Date().toISOString(),
-              isInErrorBook: false,
-              consecutiveCorrect: 0
-            }
-          },
-          //  不包含 fsrs 和 reviewHistory（测试卡片不需要）
-          
-          created: new Date().toISOString(),
-          modified: new Date().toISOString()
-        };
-      });
-
-      // 6. 显示预览界面
-      childCards = tempChildCards;
-      currentTestGenAction = action; // 保存当前使用的生成器配置
-      showChildCardsOverlay = true;
-      new Notice(t('studyInterface.notices.testGenerateSuccess', { count: childCards.length }));
-      
-    } catch (error) {
-      logger.error('[StudyInterface] 生成测试题失败:', error);
-      new Notice(t('studyInterface.notices.testGenerateFailed', {
-        error: error instanceof Error ? error.message : t('study.view.unknownError')
-      }));
-    } finally {
-      aiSplitInProgress = false;
-    }
   }
 
 
@@ -6606,23 +6204,27 @@
               {#if showAnswer}
                 <!-- 返回预览按钮 -->
                 <button
-                  class="compact-control-btn clickable-icon return-btn"
+                  type="button"
+                  class="footer-side-action-btn return-btn"
                   onclick={undoShowAnswer}
                   title={t('studyInterface.labels.returnToPreview')}
                   aria-label={t('studyInterface.labels.returnToPreviewAria')}
                 >
-                  <ObsidianIcon name="chevron-left" size={16} />
+                  <EnhancedIcon name="chevron-left" size={20} />
                 </button>
                 
                 <!-- 撤销按钮 -->
                 <button
-                  class="compact-control-btn clickable-icon undo-btn"
-                  class:disabled={undoCount === 0}
+                  type="button"
+                  class="footer-side-action-btn undo-btn"
                   onclick={undoCount > 0 ? handleUndoReview : undefined}
                   title={undoCount > 0 ? t('studyInterface.notices.undoLastRating') : t('studyInterface.notices.nothingToUndo')}
                   disabled={undoCount === 0}
                 >
-                  <ObsidianIcon name="rotate-ccw" size={16} />
+                  <EnhancedIcon name="undo" size={20} />
+                  {#if undoCount > 0}
+                    <span class="footer-side-action-badge">{undoCount}</span>
+                  {/if}
                 </button>
               {/if}
             </div>
@@ -6768,7 +6370,6 @@
               showEditModal = true;
             }}
             onAIFormatCustom={handleAIFormatCustom}
-            onTestGenerate={handleTestGenerate}
             onSplitCard={(actionId) => handleAISplit(actionId, 0)}
             onManageFormatActions={openAIActionManagerWithObsidianAPI}
             onOpenDetailedView={handleOpenViewCardModal}
@@ -6815,7 +6416,6 @@
       onRecycleCard={suspendCurrentCard}
       onChangeDeck={handleChangeDeck}
       onAIFormatCustom={handleAIFormatCustom}
-      onTestGenerate={handleTestGenerate}
       onSplitCard={(actionId) => handleAISplit(actionId, 0)}
       onOpenAIConfig={openAIActionManagerWithObsidianAPI}
       onGraphLinkToggle={handleGraphLinkToggle}
@@ -7423,19 +7023,68 @@
     transform: none;
   }
 
-  .footer-top-controls .compact-control-btn {
-    width: 32px;
-    height: 32px;
+  .footer-side-action-btn {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0.5rem;
+    background: transparent;
+    border: none;
+    outline: none;
+    border-radius: 8px;
+    color: var(--text-normal);
+    cursor: pointer;
+    transition: all 0.3s ease;
   }
 
-  .footer-top-controls .compact-control-btn:hover:not(.disabled) {
+  .footer-side-action-btn:hover:not(:disabled) {
     background: var(--background-modifier-hover);
-    color: var(--icon-color-hover, var(--text-normal));
+    color: var(--interactive-accent);
+    transform: translateY(-2px);
   }
 
-  .footer-top-controls .compact-control-btn.disabled {
+  .footer-side-action-btn:focus-visible {
+    outline: 2px solid var(--interactive-accent);
+    outline-offset: 2px;
+  }
+
+  .footer-side-action-btn:active {
+    border: none;
+  }
+
+  .footer-side-action-btn:disabled {
     opacity: 0.4;
     cursor: not-allowed;
+    transform: none;
+  }
+
+  .footer-side-action-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border-radius: 11px;
+    font-size: 12px;
+    font-weight: 700;
+    box-shadow: 0 2px 12px rgba(102, 126, 234, 0.5);
+    border: 2px solid var(--background-primary);
+    pointer-events: none;
+  }
+
+  .footer-side-action-btn:disabled .footer-side-action-badge {
+    opacity: 0.5;
+    background: linear-gradient(135deg, #888 0%, #666 100%);
+    box-shadow: none;
   }
 
   /* --- 提示胶囊样式 --- */
@@ -7890,48 +7539,6 @@
     transform: translateY(0);
   }
 
-  .compact-control-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    color: var(--icon-color, var(--text-muted));
-    border: 0;
-    border-radius: 6px;
-    padding: 0;
-    width: 32px;
-    height: 32px;
-    cursor: pointer;
-    transition: background-color 0.15s ease, color 0.15s ease, opacity 0.15s ease;
-    box-shadow: none;
-  }
-
-  .compact-control-btn:hover {
-    background: var(--background-modifier-hover);
-    color: var(--icon-color-hover, var(--text-normal));
-  }
-
-  .compact-control-btn:active {
-    background: var(--background-modifier-active-hover, var(--background-modifier-border));
-  }
-
-  .compact-control-btn:focus-visible {
-    outline: 2px solid var(--interactive-accent);
-    outline-offset: 2px;
-  }
-
-  .compact-control-btn.disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-    pointer-events: none;
-  }
-
-  .compact-control-btn.disabled:hover {
-    background: transparent;
-    color: var(--icon-color, var(--text-muted));
-    box-shadow: none;
-  }
-
   /* ==================== Obsidian 移动端适配 ==================== */
   
   /* 所有移动设备通用样式 */
@@ -8014,11 +7621,6 @@
     min-height: 0;
   }
 
-  :global(body.is-phone) .compact-control-btn {
-    width: var(--weave-mobile-touch-min, 44px);
-    height: var(--weave-mobile-touch-min, 44px);
-  }
-
   /* 手机端：底部功能按钮区域样式 */
   :global(body.is-phone) .footer-top-controls {
     margin-bottom: 0.25rem;
@@ -8050,7 +7652,7 @@
   }
 
   /*  手机端：撤销/返回预览按钮仅图标，居中显示 */
-  :global(body.is-phone) .footer-top-controls .compact-control-btn {
+  :global(body.is-phone) .footer-side-action-btn {
     width: var(--weave-mobile-touch-min, 44px);
     height: var(--weave-mobile-touch-min, 44px);
   }

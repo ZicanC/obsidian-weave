@@ -111,6 +111,13 @@ export async function openLinkWithExistingLeaf(
 
 			return existingLeaf;
 		}
+
+		if (!hasSubpath) {
+			return await openFileWithExistingLeaf(app, targetFile, {
+				openInNewTab,
+				focus,
+			});
+		}
 	}
 
 	await app.workspace.openLinkText(linkText, contextPath, openInNewTab ? "tab" : false, {

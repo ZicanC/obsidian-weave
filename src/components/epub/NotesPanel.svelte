@@ -13,7 +13,16 @@
 		backlinkService?: EpubBacklinkHighlightService;
 		filePath?: string;
 		annotationRevision?: number;
-		onNavigate?: (cfi: string, text?: string, color?: string) => void;
+		onNavigate?: (
+			cfi: string,
+			text?: string,
+			color?: string,
+			metadata?: {
+				sourceFile?: string;
+				sourceRef?: string;
+				createdTime?: number;
+			}
+		) => void;
 	}
 
 	let { book, annotationService, backlinkService, filePath, annotationRevision = 0, onNavigate }: Props = $props();
@@ -26,6 +35,7 @@
 		color: HighlightColor;
 		createdTime: number;
 		sourceFile?: string;
+		sourceRef?: string;
 	}
 
 	interface DisplayNote extends Note {
@@ -55,7 +65,11 @@
 
 	function navigateToHighlight(hl: DisplayHighlight) {
 		if (hl.cfiRange) {
-			onNavigate?.(hl.cfiRange, hl.text, hl.color);
+			onNavigate?.(hl.cfiRange, hl.text, hl.color, {
+				sourceFile: hl.sourceFile,
+				sourceRef: hl.sourceRef,
+				createdTime: hl.createdTime,
+			});
 		}
 	}
 
@@ -114,7 +128,8 @@
 					text: highlight.text || '',
 					color: normalizeColor(highlight.color),
 					createdTime: highlight.createdTime || 0,
-					sourceFile: 'sourceFile' in highlight ? highlight.sourceFile : undefined
+					sourceFile: 'sourceFile' in highlight ? highlight.sourceFile : undefined,
+					sourceRef: 'sourceRef' in highlight ? highlight.sourceRef : undefined,
 				}))
 				.sort((a, b) => (b.createdTime || 0) - (a.createdTime || 0));
 

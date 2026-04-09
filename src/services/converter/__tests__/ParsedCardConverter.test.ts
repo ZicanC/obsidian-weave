@@ -24,8 +24,7 @@ describe('ParsedCardConverter', () => {
     const result = converter.convertToCard(
       {
         type: 'basic' as any,
-        front: '正面',
-        back: '背面',
+        content: '正面\n---div---\n背面',
         tags: ['标签组1', '内科'],
         metadata: {
           uuid: 'tk-testuuid001'

@@ -11,6 +11,7 @@
   import { onMount, onDestroy } from 'svelte';
   import type { WeavePlugin } from '../../main';
   import type { ReadingMaterial } from '../../types/incremental-reading-types';
+  import { getReadingMaterialDueAt } from '../../utils/ir-topic-compat';
   import { logger } from '../../utils/logger';
 
   // Props
@@ -73,8 +74,9 @@
       
       // 计算该日期到期的材料数量
       const count = materials.filter(m => {
-        if (!m.fsrs?.due) return false;
-        const dueDate = new Date(m.fsrs.due);
+        const dueAt = getReadingMaterialDueAt(m);
+        if (!dueAt) return false;
+        const dueDate = new Date(dueAt);
         dueDate.setHours(0, 0, 0, 0);
         return dueDate.getTime() === date.getTime();
       }).length;

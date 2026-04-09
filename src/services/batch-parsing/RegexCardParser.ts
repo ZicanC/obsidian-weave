@@ -164,8 +164,9 @@ export class RegexCardParser {
 
 				const parsedCard: ParsedCard = {
 					type: CardType.Basic, // 正则解析默认为问答类型
-					front: match.front.trim(),
-					back: match.back.trim(),
+					content: match.back.trim()
+						? `${match.front.trim()}\n---div---\n${match.back.trim()}`
+						: match.front.trim(),
 					tags: match.tags,
 					//  Content-Only: 不再生成 fields
 					metadata: {

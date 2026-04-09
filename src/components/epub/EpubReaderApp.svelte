@@ -3,20 +3,22 @@
         import { setIcon, MarkdownView, Notice, Menu, TFile, Platform, SuggestModal, TFolder } from 'obsidian';
 	import { onMount, untrack } from 'svelte';
 	import EpubReaderView from './EpubReaderView.svelte';
+	import BookshelfView from './BookshelfView.svelte';
 	import BottomNav from './BottomNav.svelte';
 	import SelectionToolbar from './SelectionToolbar.svelte';
 	import ScreenshotOverlay from './ScreenshotOverlay.svelte';
 	import EpubTutorial from './EpubTutorial.svelte';
 	import EpubHighlightToolbar from './EpubHighlightToolbar.svelte';
-	import { ReadiumReaderService, EpubStorageService, EpubAnnotationService, EpubLinkService, EpubLocationMigrationService } from '../../services/epub';
+	import { createEpubReaderEngine, EpubStorageService, EpubAnnotationService, EpubLinkService, EpubLocationMigrationService } from '../../services/epub';
 	import type { EpubExcerptSettings, EpubBookshelfSettings, EpubBookshelfSourceMode } from '../../services/epub/EpubStorageService';
 	import { DEFAULT_EPUB_BOOKSHELF_SETTINGS } from '../../services/epub/EpubStorageService';
 	import { EpubBacklinkHighlightService } from '../../services/epub/EpubBacklinkHighlightService';
+	import type { BacklinkSourceMatch } from '../../services/epub/EpubBacklinkHighlightService';
 	import { IREpubBookmarkTaskService } from '../../services/incremental-reading/IREpubBookmarkTaskService';
 	import { EpubScreenshotService } from '../../services/epub/EpubScreenshotService';
 	import { EpubCanvasService } from '../../services/epub/EpubCanvasService';
 	import type { EpubVisibleFrameLike, ScreenshotRect } from '../../services/epub/EpubScreenshotService';
-	import type { EpubBook, EpubFlowMode, EpubLayoutMode, EpubReaderEngine, EpubReaderSettings, EpubTheme, FlashStyle, HighlightClickInfo, PaginationInfo, ReaderHighlight } from '../../services/epub';
+	import type { EpubBook, EpubFlowMode, EpubLayoutMode, EpubReaderEngine, EpubReaderSettings, EpubTheme, FlashStyle, HighlightClickInfo, PaginationInfo, ReaderHighlight, TocItem } from '../../services/epub';
 	import { epubActiveDocumentStore } from '../../stores/epub-active-document-store';
 	import { logger } from '../../utils/logger';
 	import { openFileWithExistingLeaf } from '../../utils/workspace-navigation';
@@ -33,20 +35,20 @@
 		getLastActiveMarkdownLeaf?: () => WorkspaceLeaf | null;
 		onTitleChange?: (title: string) => void;
 		onReaderSettingsLoaded?: (settings: EpubReaderSettings) => void;
-		onActionsReady?: (actions: {
-			setAutoInsert: (enabled: boolean) => void;
-			setScreenshotMode: (active: boolean) => void;
-			setLayoutMode: (mode: EpubLayoutMode) => void;
-			setFlowMode: (mode: EpubFlowMode) => void;
-			setScreenshotSaveMode: (saveAsImage: boolean) => void;
-			forceReflow: () => Promise<void>;
-			navigateToCfi: (cfi: string, text: string) => void;
-			toggleTutorial: () => void;
-			addBookmark: () => Promise<void>;
-			bindCanvasPath: (canvasPath: string) => void;
+	onActionsReady?: (actions: {
+		setAutoInsert: (enabled: boolean) => void;
+		setScreenshotMode: (active: boolean) => void;
+		setLayoutMode: (mode: EpubLayoutMode) => void;
+		setFlowMode: (mode: EpubFlowMode) => void;
+		setScreenshotSaveMode: (saveAsImage: boolean) => void;
+		navigateToCfi: (cfi: string, text: string) => void;
+		toggleTutorial: () => void;
+		addBookmark: () => Promise<void>;
+		bindCanvasPath: (canvasPath: string) => void;
 			unbindCanvas: () => void;
 			getCanvasService: () => EpubCanvasService;
 			markIRResumePoint: () => Promise<void>;
+			exportCurrentChapterToMarkdown: () => Promise<void>;
 		}) => void;
 		onSwitchBook?: (filePath: string) => void;
 		onCanvasStateChange?: (active: boolean, canvasPath: string | null) => void;
@@ -74,7 +76,7 @@
 		return `--epub-line-height: ${effectiveLineHeight}; --epub-paged-safe-top: ${pagedSafeInset}; --epub-paged-safe-bottom: ${pagedSafeInset};`;
 	}
 
-	let readerService: EpubReaderEngine = untrack(() => new ReadiumReaderService(app));
+	let readerService: EpubReaderEngine = untrack(() => createEpubReaderEngine(app));
 	let storageService = untrack(() => new EpubStorageService(app));
 	let annotationService = untrack(() => new EpubAnnotationService(storageService));
 	let locationMigrationService = untrack(() => new EpubLocationMigrationService(app, storageService, readerService));
@@ -162,6 +164,11 @@
 				? readerSettings.widthMode
 				: getDefaultReaderWidthMode(),
 		};
+
+		if (isMobileReader()) {
+			normalizedSettings.layoutMode = 'paginated';
+			normalizedSettings.flowMode = 'paginated';
+		}
 
 		if (normalizedSettings.flowMode === 'scrolled') {
 			normalizedSettings.layoutMode = 'paginated';
@@ -403,6 +410,45 @@
 			logger.error(`[EpubReaderApp] ${errorLogLabel}:`, error);
 			new Notice(failureMessage);
 		}
+	}
+
+	function getReadingPointPlugin(): {
+		openIRReadingPointFromExternalSelection?: (input: {
+			filePath: string;
+			selectedText: string;
+			sourceLink?: string;
+			successNotice?: string;
+			initialTitle?: string;
+		}) => Promise<void>;
+		scheduleEpubChapterForIncrementalReading?: (input: {
+			filePath: string;
+			title: string;
+			tocHref: string;
+			tocLevel: number;
+		}) => Promise<void>;
+		exportEpubChapterToMarkdown?: (input: {
+			filePath: string;
+			title: string;
+			body: string;
+			markdown?: string;
+			assets?: Array<{
+				placeholder: string;
+				suggestedName: string;
+				data: Uint8Array;
+				mimeType: string;
+				originalHref?: string;
+			}>;
+			sourceLink?: string;
+			bookTitle?: string;
+			author?: string;
+		}) => Promise<void>;
+	} | null {
+		const plugin = getWeavePlugin();
+		if (!plugin) {
+			new Notice('Weave 插件尚未就绪');
+			return null;
+		}
+		return plugin;
 	}
 
 	function applyAndPersistReaderSettings(nextSettings: EpubReaderSettings) {
@@ -666,7 +712,7 @@
 	}
 
 	function handleLayoutModeChange(mode: EpubLayoutMode) {
-		if (isMobileReader() && mode === 'double') {
+		if (isMobileReader()) {
 			mode = 'paginated';
 		}
 		applyAndPersistReaderSettings({
@@ -678,6 +724,9 @@
 	}
 
 	function handleFlowModeChange(mode: EpubFlowMode) {
+		if (isMobileReader()) {
+			mode = 'paginated';
+		}
 		applyAndPersistReaderSettings({
 			...settings,
 			layoutMode: mode === 'scrolled' ? 'paginated' : settings.layoutMode,
@@ -718,46 +767,6 @@
 		await readerService.nextPage();
 	}
 
-	async function forceReflow() {
-		if (!book) {
-			new Notice('书籍尚未加载完成');
-			return;
-		}
-
-		showTransientStatus('重排中...', 0);
-
-		try {
-			const currentCfi = readerService.getCurrentCFI() || book.currentPosition?.cfi || '';
-			const rect = viewportEl?.getBoundingClientRect();
-			const width = Math.max(0, Math.round(rect?.width || 0));
-			const height = Math.max(0, Math.round(rect?.height || 0));
-
-			await readerService.setLayoutMode(settings.layoutMode, settings.flowMode, {
-				theme: settings.theme,
-				lineHeight: settings.lineHeight,
-				widthMode: settings.widthMode,
-			});
-
-			if (width > 0 && height > 0) {
-				readerService.resize(width, height);
-			} else {
-				readerService.resize(window.innerWidth || 0, window.innerHeight || 0);
-			}
-
-			if (currentCfi) {
-				await readerService.goToLocation(currentCfi);
-			}
-
-			await readerService.refreshHighlights?.();
-			showTransientStatus('已重排', 2000);
-			new Notice('已触发正文重排版');
-		} catch (error) {
-			logger.error('[EpubReaderApp] forceReflow failed:', error);
-			showTransientStatus('重排失败', 3200);
-			new Notice(error instanceof Error ? `重排失败：${error.message}` : '重排失败');
-		}
-	}
-
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'ArrowLeft') {
 			e.preventDefault();
@@ -772,7 +781,27 @@
 		const chapterIndex = readerService.getCurrentChapterIndex();
 		const chapterTitle = readerService.getCurrentChapterTitle();
 		const timestamp = excerptSettings.addCreationTime ? formatTimestamp(new Date()) : undefined;
-		return linkService.buildQuoteBlock(filePath, cfiRange, text, chapterIndex, color, chapterTitle, timestamp);
+		const targetNotePath = (getLastActiveMarkdownLeaf?.()?.view as MarkdownView | undefined)?.file?.path;
+		return linkService.buildQuoteBlock(
+			filePath,
+			cfiRange,
+			text,
+			chapterIndex,
+			color,
+			chapterTitle,
+			timestamp,
+			targetNotePath
+		);
+	}
+
+	function buildReadingPointSourceLink(text: string, cfiRange: string): string {
+		const chapterIndex = readerService.getCurrentChapterIndex();
+		const chapterTitle = readerService.getCurrentChapterTitle();
+		return linkService.buildEpubLink(filePath, cfiRange, text, chapterIndex, chapterTitle);
+	}
+
+	function buildChapterReadingPointSourceLink(title: string, cfiRange: string, chapterIndex: number): string {
+		return linkService.buildEpubLink(filePath, cfiRange, title, chapterIndex, title);
 	}
 
 	function formatTimestamp(date: Date): string {
@@ -905,6 +934,87 @@
 		);
 	}
 
+	async function handleCreateReadingPoint(text: string, cfiRange: string) {
+		try {
+			const plugin = getReadingPointPlugin();
+			if (!plugin?.openIRReadingPointFromExternalSelection) {
+				new Notice('创建增量阅读点功能暂不可用');
+				return;
+			}
+
+			await plugin.openIRReadingPointFromExternalSelection({
+				filePath,
+				selectedText: text,
+				sourceLink: buildReadingPointSourceLink(text, cfiRange),
+				successNotice: '增量阅读点已创建，并已保留 EPUB 溯源链接'
+			});
+		} catch (error) {
+			logger.error('[EpubReaderApp] Failed to create reading point from selection:', error);
+			new Notice('创建增量阅读点失败，请重试');
+		}
+	}
+
+	async function handleCreateChapterReadingPoint(item: TocItem) {
+		try {
+			const plugin = getReadingPointPlugin();
+			if (!plugin?.scheduleEpubChapterForIncrementalReading) {
+				new Notice('加入增量阅读功能暂不可用');
+				return;
+			}
+
+			await plugin.scheduleEpubChapterForIncrementalReading({
+				filePath,
+				title: item.label,
+				tocHref: item.href,
+				tocLevel: item.level
+			});
+		} catch (error) {
+			logger.error('[EpubReaderApp] Failed to add chapter to incremental reading:', error);
+			new Notice('加入增量阅读失败，请重试');
+		}
+	}
+
+	async function exportCurrentChapterToMarkdown() {
+		try {
+			const plugin = getReadingPointPlugin();
+			if (!plugin?.exportEpubChapterToMarkdown) {
+				new Notice('导出 Markdown 功能暂不可用');
+				return;
+			}
+
+			const chapterHref = readerService.getCurrentChapterHref?.() || '';
+			const titleHint = readerService.getCurrentChapterTitle() || book?.metadata.title || 'EPUB 章节';
+			if (!chapterHref) {
+				new Notice('未能定位当前章节，请稍后重试');
+				return;
+			}
+
+			const draft = await readerService.getChapterReadingPointDraft?.(chapterHref, titleHint);
+			if (!draft?.text?.trim()) {
+				new Notice('未能提取当前章节正文，请稍后重试');
+				return;
+			}
+
+			await plugin.exportEpubChapterToMarkdown({
+				filePath,
+				title: draft.title || titleHint,
+				body: draft.text,
+				markdown: draft.markdown,
+				assets: draft.assets,
+				sourceLink: buildChapterReadingPointSourceLink(
+					draft.title || titleHint,
+					draft.cfi,
+					draft.chapterIndex
+				),
+				bookTitle: book?.metadata.title,
+				author: book?.metadata.author,
+			});
+		} catch (error) {
+			logger.error('[EpubReaderApp] Failed to export current chapter to markdown:', error);
+			new Notice('导出 Markdown 失败，请重试');
+		}
+	}
+
 	async function handleHighlightExtractToCard(info: HighlightClickInfo) {
 		await extractContentToCard(
 			buildNoteContent(info.text, info.cfiRange, info.color),
@@ -946,14 +1056,24 @@
                 }
         }
 
+	function requestIRNavigation(nav: ReaderNavigationIntent) {
+		if (!nav.cfi && !nav.href) {
+			return;
+		}
+		if (!readerReady) {
+			pendingIRNav = nav;
+			return;
+		}
+		void applyIRNav(nav);
+	}
+
         async function navigateToCfi(cfi: string, text: string) {
-                await readerService.navigateAndHighlight({ cfi, text, flashStyle: 'highlight' });
-		window.setTimeout(() => {
-			const rect = readerService.getNavigationTargetRect({ cfi, text });
-			if (rect) {
-				sourceLocateOverlay.showAtRect(rect, { label: '定位到溯源位置', icon: 'map-pinned', durationMs: 2200 });
-			}
-		}, 80);
+		requestIRNavigation({
+			cfi,
+			text,
+			flashStyle: 'highlight',
+			showLocateOverlay: true,
+		});
 	}
 
 	function getVisibleReaderFrames(): EpubVisibleFrameLike[] {
@@ -964,6 +1084,7 @@
 		const currentCfi = readerService.getCurrentCFI();
 		const chapterIndex = readerService.getCurrentChapterIndex();
 		const chapterTitle = readerService.getCurrentChapterTitle();
+		const targetNotePath = (getLastActiveMarkdownLeaf?.()?.view as MarkdownView | undefined)?.file?.path;
 
 		let canvasContent: string | null = null;
 
@@ -971,12 +1092,26 @@
 			if (screenshotSaveAsImage) {
 				const bookTitle = book?.metadata.title || 'epub';
 				const imagePath = await screenshotService.saveAsJpeg(blob, bookTitle);
-				const insertText = screenshotService.buildJpegInsert(imagePath, filePath, currentCfi, chapterIndex, chapterTitle);
+				const insertText = screenshotService.buildJpegInsert(
+					imagePath,
+					filePath,
+					currentCfi,
+					chapterIndex,
+					chapterTitle,
+					targetNotePath
+				);
 				insertToEditorAndTrack(insertText);
 				canvasContent = insertText;
 			} else {
 				const extractedText = screenshotService.extractTextFromRect(viewportEl!, rect, getVisibleReaderFrames());
-				const insertText = screenshotService.buildSnapshotEmbed(filePath, currentCfi, extractedText, chapterIndex, chapterTitle);
+				const insertText = screenshotService.buildSnapshotEmbed(
+					filePath,
+					currentCfi,
+					extractedText,
+					chapterIndex,
+					chapterTitle,
+					targetNotePath
+				);
 				insertToEditorAndTrack(insertText);
 				canvasContent = insertText;
 			}
@@ -986,7 +1121,14 @@
 				await copyImageToClipboard(pngBlob);
 			} else {
 				const extractedText = screenshotService.extractTextFromRect(viewportEl!, rect, getVisibleReaderFrames());
-				const content = screenshotService.buildSnapshotEmbed(filePath, currentCfi, extractedText, chapterIndex, chapterTitle);
+				const content = screenshotService.buildSnapshotEmbed(
+					filePath,
+					currentCfi,
+					extractedText,
+					chapterIndex,
+					chapterTitle,
+					targetNotePath
+				);
 				await copyTextToClipboard(content);
 				canvasContent = content;
 			}
@@ -1078,11 +1220,7 @@
 			nav.showLocateOverlay = detail.showLocateOverlay;
 		}
 
-		if (!readerReady) {
-			pendingIRNav = nav;
-			return;
-		}
-		applyIRNav(nav);
+		requestIRNavigation(nav);
 	}
 
 	async function applyIRNav(nav: ReaderNavigationIntent) {
@@ -1121,9 +1259,21 @@
 	}
 
 	function syncAsActiveEpubDocument() {
-		epubActiveDocumentStore.setActiveDocument(filePath);
+		const activeFilePath = filePath?.trim() ? filePath : null;
+		if (!activeFilePath) {
+			epubActiveDocumentStore.clearActiveDocument();
+			epubActiveDocumentStore.setSharedState({
+				filePath: null,
+				onSettingsClick: showSettingsMenu,
+				onSwitchBook,
+				onCreateChapterReadingPoint: null
+			});
+			return;
+		}
+
+		epubActiveDocumentStore.setActiveDocument(activeFilePath);
 		epubActiveDocumentStore.setSharedState({
-			filePath,
+			filePath: activeFilePath,
 			readerService,
 			annotationService,
 			backlinkService,
@@ -1131,8 +1281,45 @@
 			annotationRevision,
 			progress: readingProgress,
 			onSettingsClick: showSettingsMenu,
-			onSwitchBook
+			onSwitchBook,
+			onCreateChapterReadingPoint: handleCreateChapterReadingPoint
 		});
+	}
+
+	async function resolveHighlightSource(info: HighlightClickInfo): Promise<BacklinkSourceMatch | null> {
+		let sourceFile = String(info.sourceFile || '').trim();
+		let sourceRef = info.sourceRef;
+
+		if (!sourceFile || !sourceRef) {
+			const resolved = await backlinkService.findSourceForCfi(
+				info.cfiRange,
+				filePath,
+				sourceFile || undefined,
+				{
+					text: info.text,
+					createdTime: info.createdTime,
+				}
+			);
+			if (resolved?.sourceFile) {
+				sourceFile = resolved.sourceFile;
+				if (!sourceRef && resolved.sourceRef) {
+					sourceRef = resolved.sourceRef;
+				}
+			}
+		}
+
+		if (!sourceFile) {
+			sourceFile = await backlinkService.findSourceFileForCfi(info.cfiRange, filePath) || '';
+		}
+
+		if (!sourceFile) {
+			return null;
+		}
+
+		return {
+			sourceFile,
+			sourceRef,
+		};
 	}
 
 	async function handleHighlightDelete(info: HighlightClickInfo) {
@@ -1148,13 +1335,18 @@
 			void reloadHighlights();
 			return;
 		}
-		const sourceFile = info.sourceFile || await backlinkService.findSourceFileForCfi(info.cfiRange, filePath) || undefined;
-		if (!sourceFile) {
+		const source = await resolveHighlightSource(info);
+		if (!source?.sourceFile) {
 			new Notice('该高亮尚未同步到摘录来源，请稍后再试');
 			void reloadHighlights();
 			return;
 		}
-		const deleted = await backlinkService.deleteHighlight(sourceFile, info.cfiRange, filePath, info.sourceRef);
+		const deleted = await backlinkService.deleteHighlight(
+			source.sourceFile,
+			info.cfiRange,
+			filePath,
+			source.sourceRef
+		);
 		if (deleted) {
 			new Notice('高亮已删除');
 			highlightToolbarInfo = null;
@@ -1177,13 +1369,19 @@
 
         async function handleHighlightChangeColor(info: HighlightClickInfo, newColor: string) {
                 if (newColor === info.color) return;
-                const sourceFile = info.sourceFile || await backlinkService.findSourceFileForCfi(info.cfiRange, filePath) || undefined;
-		if (!sourceFile) {
+                const source = await resolveHighlightSource(info);
+		if (!source?.sourceFile) {
 			new Notice('该高亮尚未同步到摘录来源，请稍后再试');
 			void reloadHighlights();
 			return;
 		}
-		const changed = await backlinkService.changeHighlightColor(sourceFile, info.cfiRange, filePath, newColor, info.sourceRef);
+		const changed = await backlinkService.changeHighlightColor(
+			source.sourceFile,
+			info.cfiRange,
+			filePath,
+			newColor,
+			source.sourceRef
+		);
 
 		if (changed) {
 			highlightToolbarInfo = null;
@@ -1194,19 +1392,17 @@
 	}
 
 	async function handleHighlightBacklink(info: HighlightClickInfo) {
-		let sourceFile: string | undefined = info.sourceFile || undefined;
-
-		if (!sourceFile) {
-			sourceFile = await backlinkService.findSourceFileForCfi(info.cfiRange, filePath) ?? undefined;
-		}
-
-		if (!sourceFile) {
+		const source = await resolveHighlightSource(info);
+		if (!source?.sourceFile) {
 			new Notice('未找到关联笔记');
 			return;
 		}
 
-		if (info.sourceRef?.startsWith('card:')) {
-			await openCardBacklink(info.sourceRef.slice(5));
+		const sourceFile = source.sourceFile;
+		const sourceRef = source.sourceRef;
+
+		if (sourceRef?.startsWith('card:')) {
+			await openCardBacklink(sourceRef.slice(5));
 			highlightToolbarInfo = null;
 			return;
 		}
@@ -1218,9 +1414,23 @@
 			await sourceNavigationService.openCanvasAndLocate(
 				sourceFile,
 				[encodedCfi, info.cfiRange, sourceFile],
-				info.sourceRef,
+				sourceRef,
 				{ label: '定位到溯源位置', icon: 'map-pinned', focus: true, openInNewTab: true, delayMs: 500 }
 			);
+			highlightToolbarInfo = null;
+			return;
+		}
+
+		if (sourceFile.endsWith('.json')) {
+			const openedLeaf = await openFileWithExistingLeaf(app, sourceFile, {
+				openInNewTab: true,
+				focus: true,
+			});
+			if (!openedLeaf) {
+				new Notice('未找到关联笔记');
+			} else {
+				new Notice('已打开摘录来源文件，请在文件中搜索该高亮');
+			}
 			highlightToolbarInfo = null;
 			return;
 		}
@@ -1480,6 +1690,13 @@
 			} catch (error) {
 				logger.warn('[EpubReaderApp] Failed to load reader settings:', error);
 			}
+			if (!filePath) {
+				book = null;
+				loading = false;
+				errorMsg = '';
+				readerReady = false;
+				return;
+			}
 			await loadBook();
 		})();
 
@@ -1523,14 +1740,14 @@
 			setLayoutMode: handleLayoutModeChange,
 			setFlowMode: handleFlowModeChange,
 			setScreenshotSaveMode: (saveAsImage: boolean) => { screenshotSaveAsImage = saveAsImage; },
-			forceReflow,
 			navigateToCfi,
 			toggleTutorial,
 			addBookmark,
 			bindCanvasPath: (canvasPath: string) => { bindCanvas(canvasPath); },
 			unbindCanvas: () => { unbindCanvas(); },
 			getCanvasService: () => canvasService,
-			markIRResumePoint
+			markIRResumePoint,
+			exportCurrentChapterToMarkdown
 		});
 		return () => {
 			componentDisposed = true;
@@ -1576,6 +1793,13 @@
 		<div class="epub-error">
 			<span>{errorMsg}</span>
 		</div>
+	{:else if !filePath}
+		<BookshelfView
+			{app}
+			{onSwitchBook}
+			onClose={() => {}}
+			onSettingsClick={showSettingsMenu}
+		/>
 	{:else}
 		<div
 			class="epub-reader-viewport"
@@ -1647,6 +1871,7 @@
 				{canvasMode}
 				onInsertToNote={handleInsertToNote}
 				onExtractToCard={handleExtractToCard}
+				onCreateReadingPoint={handleCreateReadingPoint}
 				onAutoInsert={handleAutoInsertSelection}
 				onConcealText={handleConcealSelection}
 			/>

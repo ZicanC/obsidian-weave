@@ -13,6 +13,8 @@
   import ObsidianDropdown from '../../ui/ObsidianDropdown.svelte';
   import { getDefaultIRImportFolder } from '../../../config/paths';
   import IRTagGroupManager from './IRTagGroupManager.svelte';
+  import SettingsHelpModal from '../components/SettingsHelpModal.svelte';
+  import SettingsHelpTriggerButton from '../components/SettingsHelpTriggerButton.svelte';
 
   let t = $derived($tr);
 
@@ -87,6 +89,7 @@
 
   let { plugin }: Props = $props();
   let settings = $state(untrack(() => plugin.settings));
+  let showInterleaveHelpModal = $state(false);
   
   // 确保 incrementalReading 设置存在
   $effect(() => {
@@ -798,7 +801,13 @@
 
   <!-- 交错学习设置 -->
   <div class="settings-group">
-    <h4 class="group-title with-accent-bar accent-green">{t('irSettings.interleaveTitle')}</h4>
+    <div class="group-header">
+      <h4 class="group-title with-accent-bar accent-green">{t('irSettings.interleaveTitle')}</h4>
+      <SettingsHelpTriggerButton
+        label={t('irSettings.interleaveHintModalTitle')}
+        onClick={() => showInterleaveHelpModal = true}
+      />
+    </div>
     
     <div class="group-content">
       <!-- 启用交错学习 -->
@@ -839,12 +848,37 @@
           <span class="slider-value">{settings.incrementalReading?.maxConsecutiveSameTopic ?? 3}{t('irSettings.unitBlocks')}</span>
         </div>
       </div>
+
       {/if}
     </div>
   </div>
 
   <!-- v3.1 标注信号配置 -->
   <div class="settings-group">
+    <SettingsHelpModal
+      open={showInterleaveHelpModal}
+      title={t('irSettings.interleaveHintModalTitle')}
+      closeLabel={t('irSettings.interleaveHintCloseLabel')}
+      confirmLabel={t('irSettings.interleaveHintConfirm')}
+      onClose={() => showInterleaveHelpModal = false}
+    >
+      <div class="help-item">
+        <div class="help-item-title">{t('irSettings.interleaveHintTitle')}</div>
+        <p class="help-item-desc">{t('irSettings.interleaveHintSummary')}</p>
+        <p class="help-item-desc">{t('irSettings.interleaveHintPriority')}</p>
+      </div>
+
+      <div class="help-item">
+        <div class="help-item-title">{t('irSettings.maxConsecutiveLabel')}</div>
+        <p class="help-item-desc">
+          {t('irSettings.interleaveHintThresholdPrefix')}
+          <strong>{settings.incrementalReading?.maxConsecutiveSameTopic ?? 3}{t('irSettings.unitBlocks')}</strong>
+          {t('irSettings.interleaveHintThresholdSuffix')}
+        </p>
+        <p class="help-item-desc">{t('irSettings.interleaveHintRange')}</p>
+      </div>
+    </SettingsHelpModal>
+
     <h4 class="group-title with-accent-bar accent-indigo">{t('irSettings.calloutSignalTitle')} <span class="badge">v3.1</span></h4>
     
     <div class="group-content">
@@ -1021,6 +1055,19 @@
     display: flex;
     flex-direction: column;
     gap: 1.5rem;
+  }
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .group-header > .group-title {
+    flex: 1;
+    min-width: 0;
+    margin-bottom: 0;
   }
 
   /* 标题与注释层级：标题更大，注释更小 */

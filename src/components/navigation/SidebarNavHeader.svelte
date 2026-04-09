@@ -181,10 +181,6 @@
     return navigationVisibility?.csvImport !== false;
   }
 
-  function isSettingsEntryVisible(): boolean {
-    return navigationVisibility?.settingsEntry !== false;
-  }
-
   const visibleDeckFilters = $derived(
     deckFilters.filter(filter => {
       if (filter.id === 'incremental-reading') {
@@ -316,8 +312,11 @@
   function handleMenuClick(evt: MouseEvent) {
     openWeaveMainMenu({
       currentPage,
+      isMobile: false,
       isInSidebarMode,
       navigationVisibility,
+      deckStudyView,
+      deckStudyFilter: selectedFilter,
       cardDataSource,
       currentView,
       tableViewMode: cardTableViewMode,
@@ -522,17 +521,6 @@
         });
       });
 
-      // 设置
-      if (isSettingsEntryVisible()) {
-        menu.addItem((item) => {
-          item
-            .setTitle('设置')
-            .setIcon('settings')
-            .onClick(() => {
-              document.dispatchEvent(new CustomEvent('Weave:open-settings'));
-            });
-        });
-      }
     }
 
     // 显示菜单
@@ -788,6 +776,7 @@
 <header
   class="sidebar-nav-header"
   class:ai-assistant-layout={currentPage === 'ai-assistant'}
+  class:card-management-desktop={currentPage === 'weave-card-management' && !isInSidebarMode}
   class:card-management-inline-search={currentPage === 'weave-card-management' && !isInSidebarMode}
 >
   <!-- 左侧：菜单按钮 -->
@@ -854,7 +843,8 @@
             }}
             aria-label="记忆牌组"
           >
-            <EnhancedIcon name="graduation-cap" size={16} />
+            <ObsidianIcon name="graduation-cap" size={16} />
+            <span class="card-toolbar-btn-label">记忆</span>
           </button>
           {#if shouldShowPremiumEntry(PREMIUM_FEATURES.QUESTION_BANK)}
             <button
@@ -865,7 +855,8 @@
               }}
               aria-label="考试题组"
             >
-              <EnhancedIcon name="clipboard-list" size={16} />
+              <ObsidianIcon name="clipboard-list" size={16} />
+              <span class="card-toolbar-btn-label">题组</span>
             </button>
           {/if}
           {#if shouldShowPremiumEntry(PREMIUM_FEATURES.INCREMENTAL_READING)}
@@ -877,7 +868,8 @@
               }}
               aria-label="增量阅读"
             >
-              <EnhancedIcon name="bookmark" size={16} />
+              <ObsidianIcon name="bookmark" size={16} />
+              <span class="card-toolbar-btn-label">阅读</span>
             </button>
           {/if}
           <button
@@ -887,7 +879,8 @@
             onclick={() => emitCardManagementToolbarAction('table-view-basic')}
             aria-label="基础信息模式"
           >
-            <EnhancedIcon name="table" size={16} />
+            <ObsidianIcon name="table" size={16} />
+            <span class="card-toolbar-btn-label">基础</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -896,7 +889,8 @@
             onclick={() => emitCardManagementToolbarAction('table-view-review')}
             aria-label="复习历史模式"
           >
-            <EnhancedIcon name="bar-chart-2" size={16} />
+            <ObsidianIcon name="bar-chart-2" size={16} />
+            <span class="card-toolbar-btn-label">复习</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -905,7 +899,8 @@
             onclick={() => emitCardManagementToolbarAction('ir-type-md')}
             aria-label="MD文件"
           >
-            <EnhancedIcon name="file-text" size={16} />
+            <ObsidianIcon name="file-text" size={16} />
+            <span class="card-toolbar-btn-label">MD</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -914,7 +909,8 @@
             onclick={() => emitCardManagementToolbarAction('ir-type-pdf')}
             aria-label="PDF书签"
           >
-            <EnhancedIcon name="file" size={16} />
+            <ObsidianIcon name="file" size={16} />
+            <span class="card-toolbar-btn-label">PDF</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -923,7 +919,8 @@
             onclick={() => emitCardManagementToolbarAction('grid-layout-fixed')}
             aria-label="固定高度"
           >
-            <EnhancedIcon name="th" size={16} />
+            <ObsidianIcon name="layout-grid" size={16} />
+            <span class="card-toolbar-btn-label">固高</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -932,7 +929,8 @@
             onclick={() => emitCardManagementToolbarAction('grid-layout-masonry')}
             aria-label="瀑布流"
           >
-            <EnhancedIcon name="th-large" size={16} />
+            <ObsidianIcon name="panels-top-left" size={16} />
+            <span class="card-toolbar-btn-label">瀑布</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -942,7 +940,8 @@
             aria-label={getPremiumEntryTitle('时间线布局', PREMIUM_FEATURES.TIMELINE_VIEW)}
             title={getPremiumEntryTitle('时间线布局', PREMIUM_FEATURES.TIMELINE_VIEW)}
           >
-            <EnhancedIcon name="history" size={16} />
+            <ObsidianIcon name="history" size={16} />
+            <span class="card-toolbar-btn-label">时间线</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -951,7 +950,8 @@
             onclick={() => emitCardManagementToolbarAction('kanban-layout-compact')}
             aria-label="紧凑布局"
           >
-            <EnhancedIcon name="compress" size={16} />
+            <ObsidianIcon name="minimize-2" size={16} />
+            <span class="card-toolbar-btn-label">紧凑</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -960,7 +960,8 @@
             onclick={() => emitCardManagementToolbarAction('kanban-layout-comfortable')}
             aria-label="舒适布局"
           >
-            <EnhancedIcon name="square" size={16} />
+            <ObsidianIcon name="square" size={16} />
+            <span class="card-toolbar-btn-label">舒适</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -969,14 +970,16 @@
             onclick={() => emitCardManagementToolbarAction('kanban-layout-spacious')}
             aria-label="宽松布局"
           >
-            <EnhancedIcon name="expand" size={16} />
+            <ObsidianIcon name="maximize-2" size={16} />
+            <span class="card-toolbar-btn-label">宽松</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
             onclick={() => emitCardManagementToolbarAction('open-data-management')}
             aria-label="数据管理"
           >
-            <EnhancedIcon name="database" size={16} />
+            <ObsidianIcon name="database" size={16} />
+            <span class="card-toolbar-btn-label">数据</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -984,7 +987,8 @@
             onclick={(event) => emitCardManagementToolbarAction('open-column-manager', event.currentTarget as HTMLElement)}
             aria-label="字段管理"
           >
-            <EnhancedIcon name="columns" size={16} />
+            <ObsidianIcon name="columns-2" size={16} />
+            <span class="card-toolbar-btn-label">列</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -992,7 +996,8 @@
             onclick={(event) => emitCardManagementToolbarAction('open-kanban-column-settings', event.currentTarget as HTMLElement)}
             aria-label="看板列设置"
           >
-            <EnhancedIcon name="sliders" size={16} />
+            <ObsidianIcon name="sliders-horizontal" size={16} />
+            <span class="card-toolbar-btn-label">列设置</span>
           </button>
           <button
             class="sidebar-action-btn card-toolbar-btn"
@@ -1000,7 +1005,8 @@
             onclick={(event) => emitCardManagementToolbarAction('open-grid-attribute-menu', event.currentTarget as HTMLElement)}
             aria-label="属性选择"
           >
-            <EnhancedIcon name="tag" size={16} />
+            <ObsidianIcon name="tag" size={16} />
+            <span class="card-toolbar-btn-label">属性</span>
           </button>
         {/if}
       </div>
@@ -1109,7 +1115,7 @@
         aria-label="看板设置"
         title="看板设置"
       >
-        <ObsidianIcon name="sliders" size={16} />
+        <EnhancedIcon name="sliders" size={16} />
       </button>
     {:else if currentPage === 'weave-card-management'}
       <div class="card-header-actions card-header-actions-right">
@@ -1235,6 +1241,22 @@
     display: flex;
     justify-content: space-between;
     gap: 8px;
+  }
+
+  .sidebar-nav-header.card-management-desktop {
+    padding: 6px 8px;
+    gap: 8px;
+    background: var(--weave-header-bg);
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  .sidebar-nav-header.card-management-desktop .sidebar-header-left,
+  .sidebar-nav-header.card-management-desktop .sidebar-header-actions {
+    gap: 6px;
+  }
+
+  .sidebar-nav-header.card-management-desktop .sidebar-menu-trigger {
+    margin-right: 4px;
   }
 
   .sidebar-header-left {
@@ -1459,31 +1481,75 @@
     flex-wrap: nowrap;
   }
 
+  .sidebar-nav-header.card-management-desktop .card-header-actions-left {
+    gap: 6px;
+  }
+
+  .sidebar-nav-header.card-management-desktop .card-header-actions-left::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-nav-header.card-management-desktop .card-header-actions-left {
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+
   .is-hidden-slot {
     display: none !important;
   }
 
   .card-toolbar-btn {
     color: var(--text-normal);
-    position: relative;
   }
 
   .card-toolbar-btn.active {
     color: var(--text-accent);
-    background: transparent;
+    background: var(--background-modifier-hover);
   }
 
-  .card-toolbar-btn.active::after {
-    content: '';
-    position: absolute;
-    left: 50%;
-    bottom: 2px;
-    transform: translateX(-50%);
-    width: 14px;
-    height: 3px;
-    border-radius: 999px;
-    background: linear-gradient(90deg, #3b82f6, #8b5cf6, #ec4899);
-    pointer-events: none;
+  .sidebar-nav-header.card-management-desktop .card-toolbar-btn {
+    width: auto;
+    min-width: 0;
+    height: 32px;
+    padding: 0 10px;
+    gap: 6px;
+    border-radius: 6px;
+    color: var(--text-muted);
+    justify-content: flex-start;
+    transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .sidebar-nav-header.card-management-desktop .card-toolbar-btn:hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+  }
+
+  .sidebar-nav-header.card-management-desktop .card-toolbar-btn:active {
+    background: var(--background-modifier-active-hover);
+  }
+
+  .sidebar-nav-header.card-management-desktop .card-toolbar-btn.active {
+    color: var(--text-accent);
+    background: var(--background-modifier-hover);
+    box-shadow: inset 0 0 0 1px var(--background-modifier-border-hover, var(--background-modifier-border));
+  }
+
+  .sidebar-nav-header.card-management-desktop .card-toolbar-btn.active .card-toolbar-btn-label {
+    font-weight: 600;
+  }
+
+  .sidebar-nav-header.card-management-desktop .card-toolbar-btn :global(svg) {
+    stroke-width: 1.9;
+  }
+
+  .card-toolbar-btn-label {
+    display: inline-block;
+    font-size: 0.82rem;
+    line-height: 1;
+    font-weight: 500;
+    white-space: nowrap;
+    color: currentColor;
   }
 
   .card-toolbar-search {

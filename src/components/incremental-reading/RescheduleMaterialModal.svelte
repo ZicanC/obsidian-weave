@@ -1,7 +1,8 @@
 <!--
   RescheduleMaterialModal - 手动调整阅读材料日期
   
-  允许用户手动设置材料的下次复习日期，覆盖 FSRS 自动调度
+  允许用户手动设置材料的下次续读日期。
+  这里调整的是阅读材料级的到期时间，不是增量阅读块调度算法本身。
   
   @module components/incremental-reading/RescheduleMaterialModal
   @version 1.0.0

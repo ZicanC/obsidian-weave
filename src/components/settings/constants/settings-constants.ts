@@ -174,7 +174,7 @@ export const DEFAULT_AI_CONFIG = {
 	defaultProvider: "zhipu" as const,
 	lastUsedProvider: undefined as string | undefined, // 上次使用的 AI 服务提供商
 	lastUsedModel: undefined as string | undefined, // 上次使用的 AI 模型
-	/** Compatibility note: 已弃用，使用officialActionOverrides代替。仅为向后兼容保留，UI已移除此配置项 */
+	/** 已弃用，仅为兼容旧配置保留。 */
 	formattingProvider: undefined,
 	formatting: {
 		enabled: true, // 仅保留总开关
@@ -249,7 +249,6 @@ export const DEFAULT_AI_CONFIG = {
 
 	// 自定义AI功能列表
 	customFormatActions: [],
-	customTestGenActions: [],
 	customSplitActions: [],
 	officialFormatActions: {
 		choice: { enabled: true },
@@ -328,17 +327,6 @@ export const AI_MODEL_OPTIONS = {
 	],
 } as const;
 
-export function getAIProviderLabels() {
-	return {
-		openai: "OpenAI",
-		gemini: "Google Gemini",
-		anthropic: "Anthropic Claude",
-		deepseek: "DeepSeek",
-		zhipu: t("settingsConstants.aiProviderLabels.zhipu"),
-		siliconflow: t("settingsConstants.aiProviderLabels.siliconflow"),
-		xai: "xAI Grok",
-	};
-}
 export const AI_PROVIDER_LABELS = {
 	openai: "OpenAI",
 	gemini: "Google Gemini",
@@ -358,53 +346,6 @@ export type AIProvider =
 	| "zhipu"
 	| "siliconflow"
 	| "xai";
-
-export function getAIProviderCapabilities(): Record<
-	AIProvider,
-	{
-		keyPlaceholder: string;
-		openaiCompatible: boolean;
-		description: string;
-	}
-> {
-	return {
-		openai: {
-			keyPlaceholder: "sk-...",
-			openaiCompatible: true,
-			description: t("settingsConstants.aiProviderDesc.openai"),
-		},
-		gemini: {
-			keyPlaceholder: "AIza...",
-			openaiCompatible: false,
-			description: t("settingsConstants.aiProviderDesc.gemini"),
-		},
-		anthropic: {
-			keyPlaceholder: "sk-ant-...",
-			openaiCompatible: false,
-			description: t("settingsConstants.aiProviderDesc.anthropic"),
-		},
-		deepseek: {
-			keyPlaceholder: "sk-...",
-			openaiCompatible: true,
-			description: t("settingsConstants.aiProviderDesc.deepseek"),
-		},
-		zhipu: {
-			keyPlaceholder: t("settingsConstants.aiKeyPlaceholder.zhipu"),
-			openaiCompatible: true,
-			description: t("settingsConstants.aiProviderDesc.zhipu"),
-		},
-		siliconflow: {
-			keyPlaceholder: "sk-...",
-			openaiCompatible: true,
-			description: t("settingsConstants.aiProviderDesc.siliconflow"),
-		},
-		xai: {
-			keyPlaceholder: "xai-...",
-			openaiCompatible: true,
-			description: t("settingsConstants.aiProviderDesc.xai"),
-		},
-	};
-}
 export const AI_PROVIDER_CAPABILITIES: Record<
 	AIProvider,
 	{

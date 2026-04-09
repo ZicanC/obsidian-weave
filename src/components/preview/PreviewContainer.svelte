@@ -3,6 +3,7 @@
   import type { Card } from '../../data/types';
   import { CardType as DataCardType } from '../../data/types';
   import type { EventRef, TFile } from 'obsidian';
+  import { getCardBack, getCardFront } from '../../utils/card-field-helper';
   import { extractBodyContent, parseBlockId, parseObsidianLink } from '../../utils/yaml-utils';
   import { detectClozeModeFromContent, type ClozeMode } from '../../utils/cloze-mode';
   
@@ -417,7 +418,7 @@
         ensureSourceModifyListener(embed.filePath);
       } else if (!rawContent.trim() && card.fields) {
         // 兼容旧数据：如果 content 为空且 fields.front 是块引用，把它当做 content 数据源
-        const fieldFront = (card.fields as any).front || (card.fields as any).Front || (card.fields as any).question || '';
+        const fieldFront = getCardFront(card);
         const fieldEmbed = parseBlockEmbedLink(fieldFront);
         if (fieldEmbed) {
           const blockMarkdown = await readBlockMarkdownFromFile(fieldEmbed.filePath, fieldEmbed.blockId);
@@ -507,8 +508,8 @@
     
     if (options && correctAnswers) {
       // 从 fields 重建选择题完整格式
-      const front = card.fields.front || card.fields.Front || card.fields.question || '';
-      const back = card.fields.back || card.fields.Back || card.fields.answer || '';
+      const front = getCardFront(card);
+      const back = getCardBack(card);
       
       let markdown = '';
       
@@ -531,8 +532,8 @@
     }
     
     //  步骤3：基础降级 - 拼接 front 和 back
-    const front = card.fields.front || card.fields.Front || card.fields.question || '';
-    const back = card.fields.back || card.fields.Back || card.fields.answer || '';
+    const front = getCardFront(card);
+    const back = getCardBack(card);
     
     if (front && back) {
       return `${front}\n\n---div---\n\n${back}`;

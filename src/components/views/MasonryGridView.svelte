@@ -23,6 +23,7 @@
     onCardEdit?: (card: Card) => void;
     onCardDelete?: (card: Card) => void;
     onCardView?: (card: Card) => void;
+    onCardConvertToMarkdown?: (card: Card) => void;
     onSourceJump?: (card: Card) => void; // 源文档跳转
     onCardLongPress?: (card: Card) => void; // 长按触发多选
     columnCount?: number;
@@ -40,6 +41,7 @@
     onCardEdit,
     onCardDelete,
     onCardView,
+    onCardConvertToMarkdown,
     onSourceJump,
     onCardLongPress,
     columnCount = 4,
@@ -420,6 +422,7 @@
                   onEdit={handleCardEdit}
                   onDelete={onCardDelete}
                   onView={onCardView}
+                  onConvertToMarkdown={onCardConvertToMarkdown}
                   onSourceJump={onSourceJump}
                   onLongPress={onCardLongPress}
                 />

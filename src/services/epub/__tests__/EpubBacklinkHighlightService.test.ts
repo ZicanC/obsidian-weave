@@ -169,6 +169,63 @@ describe('EpubBacklinkHighlightService', () => {
 		expect(files.get(notePath)).toBe('Plain tail');
 	});
 
+	it('resolves json card source with card reference when locating by cfi', async () => {
+		const jsonPath = 'weave/memory/cards/cards-0.json';
+		const jsonContent = JSON.stringify({
+			cards: [
+				{
+					uuid: 'card-a',
+					content: '> [!EPUB|green] [[Books/demo.epub#weave-cfi=readium%3Aalpha|Demo]]\n> Quote A\n',
+				},
+				{
+					uuid: 'card-b',
+					content: '> [!EPUB|blue] [[Books/demo.epub#weave-cfi=readium%3Abeta|Demo]]\n> Quote B\n',
+				},
+			],
+		});
+		const { app } = createMockApp({
+			[jsonPath]: jsonContent,
+		});
+		const service = new EpubBacklinkHighlightService(app);
+
+		const match = await service.findSourceForCfi('readium:beta', 'Books/demo.epub');
+
+		expect(match).toEqual({
+			sourceFile: jsonPath,
+			sourceRef: 'card:card-b',
+		});
+	});
+
+	it('falls back to highlight text when a temporary canonical cfi no longer matches the stored card locator', async () => {
+		const jsonPath = 'weave/memory/cards/cards-0.json';
+		const jsonContent = JSON.stringify({
+			cards: [
+				{
+					uuid: 'card-a',
+					content: '> [!EPUB|green] [[Books/demo.epub#weave-cfi=readium%3Alegacy-alpha|Demo]]\n> Quote A\n',
+				},
+				{
+					uuid: 'card-b',
+					content: '> [!EPUB|blue] [[Books/demo.epub#weave-cfi=readium%3Alegacy-beta|Demo]] 2026-03-28 12:00\n> Quote B\n',
+				},
+			],
+		});
+		const { app } = createMockApp({
+			[jsonPath]: jsonContent,
+		});
+		const service = new EpubBacklinkHighlightService(app);
+
+		const match = await service.findSourceForCfi('epubcfi(/6/8!/4/2)', 'Books/demo.epub', undefined, {
+			text: 'Quote B',
+			createdTime: new Date('2026-03-28T12:00').getTime(),
+		});
+
+		expect(match).toEqual({
+			sourceFile: jsonPath,
+			sourceRef: 'card:card-b',
+		});
+	});
+
 	it('updates markdown highlight colors through an already-open note editor', async () => {
 		const notePath = 'Notes/demo.md';
 		const noteContent = [

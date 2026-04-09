@@ -310,7 +310,7 @@ export class CardMetadataCache {
 				priority: yamlMetadata.we_priority,
 				difficulty: yamlMetadata.we_difficulty,
 				tags: allTags,
-				created: yamlMetadata.we_created,
+				created: yamlMetadata.created,
 			};
 		} catch (error) {
 			logger.warn("[CardMetadataCache] YAML 解析失败，使用默认值:", error);
@@ -569,27 +569,6 @@ export class CardMetadataCache {
 	// ===== 预热方法 =====
 
 	/**
-	 * 🚫 已弃用：同步预热缓存
-	 * 请使用 prefetchAsync() 进行后台异步预热
-	 * Compatibility note: 使用 prefetchAsync() 替代
-	 * @param cards 卡片数组
-	 */
-	// Legacy synchronous warmup path kept only for compatibility.
-	warmUp(cards: Card[]): void {
-		const startTime = Date.now();
-
-		for (const card of cards) {
-			if (!this.cache.has(card.uuid)) {
-				const parsed = this.parseCardMetadata(card.content);
-				this.setWithEviction(card.uuid, parsed);
-			}
-		}
-
-		const elapsed = Date.now() - startTime;
-		logger.info(`[CardMetadataCache] 缓存预热完成: ${cards.length} 张卡片, 耗时 ${elapsed}ms`);
-	}
-
-	/**
 	 * 🆕 后台异步预热（不阻塞主线程）
 	 * 使用批次处理 + 间隔延迟，避免影响用户交互
 	 * @param cards 卡片数组
@@ -655,19 +634,6 @@ export class CardMetadataCache {
 	/**
 	 * 停止后台预热
 	 */
-	stopPrefetch(): void {
-		if (this.prefetchState.abortController) {
-			this.prefetchState.abortController.abort();
-			logger.debug("[CardMetadataCache] 后台预热已停止");
-		}
-	}
-
-	/**
-	 * 检查后台预热是否正在运行
-	 */
-	isPrefetching(): boolean {
-		return this.prefetchState.isRunning;
-	}
 }
 
 // ===== 单例管理 =====

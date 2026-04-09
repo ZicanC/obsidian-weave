@@ -15,6 +15,7 @@
 		onInsertToNote?: (text: string, cfiRange: string, color?: string) => void;
 		onAutoInsert?: (text: string, cfiRange: string, color?: string) => void;
 		onExtractToCard?: (text: string, cfiRange: string) => void;
+		onCreateReadingPoint?: (text: string, cfiRange: string) => void;
 		onConcealText?: (text: string, cfiRange: string) => void;
 	}
 
@@ -28,6 +29,7 @@
 		onInsertToNote,
 		onAutoInsert,
 		onExtractToCard,
+		onCreateReadingPoint,
 		onConcealText
 	}: Props = $props();
 
@@ -179,6 +181,13 @@
 	function handleExtractToCard() {
 		if (selectedText && currentCfiRange) {
 			onExtractToCard?.(selectedText, currentCfiRange);
+		}
+		clearAndHide();
+	}
+
+	function handleCreateReadingPoint() {
+		if (selectedText && currentCfiRange) {
+			onCreateReadingPoint?.(selectedText, currentCfiRange);
 		}
 		clearAndHide();
 	}
@@ -469,6 +478,10 @@
 		<button class="action-item accent" onclick={handleExtractToCard}>
 			<span class="action-icon" use:icon={'scissors'}></span>
 			<span class="action-label">摘录</span>
+		</button>
+		<button class="action-item accent" onclick={handleCreateReadingPoint}>
+			<span class="action-icon" use:icon={'book-plus'}></span>
+			<span class="action-label">阅读点</span>
 		</button>
 		<button class="action-item ai" onclick={() => handleAction('ai-explain')}>
 			<span class="action-icon" use:icon={'sparkles'}></span>

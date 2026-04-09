@@ -1,25 +1,11 @@
 import { logger } from "../utils/logger";
 /**
- * 统一的主题检测和管理工具
- * 确保所有组件使用一致的主题检测逻辑
- *
- * 修复问题：
- * 1. 统一主题检测优先级
- * 2. 解决不同检测方式的冲突
- * 3. 提供更可靠的主题状态管理
- */
-
-// 导入Svelte 5的响应式原语
+ * 缁熶竴绠＄悊 Weave 鐨勪富棰樻娴嬨€佺洃鍚拰涓婚鍙橀噺娉ㄥ叆銆? */
 import { untrack } from "svelte";
 
-/**
- * 主题类型定义
- */
 export type ThemeMode = "light" | "dark" | "auto";
 
-/**
- * 主题检测结果
- */
+/** 褰撳墠涓婚鐨勬娴嬬粨鏋溿€?*/
 export interface ThemeDetectionResult {
 	mode: ThemeMode;
 	isDark: boolean;
@@ -27,10 +13,7 @@ export interface ThemeDetectionResult {
 	confidence: "high" | "medium" | "low";
 }
 
-/**
- * 统一主题管理器
- * 单例模式，确保全局一致的主题状态
- */
+/** 缁熶竴涓婚鐘舵€侊紝骞跺悜浣跨敤鏂瑰箍鎾彉鏇淬€?*/
 export class UnifiedThemeManager {
 	private static instance: UnifiedThemeManager;
 	private currentTheme: ThemeDetectionResult;
@@ -48,11 +31,9 @@ export class UnifiedThemeManager {
 		this.initialize();
 	}
 
-	/**
-	 * 获取单例实例
-	 */
 	static getInstance(): UnifiedThemeManager {
 		const w = window as any;
+		// 将实例挂到 window 上，避免热更新或重复初始化时重复注册监听器。
 		if (w.__weaveThemeManager) {
 			return w.__weaveThemeManager as UnifiedThemeManager;
 		}
@@ -75,18 +56,13 @@ export class UnifiedThemeManager {
 		return UnifiedThemeManager.instance;
 	}
 
-	/**
-	 * 初始化主题管理器
-	 */
 	private initialize(): void {
 		if (this.isInitialized) return;
 
-		// 监听系统主题变化
 		if (this.mediaQueryChangeHandler) {
 			this.mediaQuery.addEventListener("change", this.mediaQueryChangeHandler);
 		}
 
-		// 监听 DOM 类变化（Obsidian 主题切换）
 		this.domObserver.observe(document.documentElement, {
 			attributes: true,
 			attributeFilter: ["class"],
@@ -99,12 +75,7 @@ export class UnifiedThemeManager {
 		this.isInitialized = true;
 	}
 
-	/**
-	 * 检测当前主题
-	 * 改进的检测逻辑，提供更详细的检测结果
-	 */
 	private detectTheme(): ThemeDetectionResult {
-		// 优先级1: 检查 document.documentElement 的 Obsidian 主题类
 		if (document.documentElement.classList.contains("theme-dark")) {
 			return {
 				mode: "dark",
@@ -123,7 +94,6 @@ export class UnifiedThemeManager {
 			};
 		}
 
-		// 优先级2: 检查 document.body 的 Obsidian 主题类
 		if (document.body.classList.contains("theme-dark")) {
 			return {
 				mode: "dark",
@@ -142,7 +112,6 @@ export class UnifiedThemeManager {
 			};
 		}
 
-		// 优先级3: 系统偏好设置
 		const systemPrefersDark = this.mediaQuery.matches;
 		return {
 			mode: "auto",
@@ -152,36 +121,28 @@ export class UnifiedThemeManager {
 		};
 	}
 
-	/**
-	 * 处理主题变化
-	 */
 	private handleThemeChange(): void {
 		const newTheme = this.detectTheme();
 
-		// 只有在主题真正发生变化时才通知监听器
 		if (this.hasThemeChanged(this.currentTheme, newTheme)) {
 			const oldTheme = this.currentTheme;
 			this.currentTheme = newTheme;
 
-			logger.debug("[ThemeManager] 主题变化:", {
+			logger.debug("[ThemeManager] 涓婚鍙樺寲:", {
 				from: oldTheme,
 				to: newTheme,
 			});
 
-			// 通知所有监听器
 			this.listeners.forEach((_listener) => {
 				try {
 					_listener(newTheme);
 				} catch (error) {
-					logger.error("[ThemeManager] 监听器执行失败:", error);
+					logger.error("[ThemeManager] 鐩戝惉鍣ㄦ墽琛屽け璐?", error);
 				}
 			});
 		}
 	}
 
-	/**
-	 * 检查主题是否发生变化
-	 */
 	private hasThemeChanged(oldTheme: ThemeDetectionResult, newTheme: ThemeDetectionResult): boolean {
 		return (
 			oldTheme.isDark !== newTheme.isDark ||
@@ -190,34 +151,25 @@ export class UnifiedThemeManager {
 		);
 	}
 
-	/**
-	 * 获取当前主题状态
-	 */
 	getCurrentTheme(): ThemeDetectionResult {
 		return { ...this.currentTheme };
 	}
 
-	/**
-	 * 检测当前是否为深色模式（向后兼容）
-	 */
+	/** 淇濈暀缁欐棫璋冪敤鏂圭殑娣辫壊妯″紡鍒ゆ柇銆?*/
 	isDarkMode(): boolean {
 		return this.currentTheme.isDark;
 	}
 
-	/**
-	 * 添加主题变化监听器
-	 */
+	/** 娉ㄥ唽鐩戝惉鍣紝骞剁珛鍗虫帹閫佷竴娆″綋鍓嶇姸鎬併€?*/
 	addListener(callback: (result: ThemeDetectionResult) => void): () => void {
 		this.listeners.push(callback);
 
-		// 立即调用一次，确保监听器获得当前状态
 		try {
 			callback(this.currentTheme);
 		} catch (error) {
-			logger.error("[ThemeManager] 初始监听器调用失败:", error);
+			logger.error("[ThemeManager] 鍒濆鐩戝惉鍣ㄨ皟鐢ㄥけ璐?", error);
 		}
 
-		// 返回清理函数
 		return () => {
 			const index = this.listeners.indexOf(callback);
 			if (index > -1) {
@@ -226,9 +178,7 @@ export class UnifiedThemeManager {
 		};
 	}
 
-	/**
-	 * 销毁主题管理器（用于测试或特殊情况）
-	 */
+	/** 閲婃斁鐩戝惉鍣紝渚涙祴璇曟垨鏄惧紡閲嶇疆鏃朵娇鐢ㄣ€?*/
 	destroy(): void {
 		if (this.mediaQueryChangeHandler) {
 			this.mediaQuery.removeEventListener("change", this.mediaQueryChangeHandler);
@@ -248,18 +198,12 @@ export class UnifiedThemeManager {
 	}
 }
 
-/**
- * 检测当前是否为深色模式（向后兼容函数）
- * @deprecated 建议使用 UnifiedThemeManager.getInstance().isDarkMode()
- */
+/** @deprecated 寤鸿鏀圭敤 `UnifiedThemeManager.getInstance().isDarkMode()`銆?*/
 export function isDarkMode(): boolean {
 	return UnifiedThemeManager.getInstance().isDarkMode();
 }
 
-/**
- * 创建主题变化监听器（向后兼容函数）
- * @deprecated 建议使用 UnifiedThemeManager.getInstance().addListener()
- */
+/** @deprecated 寤鸿鏀圭敤 `UnifiedThemeManager.getInstance().addListener()`銆?*/
 export function createThemeListener(callback: (isDark: boolean) => void): () => void {
 	const themeManager = UnifiedThemeManager.getInstance();
 
@@ -268,20 +212,15 @@ export function createThemeListener(callback: (isDark: boolean) => void): () => 
 	});
 }
 
-/**
- * 响应式主题状态
- * 创建一个可以在组件中使用的响应式主题状态对象
- * 改进版本，使用新的主题管理器
- */
+/** 鍒涘缓鍙湪缁勪欢閲屽鐢ㄧ殑鍝嶅簲寮忎富棰樺揩鐓с€?*/
 export function createReactiveThemeState() {
 	const themeManager = UnifiedThemeManager.getInstance();
 	let currentResult = themeManager.getCurrentTheme();
 	let themeVersion = 0;
 	let cleanup: (() => void) | null = null;
 
-	// 初始化监听器
 	const initListener = () => {
-		if (cleanup) cleanup(); // 清理之前的监听器
+		if (cleanup) cleanup();
 
 		cleanup = themeManager.addListener((newResult) => {
 			currentResult = newResult;
@@ -289,7 +228,6 @@ export function createReactiveThemeState() {
 		});
 	};
 
-	// 立即初始化
 	initListener();
 
 	return {
@@ -312,7 +250,6 @@ export function createReactiveThemeState() {
 			return { ...currentResult };
 		},
 
-		// 提供手动清理方法
 		destroy() {
 			if (cleanup) {
 				cleanup();
@@ -320,17 +257,13 @@ export function createReactiveThemeState() {
 			}
 		},
 
-		// 提供手动重新初始化方法
 		reinit() {
 			initListener();
 		},
 	};
 }
 
-/**
- * 获取主题相关的 CSS 类名
- * 改进版本，使用新的主题管理器
- */
+/** 鐢熸垚鍜屽綋鍓嶄富棰樼姸鎬佸搴旂殑 CSS 绫诲悕銆?*/
 export function getThemeClasses(): string[] {
 	const themeManager = UnifiedThemeManager.getInstance();
 	const result = themeManager.getCurrentTheme();
@@ -342,33 +275,24 @@ export function getThemeClasses(): string[] {
 		classes.push("theme-light");
 	}
 
-	// 添加主题来源信息（用于调试）
 	classes.push(`theme-source-${result.source}`);
 	classes.push(`theme-confidence-${result.confidence}`);
 
 	return classes;
 }
 
-/**
- * 为组件添加主题类
- * 改进版本，支持动态主题更新
- */
+/** 涓哄厓绱犻檮鍔犱富棰樼被锛屽苟鍦ㄤ富棰樺彉鍖栨椂鑷姩鏇存柊銆?*/
 export function addThemeClasses(element: HTMLElement): () => void {
 	const themeManager = UnifiedThemeManager.getInstance();
 
-	// 立即应用当前主题类
 	const updateClasses = () => {
-		// 先移除旧的主题类
 		removeThemeClasses(element);
-
-		// 添加新的主题类
 		const classes = getThemeClasses();
 		element.classList.add(...classes);
 	};
 
 	updateClasses();
 
-	// 监听主题变化并自动更新类
 	const cleanup = themeManager.addListener(() => {
 		updateClasses();
 	});
@@ -376,22 +300,16 @@ export function addThemeClasses(element: HTMLElement): () => void {
 	return cleanup;
 }
 
-/**
- * 移除组件的主题类
- * 改进版本，移除所有相关的主题类
- */
+/** 娓呴櫎鏈伐鍏锋坊鍔犺繃鐨勪富棰樼被銆?*/
 export function removeThemeClasses(element: HTMLElement): void {
-	// 移除基础主题类
 	element.classList.remove("theme-dark", "theme-light");
 
-	// 移除主题来源类
 	element.classList.remove(
 		"theme-source-obsidian-class",
 		"theme-source-system-preference",
 		"theme-source-fallback"
 	);
 
-	// 移除置信度类
 	element.classList.remove(
 		"theme-confidence-high",
 		"theme-confidence-medium",
@@ -399,9 +317,7 @@ export function removeThemeClasses(element: HTMLElement): void {
 	);
 }
 
-/**
- * 获取主题特定的CSS变量值
- */
+/** 杩斿洖缂栬緫鍣ㄧ浉鍏崇殑涓婚鍙橀噺銆?*/
 export function getThemeVariables(): Record<string, string> {
 	const themeManager = UnifiedThemeManager.getInstance();
 	const result = themeManager.getCurrentTheme();
@@ -433,9 +349,7 @@ export function getThemeVariables(): Record<string, string> {
 	return { ...baseVariables, ...themeVariables };
 }
 
-/**
- * 应用主题变量到元素
- */
+/** 灏嗗綋鍓嶄富棰樺彉閲忓啓鍏ュ厓绱狅紝骞跺湪涓婚鍙樺寲鏃跺悓姝ユ洿鏂般€?*/
 export function applyThemeVariables(element: HTMLElement): () => void {
 	const themeManager = UnifiedThemeManager.getInstance();
 
@@ -448,10 +362,10 @@ export function applyThemeVariables(element: HTMLElement): () => void {
 
 	updateVariables();
 
-	// 监听主题变化并自动更新变量
 	const cleanup = themeManager.addListener(() => {
 		updateVariables();
 	});
 
 	return cleanup;
 }
+

@@ -65,9 +65,10 @@
 
 <style>
   .review-data-cell {
-    padding: 10px 16px;
+    padding: var(--weave-table-cell-padding-y, 6px) var(--weave-table-cell-padding-x, 16px);
     font-variant-numeric: tabular-nums;
-    border-right: 1px solid color-mix(in srgb, var(--background-modifier-border) 45%, transparent);
+    border-right: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
+    border-bottom: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
     vertical-align: middle;
   }
 

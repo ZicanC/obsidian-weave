@@ -34,12 +34,7 @@ export interface DeckTreeNode {
  * - 排序牌组
  *
  * Compatibility note: 父子牌组层级功能已废弃：
- * - createSubdeck() - 已废弃
- * - moveDeck() - 已废弃
- * - getDescendants() - 已废弃
  * - getDeckTree() - 返回平级列表（children 始终为空）
- * - getBreadcrumb() - 返回单个牌组
- * - getChildren() - 始终返回空数组
  */
 export class DeckHierarchyService {
 	private storage: WeaveDataStorage;
@@ -138,33 +133,6 @@ export class DeckHierarchyService {
 	}
 
 	/**
-	 * Compatibility note: 平级架构不支持子牌组，请使用 createDeck()
-	 * 保留仅为向后兼容，实际行为等同于 createDeck()
-	 */
-	createSubdeck(_parentId: string, name: string): Promise<Deck> {
-		logger.warn(
-			"[DeckHierarchyService] createSubdeck() 已废弃，平级架构不支持子牌组，将创建平级牌组"
-		);
-		return this.createDeck(name);
-	}
-
-	/**
-	 * Compatibility note: 平级架构不支持移动牌组
-	 * 调用此方法将抛出错误
-	 */
-	moveDeck(_deckId: string, _newParentId: string | null): Promise<void> {
-		throw new Error("[DeckHierarchyService] moveDeck() 已废弃 - 平级架构不支持牌组移动");
-	}
-
-	/**
-	 * 向后兼容别名：创建牌组
-	 * Compatibility note: 请使用 createDeck()
-	 */
-	createRootDeck(name: string, settings?: Partial<DeckSettings>): Promise<Deck> {
-		return this.createDeck(name, settings);
-	}
-
-	/**
 	 * 重命名牌组
 	 *
 	 * 流程：
@@ -235,14 +203,6 @@ export class DeckHierarchyService {
 	}
 
 	/**
-	 * Compatibility note: 请使用 deleteDeck()
-	 * 平级架构无子牌组，行为等同于 deleteDeck()
-	 */
-	deleteDeckWithChildren(deckId: string, options?: { skipCardDeletion?: boolean }): Promise<void> {
-		return this.deleteDeck(deckId, options);
-	}
-
-	/**
 	 * 获取所有牌组（平级列表）
 	 */
 	async getAllDecks(): Promise<Deck[]> {
@@ -262,28 +222,6 @@ export class DeckHierarchyService {
 		const allDecks = await this.getAllDecks();
 		// 平级架构：所有牌组都是根节点，children 始终为空
 		return allDecks.map((_d) => ({ deck: _d, children: [] }));
-	}
-
-	/**
-	 * Compatibility note: 平级架构无子孙概念，始终返回空数组
-	 */
-	getDescendants(_deckId: string): Deck[] {
-		return [];
-	}
-
-	/**
-	 * Compatibility note: 平级架构无面包屑，返回单个牌组
-	 */
-	async getBreadcrumb(deckId: string): Promise<Deck[]> {
-		const deck = await this.storage.getDeck(deckId);
-		return deck ? [deck] : [];
-	}
-
-	/**
-	 * Compatibility note: 平级架构无子牌组，始终返回空数组
-	 */
-	getChildren(_deckId: string): Deck[] {
-		return [];
 	}
 
 	/**
@@ -309,13 +247,6 @@ export class DeckHierarchyService {
 		for (let i = 0; i < orderedDeckIds.length; i++) {
 			await this.updateOrder(orderedDeckIds[i], i);
 		}
-	}
-
-	/**
-	 * Compatibility note: 请使用 reorderDecks()
-	 */
-	reorderSiblings(_parentId: string | null, orderedDeckIds: string[]): Promise<void> {
-		return this.reorderDecks(orderedDeckIds);
 	}
 
 	// ===== 私有辅助方法 =====

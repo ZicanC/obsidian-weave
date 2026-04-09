@@ -142,9 +142,9 @@
   }
   
   .draggable-checkbox-wrapper.drag-select-mode :global(.weave-checkbox-custom) {
-    box-shadow: 0 0 8px rgba(var(--color-accent-rgb), 0.5);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent, var(--interactive-accent)) 50%, transparent);
     transform: scale(1.1);
-    border-color: var(--color-accent);
+    border-color: var(--color-accent, var(--interactive-accent));
   }
   
   /* 长按激活动画 */

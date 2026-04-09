@@ -5,6 +5,7 @@
 
 import type { CardSyncMetadata } from "../../components/settings/types/settings-types";
 import type { Card } from "../../data/types";
+import { getCardBack, getCardFront } from "../../utils/card-field-helper";
 
 export interface SyncChange {
 	cardId: string;
@@ -30,8 +31,8 @@ export class SyncStateTracker {
 	 */
 	private calculateContentHash(card: Card): string {
 		const content = JSON.stringify({
-			front: card.fields?.front || card.fields?.question || "",
-			back: card.fields?.back || card.fields?.answer || "",
+			front: getCardFront(card),
+			back: getCardBack(card),
 			extra: card.extra || "",
 			tags: card.tags || [],
 		});
@@ -230,17 +231,6 @@ export class SyncStateTracker {
 	 */
 	clearAllMetadata(): void {
 		this.metadata.clear();
-	}
-
-	/**
-	 * 生成 UUID
-	 */
-	private createLegacyUuid(): string {
-		return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-			const r = (Math.random() * 16) | 0;
-			const v = c === "x" ? r : (r & 0x3) | 0x8;
-			return v.toString(16);
-		});
 	}
 
 	/**

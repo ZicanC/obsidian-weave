@@ -122,25 +122,12 @@ export class GeminiService extends AIService {
 			}
 
 			const cards: GeneratedCard[] = parsedCards.map((card) => {
-				let normalizedContent = "";
-
-				if (card.content) {
-					normalizedContent = this.ensureString(card.content);
-				} else if (card.front || card.back) {
-					const front = this.ensureString(card.front);
-					const back = this.ensureString(card.back);
-					normalizedContent = back ? `${front}\n\n---div---\n\n${back}` : front;
-				}
+				const normalizedContent = this.getParsedCardContent(card);
 
 				return {
 					uuid: this.generateCardId(),
 					type: card.type || "qa",
 					content: normalizedContent,
-					front: card.front ? this.ensureString(card.front) : undefined,
-					back: card.back ? this.ensureString(card.back) : undefined,
-					choices: card.choices,
-					correctAnswer: card.correctAnswer,
-					clozeText: card.clozeText,
 					tags: card.tags || [],
 					images: card.images || [],
 					explanation: card.explanation,
@@ -294,25 +281,4 @@ export class GeminiService extends AIService {
 		};
 	}
 
-	private ensureString(value: unknown): string {
-		if (value === null || value === undefined) {
-			return "";
-		}
-
-		if (typeof value === "string") {
-			return value;
-		}
-
-		if (typeof value === "object") {
-			logger.warn("Gemini返回了非字符串类型的卡片内容:", value);
-
-			try {
-				return JSON.stringify(value);
-			} catch {
-				return String(value);
-			}
-		}
-
-		return String(value);
-	}
 }

@@ -101,6 +101,59 @@
   align-items: center;
 }
 
+/* ===== 顶部标签导航（统一工具栏风格） ===== */
+
+.weave-toolbar-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.weave-toolbar-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.weave-toolbar-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  gap: 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.weave-toolbar-tab:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.weave-toolbar-tab.active,
+.weave-toolbar-tab.is-active {
+  color: var(--text-accent);
+  background: var(--background-modifier-hover);
+  box-shadow: inset 0 0 0 1px var(--background-modifier-border-hover, var(--background-modifier-border));
+}
+
 /* ===== 模态窗尺寸变体 ===== */
 
 .weave-modal-content.small {

@@ -10,6 +10,7 @@
   import { DEFAULT_SKELETON_CONFIG } from '../../types/card-render-types';
   import type { LayoutMode } from '../../utils/card-height-estimator';
   import type { WeavePlugin } from '../../main';
+  import { getCardFieldContent } from '../../utils/card-field-helper';
   
   import CardSkeleton from './CardSkeleton.svelte';
   import MarkdownRenderer from '../atoms/MarkdownRenderer.svelte';
@@ -54,14 +55,20 @@
   // DOM 引用
   let cardElement: HTMLDivElement | undefined = $state();
   let resizeObserver: ResizeObserver | null = null;
+
+  const cardSourcePath = $derived.by(() => {
+    if (typeof card.sourceFile === 'string' && card.sourceFile.trim()) {
+      return card.sourceFile;
+    }
+    if (typeof card.customFields?.obsidianFilePath === 'string' && card.customFields.obsidianFilePath.trim()) {
+      return card.customFields.obsidianFilePath;
+    }
+    return getCardFieldContent(card, 'source_document');
+  });
   
   // 获取卡片内容
   function getCardContent(side: 'front' | 'back'): string {
-    if (side === 'front') {
-      return card.fields?.front || card.fields?.question || '';
-    } else {
-      return card.fields?.back || card.fields?.answer || '';
-    }
+    return getCardFieldContent(card, side);
   }
   
   // 获取卡片预览文本
@@ -158,7 +165,7 @@
           <MarkdownRenderer
             {plugin}
             source={getCardContent('front')}
-            sourcePath={String(card.fields?.source_document || '')}
+            sourcePath={cardSourcePath}
           />
         </div>
       {:else}
@@ -174,7 +181,7 @@
             <MarkdownRenderer
               {plugin}
               source={getCardContent('back')}
-              sourcePath={String(card.fields?.source_document || '')}
+              sourcePath={cardSourcePath}
             />
           {:else}
             <div class="card-back-text">

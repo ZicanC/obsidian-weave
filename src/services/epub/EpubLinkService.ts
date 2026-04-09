@@ -1,4 +1,5 @@
-import type { App } from "obsidian";
+import { App, TFile } from "obsidian";
+import { inflateRaw } from "pako";
 import { logger } from "../../utils/logger";
 
 export interface EpubLinkParams {
@@ -8,8 +9,20 @@ export interface EpubLinkParams {
 	chapter?: number;
 }
 
+interface EpubLinkMarkupRange {
+	start: number;
+	end: number;
+	markup: string;
+}
+
 export class EpubLinkService {
 	private static readonly COMPACT_READIUM_PREFIX = "readium:loc~";
+	private static readonly COMPACT_PAYLOAD_PREFIX = "weave-loc=";
+	private static readonly MAX_CHAPTER_LABEL_LENGTH = 24;
+	private static readonly EPUB_WIKILINK_REGEX =
+		/\[\[(?:(?!\]\]).)+\.epub(?:(?!\]\]).)*\]\]/gi;
+	private static readonly LEGACY_PROTOCOL_LINK_START_REGEX =
+		/\[[^\]]*]\(obsidian:\/\/weave-epub\?/gi;
 	private app: App;
 
 	constructor(app: App) {
@@ -67,8 +80,54 @@ export class EpubLinkService {
 		return EpubLinkService.decodeCompactLocatorField(parts[5]);
 	}
 
+	private static decodeBase64Url(value: string): Uint8Array | undefined {
+		try {
+			const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+			const paddingLength = (4 - (normalized.length % 4)) % 4;
+			const binary = atob(`${normalized}${"=".repeat(paddingLength)}`);
+			return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+		} catch {
+			return undefined;
+		}
+	}
+
+	private static parseCompactPayloadSubpath(
+		payloadText: string
+	): Pick<EpubLinkParams, "cfi" | "text" | "chapter"> | null {
+		try {
+			const compressed = EpubLinkService.decodeBase64Url(payloadText);
+			if (!compressed) {
+				return null;
+			}
+			const decompressed = inflateRaw(compressed);
+			const payload = JSON.parse(
+				new TextDecoder().decode(
+					decompressed instanceof Uint8Array ? decompressed : Uint8Array.from(decompressed)
+				)
+			) as unknown;
+			if (!Array.isArray(payload) || typeof payload[0] !== "string") {
+				return null;
+			}
+			return {
+				cfi: payload[0],
+				text: typeof payload[1] === "string" ? payload[1] : "",
+				chapter: typeof payload[2] === "number" ? payload[2] : undefined,
+			};
+		} catch (error) {
+			logger.warn("[EpubLinkService] Failed to decode compact EPUB payload:", error);
+			return null;
+		}
+	}
+
+	private static buildLegacySubpath(cfi: string, _text: string, _chapterIndex?: number): string {
+		const safeCfi = EpubLinkService.encodeCfiForWikilink(cfi);
+		let subpath = `weave-cfi=${safeCfi}`;
+		return subpath;
+	}
+
 	static hasSupportedEpubSubpath(subpath: string): boolean {
 		return (
+			subpath.includes(EpubLinkService.COMPACT_PAYLOAD_PREFIX) ||
 			subpath.includes("weave-cfi=") ||
 			subpath.includes("tuanki-cfi=") ||
 			subpath.includes("tuanki-cfi-")
@@ -79,12 +138,162 @@ export class EpubLinkService {
 		if (!content) return undefined;
 		const normalized = content.replace(/\r\n/g, "\n");
 		const wikilinkMatch = normalized.match(
-			/(\[\[(?:(?!\]\]).)+\.epub(?:(?!\]\]).)*(?:#weave-cfi=|#tuanki-cfi=|#tuanki-cfi-)(?:(?!\]\]).)*\]\])/i
+			/(\[\[(?:(?!\]\]).)+\.epub(?:(?!\]\]).)*(?:#weave-loc=|#weave-cfi=|#tuanki-cfi=|#tuanki-cfi-)(?:(?!\]\]).)*\]\])/i
 		);
 		if (wikilinkMatch?.[1]) {
 			return wikilinkMatch[1];
 		}
 		return EpubLinkService.extractLegacyProtocolLinkMarkup(normalized);
+	}
+
+	static isLegacyEpubLinkMarkup(markup: string): boolean {
+		if (!markup) return false;
+
+		if (
+			markup.startsWith("obsidian://weave-epub?") ||
+			markup.includes("(obsidian://weave-epub?")
+		) {
+			return true;
+		}
+
+		if (!(markup.startsWith("[[") && markup.endsWith("]]"))) {
+			return false;
+		}
+
+		const inner = markup.slice(2, -2);
+		const hashIndex = inner.indexOf("#");
+		if (hashIndex < 0) {
+			return false;
+		}
+
+		const hashContent = inner.slice(hashIndex + 1);
+		if (
+			hashContent.includes(EpubLinkService.COMPACT_PAYLOAD_PREFIX) ||
+			hashContent.includes("tuanki-cfi=") ||
+			hashContent.includes("tuanki-cfi-")
+		) {
+			return true;
+		}
+
+		return (
+			hashContent.includes("weave-cfi=") && /(?:^|[&?])(text|chapter)=/.test(hashContent)
+		);
+	}
+
+	private static collectEpubLinkMarkupRanges(content: string): EpubLinkMarkupRange[] {
+		const ranges: EpubLinkMarkupRange[] = [];
+
+		const wikilinkRegex = new RegExp(EpubLinkService.EPUB_WIKILINK_REGEX.source, "gi");
+		let wikilinkMatch: RegExpExecArray | null;
+		while ((wikilinkMatch = wikilinkRegex.exec(content)) !== null) {
+			const markup = wikilinkMatch[0];
+			const start = wikilinkMatch.index;
+			if (start === undefined) {
+				continue;
+			}
+			ranges.push({
+				start,
+				end: start + markup.length,
+				markup,
+			});
+		}
+
+		const protocolStartRegex = new RegExp(
+			EpubLinkService.LEGACY_PROTOCOL_LINK_START_REGEX.source,
+			"gi"
+		);
+		let startMatch: RegExpExecArray | null;
+		while ((startMatch = protocolStartRegex.exec(content)) !== null) {
+			const start = startMatch.index;
+			const openParenIndex = content.indexOf("(", start);
+			if (openParenIndex < 0) {
+				continue;
+			}
+
+			let depth = 0;
+			let end = -1;
+			for (let i = openParenIndex; i < content.length; i++) {
+				const char = content[i];
+				if (char === "(") {
+					depth++;
+				} else if (char === ")") {
+					depth--;
+					if (depth === 0) {
+						end = i + 1;
+						break;
+					}
+				}
+			}
+
+			if (end <= start) {
+				continue;
+			}
+
+			ranges.push({
+				start,
+				end,
+				markup: content.slice(start, end),
+			});
+			protocolStartRegex.lastIndex = end;
+		}
+
+		return ranges.sort((a, b) => a.start - b.start);
+	}
+
+	migrateEpubLinkMarkup(markup: string, sourcePath?: string): string | null {
+		if (!EpubLinkService.isLegacyEpubLinkMarkup(markup)) {
+			return null;
+		}
+
+		const parsed = EpubLinkService.parseLinkMarkup(markup);
+		if (!parsed?.filePath || !/\.epub$/i.test(parsed.filePath)) {
+			return null;
+		}
+
+		return this.buildEpubLink(
+			parsed.filePath,
+			parsed.cfi,
+			parsed.text,
+			parsed.chapter,
+			undefined,
+			sourcePath
+		);
+	}
+
+	migrateLegacyEpubLinksInContent(
+		content: string,
+		sourcePath?: string
+	): { content: string; changed: boolean; updatedLinks: number } {
+		if (!content) {
+			return { content, changed: false, updatedLinks: 0 };
+		}
+
+		const ranges = EpubLinkService.collectEpubLinkMarkupRanges(content).filter(({ markup }) =>
+			EpubLinkService.isLegacyEpubLinkMarkup(markup)
+		);
+		if (ranges.length === 0) {
+			return { content, changed: false, updatedLinks: 0 };
+		}
+
+		let migratedContent = content;
+		let updatedLinks = 0;
+		for (const range of [...ranges].sort((a, b) => b.start - a.start)) {
+			const migratedMarkup = this.migrateEpubLinkMarkup(range.markup, sourcePath);
+			if (!migratedMarkup || migratedMarkup === range.markup) {
+				continue;
+			}
+			migratedContent =
+				migratedContent.slice(0, range.start) +
+				migratedMarkup +
+				migratedContent.slice(range.end);
+			updatedLinks++;
+		}
+
+		return {
+			content: migratedContent,
+			changed: updatedLinks > 0,
+			updatedLinks,
+		};
 	}
 
 	static extractFilePathFromEpubLinkMarkup(markup: string): string | null {
@@ -196,30 +405,78 @@ export class EpubLinkService {
 			.trim();
 	}
 
+	private static truncateText(text: string, maxLength: number): string {
+		if (text.length <= maxLength) {
+			return text;
+		}
+		return `${text.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`;
+	}
+
+	private extractLinkPath(filePath: string, sourcePath?: string): string {
+		const abstractFile = this.app?.vault?.getAbstractFileByPath?.(filePath);
+		if (abstractFile instanceof TFile && typeof this.app?.fileManager?.generateMarkdownLink === "function") {
+			try {
+				const generated = this.app.fileManager.generateMarkdownLink(abstractFile, sourcePath || "");
+				if (generated.startsWith("[[") && generated.endsWith("]]")) {
+					const inner = generated.slice(2, -2).trim();
+					if (inner) {
+						return inner;
+					}
+				}
+			} catch (error) {
+				logger.debug("[EpubLinkService] Failed to generate shortest linkpath:", error);
+			}
+		}
+		return filePath;
+	}
+
+	private static buildChapterLabel(chapterIndex?: number, chapterTitle?: string): string {
+		const sanitizedChapterTitle = EpubLinkService.sanitizeWikilinkAlias(chapterTitle || "");
+		if (sanitizedChapterTitle) {
+			return EpubLinkService.truncateText(
+				sanitizedChapterTitle,
+				EpubLinkService.MAX_CHAPTER_LABEL_LENGTH
+			);
+		}
+		if (chapterIndex !== undefined) {
+			return `章节 ${chapterIndex}`;
+		}
+		return "";
+	}
+
+	private static buildQuoteTitleSuffix(
+		chapterIndex?: number,
+		chapterTitle?: string,
+		timestamp?: string
+	): string {
+		const parts: string[] = [];
+		const chapterLabel = EpubLinkService.buildChapterLabel(chapterIndex, chapterTitle);
+		if (chapterLabel) {
+			parts.push(`[${chapterLabel}]`);
+		}
+		if (timestamp) {
+			parts.push(timestamp);
+		}
+		return parts.length > 0 ? ` ${parts.join(" ")}` : "";
+	}
+
+	private static buildDisplayAlias(filePath: string): string {
+		const bookName = EpubLinkService.extractShortBookName(filePath);
+		return EpubLinkService.sanitizeWikilinkAlias(bookName) || "EPUB";
+	}
+
 	buildEpubLink(
 		filePath: string,
 		cfi: string,
-		text: string,
-		chapterIndex?: number,
-		chapterTitle?: string
+		_text: string,
+		_chapterIndex?: number,
+		_chapterTitle?: string,
+		sourcePath?: string
 	): string {
-		const bookName = EpubLinkService.extractShortBookName(filePath);
-		let displayText: string;
-		if (chapterTitle) {
-			displayText = `${bookName} > ${chapterTitle}`;
-		} else {
-			displayText = bookName;
-		}
-		const safeCfi = EpubLinkService.encodeCfiForWikilink(cfi);
-		let subpath = `weave-cfi=${safeCfi}`;
-		if (chapterIndex !== undefined) {
-			subpath += `&chapter=${chapterIndex}`;
-		}
-		const trimmedText = text.trim();
-		if (trimmedText && !EpubLinkService.extractEmbeddedTextFromReadiumLocator(cfi)) {
-			subpath += `&text=${EpubLinkService.encodeTextForWikilink(trimmedText)}`;
-		}
-		return `[[${filePath}#${subpath}|${EpubLinkService.sanitizeWikilinkAlias(displayText)}]]`;
+		const displayText = EpubLinkService.buildDisplayAlias(filePath);
+		const linkPath = this.extractLinkPath(filePath, sourcePath);
+		const subpath = EpubLinkService.buildLegacySubpath(cfi, "", undefined);
+		return `[[${linkPath}#${subpath}|${displayText}]]`;
 	}
 
 	buildQuoteBlock(
@@ -229,16 +486,21 @@ export class EpubLinkService {
 		chapterIndex?: number,
 		color?: string,
 		chapterTitle?: string,
-		timestamp?: string
+		timestamp?: string,
+		sourcePath?: string
 	): string {
-		const link = this.buildEpubLink(filePath, cfi, text, chapterIndex, chapterTitle);
+		const link = this.buildEpubLink(filePath, cfi, text, chapterIndex, chapterTitle, sourcePath);
 		const calloutMeta = color ? `|${color}` : "";
-		const timeSuffix = timestamp ? ` ${timestamp}` : "";
+		const titleSuffix = EpubLinkService.buildQuoteTitleSuffix(
+			chapterIndex,
+			chapterTitle,
+			timestamp
+		);
 		const quotedLines = text
 			.split("\n")
 			.map((_line) => `> ${_line}`)
 			.join("\n");
-		return `> [!EPUB${calloutMeta}] ${link}${timeSuffix}\n${quotedLines}\n`;
+		return `> [!EPUB${calloutMeta}] ${link}${titleSuffix}\n${quotedLines}\n`;
 	}
 
 	static parseLinkMarkup(markup: string): EpubLinkParams | null {
@@ -275,6 +537,18 @@ export class EpubLinkService {
 
 		try {
 			const hashContent = subpath.startsWith("#") ? subpath.slice(1) : subpath;
+			const compactPayloadMatch = hashContent.match(/weave-loc=([^&|\]]*)/);
+			if (compactPayloadMatch?.[1]) {
+				const compactParsed = EpubLinkService.parseCompactPayloadSubpath(compactPayloadMatch[1]);
+				if (compactParsed) {
+					return {
+						filePath: "",
+						cfi: compactParsed.cfi,
+						text: compactParsed.text,
+						chapter: compactParsed.chapter,
+					};
+				}
+			}
 
 			// support both weave-cfi= (current) and tuanki-cfi- (legacy) formats
 			const cfiMatch =

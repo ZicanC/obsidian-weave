@@ -418,7 +418,7 @@
             : cardType === CardType.Multiple
               ? 'multiple'
               : 'cloze',
-          we_created: new Date().toISOString(),
+          created: new Date().toISOString(),
         };
 
         if (deckName) {

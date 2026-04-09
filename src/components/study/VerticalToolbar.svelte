@@ -51,7 +51,6 @@
     onChangeDeck?: (deckId: string) => void | Promise<void>;
     onOpenPlainEditor?: () => void;
     onAIFormatCustom?: (actionId: string) => void;
-    onTestGenerate?: (actionId: string) => void; // 测试题生成
     onSplitCard?: (actionId: string) => void; // AI 拆分
     onManageFormatActions?: () => void;
     onOpenDetailedView?: () => void; // 打开详细信息模态窗
@@ -112,7 +111,6 @@
     onChangeDeck,
     onOpenPlainEditor,
     onAIFormatCustom,
-    onTestGenerate, // 测试题生成
     onSplitCard, // AI 拆分
     onManageFormatActions,
     onOpenDetailedView, // 打开详细信息
@@ -148,78 +146,6 @@
 
   //  响应式翻译函数
   let t = $derived($tr);
-
-  // v4.0: 侧边栏功能键长按拖拽排序
-  let isDraggingButton = $state(false);
-  let draggedButtonElement = $state<HTMLElement | null>(null);
-  let dragStartY = $state(0);
-  let dragCurrentY = $state(0);
-  let longPressTimer = $state<ReturnType<typeof setTimeout> | null>(null);
-  const LONG_PRESS_DURATION = 500;
-  
-  function handleButtonLongPressStart(e: MouseEvent | TouchEvent, element: HTMLElement) {
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    dragStartY = clientY;
-    
-    longPressTimer = setTimeout(() => {
-      isDraggingButton = true;
-      draggedButtonElement = element;
-      element.classList.add('dragging');
-      if (navigator.vibrate) navigator.vibrate(50);
-    }, LONG_PRESS_DURATION);
-  }
-  
-  function handleButtonDragMove(e: MouseEvent | TouchEvent) {
-    if (!isDraggingButton || !draggedButtonElement) return;
-    
-    e.preventDefault();
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    dragCurrentY = clientY;
-    
-    const deltaY = dragCurrentY - dragStartY;
-    draggedButtonElement.style.transform = `translateY(${deltaY}px)`;
-    draggedButtonElement.style.zIndex = '100';
-    
-    const parent = draggedButtonElement.parentElement;
-    if (!parent) return;
-    
-    const buttons = Array.from(parent.querySelectorAll('.toolbar-btn:not(.dragging)')) as HTMLElement[];
-    const draggedRect = draggedButtonElement.getBoundingClientRect();
-    const draggedCenter = draggedRect.top + draggedRect.height / 2;
-    
-    for (const btn of buttons) {
-      const btnRect = btn.getBoundingClientRect();
-      const btnCenter = btnRect.top + btnRect.height / 2;
-      
-      if (deltaY > 0 && draggedCenter > btnCenter && btn.compareDocumentPosition(draggedButtonElement) & Node.DOCUMENT_POSITION_PRECEDING) {
-        parent.insertBefore(btn, draggedButtonElement);
-        dragStartY = dragCurrentY;
-        draggedButtonElement.style.transform = '';
-        break;
-      } else if (deltaY < 0 && draggedCenter < btnCenter && btn.compareDocumentPosition(draggedButtonElement) & Node.DOCUMENT_POSITION_FOLLOWING) {
-        parent.insertBefore(draggedButtonElement, btn);
-        dragStartY = dragCurrentY;
-        draggedButtonElement.style.transform = '';
-        break;
-      }
-    }
-  }
-  
-  function handleButtonDragEnd() {
-    if (longPressTimer) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-    
-    if (isDraggingButton && draggedButtonElement) {
-      draggedButtonElement.classList.remove('dragging');
-      draggedButtonElement.style.transform = '';
-      draggedButtonElement.style.zIndex = '';
-    }
-    
-    isDraggingButton = false;
-    draggedButtonElement = null;
-  }
 
   // 格式化学习时间
   function formatTime(ms: number): string {
@@ -260,14 +186,6 @@
   // 牌组切换功能
   let showDeckMenu = $state(false);
   let deckButtonElement: HTMLElement | null = $state(null);
-
-  // 来源菜单功能 - 已合并到多功能信息键
-  // let showSourceMenu = $state(false);
-  // let sourceButtonElement: HTMLElement | null = $state(null);
-
-  // 查看卡片信息菜单功能 - 已合并到多功能信息键
-  // let showCardInfoMenu = $state(false);
-  // let cardInfoButtonElement: HTMLElement | null = $state(null);
 
   // 多功能信息键（合并查看与来源）
   let showMultiInfoMenu = $state(false);
@@ -463,14 +381,15 @@
 
   //  初始化 AI助手菜单构建器
   $effect(() => {
-    if (plugin && card && onAIFormatCustom && onManageFormatActions && onSplitCard) {
+    if (card && onAIFormatCustom && onManageFormatActions && onSplitCard) {
       aiAssistantMenuBuilder = new AIAssistantMenuBuilder(
-        plugin,
         card,
         onAIFormatCustom,
         onSplitCard,
         onManageFormatActions
       );
+    } else {
+      aiAssistantMenuBuilder = null;
     }
   });
 
@@ -486,10 +405,14 @@
   }
   
   function handleChangeDeck(deckId: string) {
-    if (onChangeDeck) {
-      onChangeDeck(deckId);
+    if (!onChangeDeck) {
+      showDeckMenu = false;
+      return;
     }
-    showDeckMenu = false;
+
+    void Promise.resolve(onChangeDeck(deckId)).finally(() => {
+      showDeckMenu = false;
+    });
   }
 
   // 使用 CardMetadataService 获取当前卡片所在牌组的名称
@@ -1200,26 +1123,13 @@
     </div>
   </div>
 
-  <!-- 功能按钮组（v4.0: 支持长按拖拽排序） -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div 
-    class="toolbar-section actions-section"
-    class:is-dragging={isDraggingButton}
-    onmousemove={handleButtonDragMove}
-    onmouseup={handleButtonDragEnd}
-    onmouseleave={handleButtonDragEnd}
-    ontouchmove={handleButtonDragMove}
-    ontouchend={handleButtonDragEnd}
-    ontouchcancel={handleButtonDragEnd}
-  >
+  <!-- 功能按钮组 -->
+  <div class="toolbar-section actions-section">
     <!-- 编辑/预览切换按钮 -->
     <button
       class="toolbar-btn clickable-icon edit-btn"
       onclick={onToggleEdit}
-      onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      onmouseup={handleButtonDragEnd}
-      ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title={isEditing ? t('toolbar.saveAndPreview') + '（' + t('toolbar.longPressDrag') + '）' : t('toolbar.editCard') + '（' + t('toolbar.longPressDrag') + '）'}
+      title={isEditing ? t('toolbar.saveAndPreview') : t('toolbar.editCard')}
     >
       <EnhancedIcon name={isEditing ? "eye" : "edit"} size="18" />
       <span class="btn-label">{isEditing ? t('toolbar.preview') : t('toolbar.edit')}</span>
@@ -1249,10 +1159,7 @@
     <button
       class="toolbar-btn clickable-icon delete-btn"
       onclick={handleDeleteClick}
-      onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      onmouseup={handleButtonDragEnd}
-      ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title={enableDirectDelete ? t('toolbar.directDeleteCard') + '（' + t('toolbar.longPressDrag') + '）' : t('toolbar.deleteCard') + '（' + t('toolbar.longPressDrag') + '）'}
+      title={enableDirectDelete ? t('toolbar.directDeleteCard') : t('toolbar.deleteCard')}
     >
       <EnhancedIcon name="delete" size="18" />
       <span class="btn-label">{t('toolbar.delete')}</span>
@@ -1275,10 +1182,7 @@
       bind:this={reminderButtonElement}
       class="toolbar-btn clickable-icon reminder-btn"
       onclick={() => { closeAllPanels(); onSetReminder?.(); }}
-      onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      onmouseup={handleButtonDragEnd}
-      ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title={t('toolbar.setReminder') + '（' + t('toolbar.longPressDrag') + '）'}
+      title={t('toolbar.setReminder')}
     >
       <EnhancedIcon name="bell" size="18" />
       <span class="btn-label">{t('toolbar.reminder')}</span>
@@ -1289,10 +1193,7 @@
       bind:this={priorityButtonElement}
       class="toolbar-btn clickable-icon priority-btn"
       onclick={() => { closeAllPanels(); onChangePriority?.(); }}
-      onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      onmouseup={handleButtonDragEnd}
-      ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      title={t('toolbar.setPriority') + '（' + t('toolbar.longPressDrag') + '）'}
+      title={t('toolbar.setPriority')}
       style="color: {getPriorityColor(card.priority || 2)}"
     >
       <div class="priority-indicator">
@@ -1306,10 +1207,7 @@
       <button
         class="toolbar-btn clickable-icon ai-assistant-btn"
         onclick={handleAIAssistantClick}
-        onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-        onmouseup={handleButtonDragEnd}
-        ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-        title={t('toolbar.aiAssistant') + '（' + t('toolbar.longPressDrag') + '）'}
+        title={t('toolbar.aiAssistant')}
       >
         <EnhancedIcon name="robot" size="18" />
         <span class="btn-label">{t('toolbar.aiAssistant')}</span>
@@ -1322,14 +1220,11 @@
       class:active={isGraphLinked}
       class:has-source={hasSourceFile}
       onclick={toggleGraphLink}
-      onmousedown={(e) => handleButtonLongPressStart(e, e.currentTarget)}
-      onmouseup={handleButtonDragEnd}
-      ontouchstart={(e) => handleButtonLongPressStart(e, e.currentTarget)}
       title={isGraphLinked 
-        ? t('toolbar.graphLinkEnabled') + '（' + t('toolbar.longPressDrag') + '）'
+        ? t('toolbar.graphLinkEnabled')
         : hasSourceFile 
-          ? t('toolbar.graphLinkDisabled') + ' (' + t('toolbar.hasSourceDoc') + ', ' + t('toolbar.longPressDrag') + ')'
-          : t('toolbar.graphLinkDisabled') + ' (' + t('toolbar.noSourceDocShort') + ', ' + t('toolbar.longPressDrag') + ')'}
+          ? t('toolbar.graphLinkDisabled') + ' (' + t('toolbar.hasSourceDoc') + ')'
+          : t('toolbar.graphLinkDisabled') + ' (' + t('toolbar.noSourceDocShort') + ')'}
     >
       <div class="btn-icon-wrapper">
         <EnhancedIcon name="link" size="18" />
@@ -1380,11 +1275,7 @@
                   type="button"
                   class="deck-menu-item"
                   class:selected={isSelected}
-                  onclick={async () => {
-                    if (onChangeDeck) {
-                      await Promise.resolve(onChangeDeck(deck.id));
-                    }
-                  }}
+                  onclick={() => handleChangeDeck(deck.id)}
                   title={deck.name}
                 >
                   <span class="deck-menu-item-main">
@@ -1523,56 +1414,45 @@
             </div>
 
             <!-- 来源信息 - 使用响应式 sourceInfo ($derived) -->
-            {#if true}
+            {#if sourceInfo.sourceFile || sourceInfo.sourceBlock}
               <div class="info-section">
                 <div class="info-section-title">{t('toolbar.sourceInfo')}</div>
-                {#if !sourceInfo.sourceFile && !sourceInfo.sourceBlock}
-                  <!-- 无来源信息 -->
-                  <div class="info-item no-source">
+                <!-- 源文档 -->
+                {#if sourceInfo.sourceFile}
+                  <div 
+                    class="info-item clickable" 
+                    onclick={handleOpenSourceFile}
+                    onkeydown={(e) => e.key === 'Enter' && handleOpenSourceFile()}
+                    role="button"
+                    tabindex="0"
+                  >
                     <span class="info-label">
-                      <EnhancedIcon name="info" size="12" />
-                      无来源
+                      <EnhancedIcon name="file" size="12" />
+                      {t('toolbar.sourceDoc')}
                     </span>
-                    <span class="info-value text-muted">{t('toolbar.noSourceLinked')}</span>
+                    <span class="info-value link-value" title={sourceInfo.sourceFile}>
+                      {sourceInfo.sourceFile.split('/').pop() || sourceInfo.sourceFile}
+                    </span>
                   </div>
-                {:else}
-                  <!-- 源文档 -->
-                  {#if sourceInfo.sourceFile}
-                    <div 
-                      class="info-item clickable" 
-                      onclick={handleOpenSourceFile}
-                      onkeydown={(e) => e.key === 'Enter' && handleOpenSourceFile()}
-                      role="button"
-                      tabindex="0"
-                    >
-                      <span class="info-label">
-                        <EnhancedIcon name="file" size="12" />
-                        {t('toolbar.sourceDoc')}
-                      </span>
-                      <span class="info-value link-value" title={sourceInfo.sourceFile}>
-                        {sourceInfo.sourceFile.split('/').pop() || sourceInfo.sourceFile}
-                      </span>
-                    </div>
-                  {/if}
+                {/if}
 
-                  <!-- 块引用 -->
-                  {#if sourceInfo.sourceBlock}
-                    <div 
-                      class="info-item clickable" 
-                      onclick={handleOpenBlockLink}
-                      onkeydown={(e) => e.key === 'Enter' && handleOpenBlockLink()}
-                      role="button"
-                      tabindex="0"
-                    >
-                      <span class="info-label">
-                        <EnhancedIcon name="hash" size="12" />
-                        块引用
-                      </span>
-                      <span class="info-value link-value">
-                        {sourceInfo.sourceBlock}
-                      </span>
-                    </div>
-                  {/if}
+                <!-- 块引用 -->
+                {#if sourceInfo.sourceBlock}
+                  <div 
+                    class="info-item clickable" 
+                    onclick={handleOpenBlockLink}
+                    onkeydown={(e) => e.key === 'Enter' && handleOpenBlockLink()}
+                    role="button"
+                    tabindex="0"
+                  >
+                    <span class="info-label">
+                      <EnhancedIcon name="hash" size="12" />
+                      块引用
+                    </span>
+                    <span class="info-value link-value">
+                      {sourceInfo.sourceBlock}
+                    </span>
+                  </div>
                 {/if}
               </div>
             {/if}
@@ -1664,11 +1544,11 @@
               <!-- 源文档信息 -->
               <div class="source-file-info">
                 <EnhancedIcon name="file" size="14" />
-                <span class="source-file-name" title={card?.sourceFile}>
-                  {card?.sourceFile?.split('/').pop() || '未知文件'}
+                <span class="source-file-name" title={sourceInfo.sourceFile}>
+                  {sourceInfo.sourceFile?.split('/').pop() || '未知文件'}
                 </span>
-                {#if card?.sourceBlock}
-                  <span class="source-block-id">#{card.sourceBlock.replace(/^\^/, '')}</span>
+                {#if sourceInfo.sourceBlock}
+                  <span class="source-block-id">#{sourceInfo.sourceBlock.replace(/^\^/, '')}</span>
                 {/if}
               </div>
 
@@ -2289,86 +2169,7 @@ tags: [学习]
                   <!-- 分割线 -->
                   <div class="tutorial-divider"></div>
 
-                  <!-- Section 3: AI测试题生成 -->
-                  <div class="tutorial-section">
-                    <div class="tutorial-section-title">
-                      <span>AI测试题生成</span>
-                    </div>
-                    
-                    <div class="tutorial-text">
-                      <h4>功能介绍</h4>
-                      <p>AI测试题生成会基于当前记忆卡片内容，自动生成用于练习和自测的题目，帮助你把“会看”进一步转成“会做”。</p>
-                      
-                      <h4>当前数据结构：不再维护独立测试题组</h4>
-                      <p>这里需要特别说明：旧教程里提到的“为每个记忆牌组单独创建一个考试题组 / 测试题组”的方案，已经弃用。</p>
-                      <ul>
-                        <li><strong>现在的记忆卡片</strong>：仍然是主要学习对象，使用 <code>cardPurpose='memory'</code>，由 FSRS 负责复习调度。</li>
-                        <li><strong>现在的测试题</strong>：主要通过 <code>uuid</code> 引用记忆体系中的选择题卡片来组织和调用，不再额外复制出一个独立的“测试题组”。</li>
-                        <li><strong>这样做的好处</strong>：避免内容重复、减少两套卡片数据不一致的问题，也更方便统一维护来源、编辑和同步。</li>
-                      </ul>
-                      
-                      <h4>你可以这样理解</h4>
-                      <pre>旧方案（已弃用）：
-记忆牌组 → 派生一个独立考试题组 → 保存测试题副本
-
-当前方案：
-记忆牌组中的选择题卡片
-        ↓
-考试学习流程通过 uuid 直接引用
-        ↓
-不再维护独立测试题组</pre>
-                      
-                      <h4>考试学习与记忆学习的关系</h4>
-                      <p>虽然不再使用独立测试题组，但“记忆学习”和“考试练习”仍然是两种不同的学习场景：</p>
-                      <ul>
-                        <li><strong>记忆学习</strong>：侧重长期记忆巩固，核心是 FSRS 间隔重复。</li>
-                        <li><strong>考试练习</strong>：侧重检索、判断和答题表现，核心是做题过程与掌握度评估。</li>
-                        <li><strong>底层联系</strong>：两者会围绕同一批知识内容协同工作，而不是各自维护一套重复数据。</li>
-                      </ul>
-                      
-                      <h4>EWMA算法：科学评估掌握度</h4>
-                      <p><strong>什么是EWMA？</strong></p>
-                      <p>EWMA = Exponentially Weighted Moving Average（指数加权移动平均）。</p>
-                      <p><strong>核心思想</strong>：最近几次测试结果，比很久以前的结果更能代表你当前的真实掌握程度。</p>
-                      
-                      <p><strong>计算公式</strong>：</p>
-                      <pre>R_t = α × result_t + (1-α) × R_{'{'}t-1{'}'}
-
-其中：
-  R_t：当前掌握度
-  result_t：最新测试结果（1=正确，-1=错误，0=跳过）
-  α：衰减因子（0.2，即近期占20%权重）
-  R_{'{'}t-1{'}'}：之前的掌握度
-
-权重示例：
-  第10次（最近）：权重 20%
-  第9次：权重 16%
-  第8次：权重 13%
-  ...（越早期权重越低）</pre>
-                      
-                      <h4>测试题的溯源关系</h4>
-                      <p>AI生成的测试题会保留和原始学习内容之间的关联，方便追踪来源与后续维护：</p>
-                      <ul>
-                        <li><strong>来源关联</strong>：通过 uuid 与对应的记忆卡片 / 选择题卡片建立引用关系</li>
-                        <li><strong>生成元数据</strong>：记录 generationMethod、generationTimestamp、aiProvider、aiModel 等信息</li>
-                        <li><strong>来源上下文</strong>：可继承 sourceFile、sourceBlock、sourceRange 等来源信息</li>
-                      </ul>
-                      
-                      <h4>使用流程</h4>
-                      <pre>1. 选择当前正在学习的记忆卡片
-2. 点击“AI助手” → “生成测试题”
-3. 预览生成结果，确认题目内容
-4. 点击“收入到题库”
-5. 系统将通过 uuid 建立与记忆内容的引用关系，用于后续考试学习</pre>
-                      
-                      <p class="tutorial-note">简而言之：现在的测试题不是“另存一份到独立牌组”，而是“围绕原有记忆内容建立引用式练习关系”。</p>
-                    </div>
-                  </div>
-
-                  <!-- 分割线 -->
-                  <div class="tutorial-divider"></div>
-
-                  <!-- Section 4: AI拆分 -->
+                  <!-- Section 3: AI拆分 -->
                   <div class="tutorial-section">
                     <div class="tutorial-section-title">
                       <span>AI拆分</span>
@@ -2392,14 +2193,6 @@ tags: [学习]
                         <li>parentCardId：指向父卡片UUID</li>
                         <li>relationMetadata.isParent = false</li>
                         <li>derivationMetadata.method = 'AI_SPLIT'</li>
-                      </ul>
-                      
-                      <h4>拆分与测试题的区别</h4>
-                      <ul>
-                        <li><strong>目标对象</strong>：AI拆分会生成新的记忆卡片；测试题生成则围绕原有记忆内容建立练习引用关系</li>
-                        <li><strong>学习用途</strong>：AI拆分用于记忆学习细化；测试题用于测试练习与掌握度评估</li>
-                        <li><strong>算法侧重</strong>：AI拆分后的记忆卡片继续使用FSRS；测试练习侧使用EWMA评估掌握度</li>
-                        <li><strong>结构关系</strong>：AI拆分建立父子卡片关系；测试题主要记录源卡片与题目之间的引用关系</li>
                       </ul>
                       
                       <h4>子卡片拆分防护</h4>
@@ -2434,7 +2227,7 @@ tags: [学习]
                   <!-- 分割线 -->
                   <div class="tutorial-divider"></div>
 
-                  <!-- Section 5: 操作步骤与管理 -->
+                  <!-- Section 4: 操作步骤与管理 -->
                   <div class="tutorial-section">
                     <div class="tutorial-section-title">
                       <span>操作步骤与管理</span>
@@ -2448,10 +2241,6 @@ tags: [学习]
      ├─ AI格式化
      │   ├─ 选择预设功能或自定义功能
      │   └─ 预览并应用
-     ├─ AI测试题生成
-     │   ├─ 选择生成类型
-     │   ├─ 预览生成的题目
-     │   └─ 建立与记忆内容的引用关系
      └─ AI拆分
          ├─ 选择拆分策略
          ├─ 预览子卡片
@@ -2465,7 +2254,7 @@ tags: [学习]
                       <h4>管理自定义功能</h4>
                       <p>点击菜单底部的"管理功能..."可以：</p>
                       <ul>
-                        <li>创建新的自定义功能（格式化、测试题生成、AI拆分）</li>
+                        <li>创建新的自定义功能（格式化、AI拆分）</li>
                         <li>编辑现有功能（修改提示词、选择AI模型）</li>
                         <li>启用/禁用功能</li>
                         <li>删除不需要的功能</li>
@@ -3878,23 +3667,6 @@ D. 顺序学习算法
   .card-debug-btn:active {
     transform: translateY(0);
     box-shadow: 0 1px 2px rgba(102, 126, 234, 0.2);
-  }
-
-  /* 无来源提示样式 */
-  .info-item.no-source {
-    background: var(--background-secondary);
-    border-radius: 4px;
-  }
-
-  .info-item.no-source .info-label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .text-muted {
-    color: var(--text-muted);
-    font-style: italic;
   }
 
   /* 更多设置容器 */

@@ -1,3 +1,4 @@
+import type { App, TFile } from "obsidian";
 import { logger } from "../../utils/logger";
 
 type ByteArrayLike = ArrayLike<number> & { [index: number]: number };
@@ -66,6 +67,17 @@ function buildSignatureHex(bytes: Uint8Array): string {
 		.join(" ");
 }
 
+type BinaryReadAttempt = {
+	label: string;
+	read: () => Promise<unknown>;
+};
+
+type BinaryCandidate = {
+	label: string;
+	bytes: Uint8Array<ArrayBuffer>;
+	exactSize: boolean;
+};
+
 export function hasZipSignature(bytes: Uint8Array): boolean {
 	return (
 		bytes.length >= 4 &&
@@ -125,4 +137,149 @@ export function normalizeVaultBinaryData(
 	}
 
 	return normalized;
+}
+
+function getExpectedFileSize(file: TFile): number | null {
+	const size = Number(file?.stat?.size);
+	return Number.isFinite(size) && size > 0 ? size : null;
+}
+
+function chooseBetterCandidate(
+	current: BinaryCandidate | null,
+	next: BinaryCandidate
+): BinaryCandidate {
+	if (!current) {
+		return next;
+	}
+
+	if (next.exactSize && !current.exactSize) {
+		return next;
+	}
+
+	if (next.exactSize === current.exactSize && next.bytes.byteLength > current.bytes.byteLength) {
+		return next;
+	}
+
+	return current;
+}
+
+function createBinaryReadAttempts(app: App, file: TFile): BinaryReadAttempt[] {
+	const attempts: BinaryReadAttempt[] = [
+		{
+			label: "vault.readBinary",
+			read: () => app.vault.readBinary(file),
+		},
+	];
+
+	const adapter = (app.vault as { adapter?: { readBinary?: (normalizedPath: string) => Promise<unknown> } })
+		.adapter;
+	if (typeof adapter?.readBinary === "function") {
+		const readBinaryFromAdapter = adapter.readBinary.bind(adapter);
+		attempts.push({
+			label: "vault.adapter.readBinary",
+			read: () => readBinaryFromAdapter(file.path),
+		});
+	}
+
+	if (typeof app.vault.getResourcePath === "function" && typeof fetch === "function") {
+		attempts.push({
+			label: "vault.getResourcePath+fetch",
+			read: async () => {
+				const resourcePath = app.vault.getResourcePath(file);
+				if (!resourcePath) {
+					throw new Error(`Missing resource path for ${file.path}`);
+				}
+				const response = await fetch(resourcePath);
+				if (!response.ok) {
+					throw new Error(`Failed to fetch EPUB resource: ${response.status} ${response.statusText}`);
+				}
+				return response.arrayBuffer();
+			},
+		});
+	}
+
+	return attempts;
+}
+
+export async function readVaultBinaryData(
+	app: App,
+	file: TFile,
+	context: string
+): Promise<Uint8Array<ArrayBuffer>> {
+	const expectedSize = getExpectedFileSize(file);
+	const attempts = createBinaryReadAttempts(app, file);
+	const diagnostics: Array<Record<string, unknown>> = [];
+	let bestCandidate: BinaryCandidate | null = null;
+	let firstError: unknown = null;
+
+	for (const attempt of attempts) {
+		try {
+			const raw = await attempt.read();
+			const bytes = normalizeVaultBinaryData(raw, `${context} via ${attempt.label}`);
+			const exactSize = expectedSize == null || bytes.byteLength === expectedSize;
+			const zipLike = hasZipSignature(bytes);
+
+			diagnostics.push({
+				label: attempt.label,
+				byteLength: bytes.byteLength,
+				exactSize,
+				zipLike,
+				signature: buildSignatureHex(bytes),
+			});
+
+			if (!zipLike) {
+				continue;
+			}
+
+			const candidate: BinaryCandidate = {
+				label: attempt.label,
+				bytes,
+				exactSize,
+			};
+
+			if (exactSize) {
+				if (attempt.label !== "vault.readBinary") {
+					logger.warn("[EpubBinaryData] Recovered EPUB binary through fallback read strategy", {
+						context,
+						filePath: file.path,
+						expectedSize,
+						chosen: attempt.label,
+						diagnostics,
+					});
+				}
+				return bytes;
+			}
+
+			bestCandidate = chooseBetterCandidate(bestCandidate, candidate);
+		} catch (error) {
+			firstError ||= error;
+			diagnostics.push({
+				label: attempt.label,
+				error:
+					error instanceof Error
+						? error.message
+						: typeof error === "string"
+							? error
+							: String(error),
+			});
+		}
+	}
+
+	if (bestCandidate) {
+		logger.warn("[EpubBinaryData] EPUB binary size does not match file stat; using best available payload", {
+			context,
+			filePath: file.path,
+			expectedSize,
+			chosen: bestCandidate.label,
+			chosenLength: bestCandidate.bytes.byteLength,
+			diagnostics,
+		});
+		return bestCandidate.bytes;
+	}
+
+	if (firstError instanceof Error) {
+		throw firstError;
+	}
+
+	throw new Error(`EPUB binary read failed: ${context}`);
 }

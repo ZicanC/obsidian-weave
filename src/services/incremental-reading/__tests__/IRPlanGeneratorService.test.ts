@@ -28,9 +28,11 @@ describe('IRPlanGeneratorService', () => {
     priority: number;
     estimatedMinutes?: number;
     sourceFile?: string;
+    topicKey?: string;
   }): IRPlannedScheduleItem {
     const nextReviewDate = createDate(input.dayOffset);
     const estimatedMinutes = input.estimatedMinutes ?? 5;
+    const today = createDate(0);
     const profile = profileService.computeProfile({
       scheduleStatus: 'scheduled',
       nextRepDate: nextReviewDate.getTime(),
@@ -41,14 +43,18 @@ describe('IRPlanGeneratorService', () => {
       stats: {
         impressions: 1,
       },
-      nowMs: createDate(0).getTime(),
+      nowMs: today.getTime(),
       continuityHint: 0,
     });
+    const overdueDays = nextReviewDate.getTime() < today.getTime()
+      ? Math.max(1, Math.round((today.getTime() - nextReviewDate.getTime()) / (24 * 60 * 60 * 1000)))
+      : 0;
 
     return {
       id: input.id,
       title: input.id,
       sourceFile: input.sourceFile ?? `/test/${input.id}.md`,
+      topicKey: input.topicKey ?? `source:${input.sourceFile ?? `/test/${input.id}.md`}`,
       priority: input.priority,
       intervalDays: 1,
       scheduleStatus: 'scheduled',
@@ -61,8 +67,8 @@ describe('IRPlanGeneratorService', () => {
         secondaryReasons: [],
         manualPriority: input.priority,
         effectivePriority: input.priority,
-        isOverdue: false,
-        overdueDays: 0,
+        isOverdue: overdueDays > 0,
+        overdueDays,
         hasManualSchedule: true,
         estimatedMinutes,
         scoreBreakdown: profile,
@@ -129,5 +135,49 @@ describe('IRPlanGeneratorService', () => {
 
     expect(plan.itemsByDate.get(formatDateKey(tomorrow))?.map(item => item.id)).toEqual(['day1-heavy']);
     expect(plan.itemsByDate.get(formatDateKey(dayAfterTomorrow))?.map(item => item.id)).toEqual(['day1-movable']);
+  });
+
+  test('交错软阈值会在分数接近时优先切换主题，而不是硬切断', () => {
+    const today = createDate(0);
+    const plan = planGenerator.generatePlan(
+      [
+        createItem({ id: 'a-1', dayOffset: 0, priority: 6.2, sourceFile: '/test/a.md', topicKey: 'tag:A' }),
+        createItem({ id: 'a-2', dayOffset: 0, priority: 5.2, sourceFile: '/test/a.md', topicKey: 'tag:A' }),
+        createItem({ id: 'b-1', dayOffset: 0, priority: 5.0, sourceFile: '/test/b.md', topicKey: 'tag:B' }),
+      ],
+      {
+        horizonDays: 1,
+        dailyBudgetMinutes: 15,
+        continuityBonus: 0.8,
+        enableInterleaving: true,
+        maxConsecutiveSameTopic: 1,
+      }
+    );
+
+    expect(plan.itemsByDate.get(formatDateKey(today))?.map(item => item.id)).toEqual(['a-1', 'b-1', 'a-2']);
+  });
+
+  test('逾期块不会被交错软阈值强行打断', () => {
+    const today = createDate(0);
+    const plan = planGenerator.generatePlan(
+      [
+        createItem({ id: 'a-overdue-1', dayOffset: -2, priority: 8.5, sourceFile: '/test/a.md', topicKey: 'tag:A' }),
+        createItem({ id: 'a-overdue-2', dayOffset: -2, priority: 7.8, sourceFile: '/test/a.md', topicKey: 'tag:A' }),
+        createItem({ id: 'b-today', dayOffset: 0, priority: 5.2, sourceFile: '/test/b.md', topicKey: 'tag:B' }),
+      ],
+      {
+        horizonDays: 1,
+        dailyBudgetMinutes: 15,
+        continuityBonus: 0.8,
+        enableInterleaving: true,
+        maxConsecutiveSameTopic: 1,
+      }
+    );
+
+    expect(plan.itemsByDate.get(formatDateKey(today))?.map(item => item.id)).toEqual([
+      'a-overdue-1',
+      'a-overdue-2',
+      'b-today',
+    ]);
   });
 });

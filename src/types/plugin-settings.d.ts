@@ -62,31 +62,6 @@ export interface FormattingConfig {
 }
 
 /**
- * 测试题生成配置
- */
-export interface TestGenerationConfig {
-  /**
-   * 是否启用测试题生成
-   */
-  enabled?: boolean;
-  
-  /**
-   * 默认题目类型
-   */
-  defaultType?: 'choice' | 'fillblank' | 'judge';
-  
-  /**
-   * 默认难度等级
-   */
-  defaultDifficulty?: 'easy' | 'medium' | 'hard';
-  
-  /**
-   * 默认生成数量
-   */
-  defaultCount?: number;
-}
-
-/**
  * AI配置总接口
  */
 export interface AIConfig {
@@ -118,21 +93,6 @@ export interface AIConfig {
   lastUsedModel?: string;
   
   /**
-   * API密钥（向后兼容）
-   */
-  apiKey?: string;
-  
-  /**
-   * API端点
-   */
-  endpoint?: string;
-  
-  /**
-   * 模型名称
-   */
-  model?: string;
-  
-  /**
    * 卡片拆分配置
    */
   cardSplitting?: CardSplittingConfig;
@@ -143,19 +103,9 @@ export interface AIConfig {
   formatting?: FormattingConfig;
   
   /**
-   * 测试题生成配置
-   */
-  testGeneration?: TestGenerationConfig;
-  
-  /**
    * 自定义格式化功能
    */
   customFormatActions?: any[];
-  
-  /**
-   * 自定义测试题生成功能
-   */
-  customTestGenActions?: any[];
   
   /**
    * 自定义AI拆分功能
@@ -165,8 +115,6 @@ export interface AIConfig {
   /**
    * 官方功能配置覆盖
    */
-  officialActionOverrides?: Record<string, { provider?: string; model?: string }>;
-  
   /**
    * 官方格式化功能状态
    */

@@ -13,6 +13,7 @@
   import { IRStorageService } from '../../services/incremental-reading/IRStorageService';
   import { IRPdfBookmarkTaskService } from '../../services/incremental-reading/IRPdfBookmarkTaskService';
   import { IREpubBookmarkTaskService } from '../../services/incremental-reading/IREpubBookmarkTaskService';
+  import { getChunkTopicIds, getTaskTopicId } from '../../utils/ir-topic-compat';
   import IRStudySessionChart from '../analytics/IRStudySessionChart.svelte';
   import IRActivityHeatmap from '../analytics/IRActivityHeatmap.svelte';
   import * as echarts from 'echarts/core';
@@ -260,12 +261,22 @@
     const readingSecondsById = buildSessionTotalsByBlockId(history.sessions);
 
     // 过滤选中牌组的数据
-    const selectedDeckSet = showGlobalLoad ? null : selectedDeckIds;
+    const selectedDeckSet = showGlobalLoad
+      ? null
+      : new Set(
+          allIRDecks.flatMap((deck) => {
+            if (!selectedDeckIds.has(deck.id)) {
+              return [];
+            }
+            return [deck.id, String((deck as any)?.path || '').trim()].filter(Boolean);
+          })
+        );
     
     const filteredChunks = selectedDeckSet 
       ? allChunks.filter(chunk => {
-          if (chunk.deckIds && chunk.deckIds.length > 0) {
-            return chunk.deckIds.some(id => selectedDeckSet.has(id));
+          const deckIds = getChunkTopicIds(chunk);
+          if (deckIds.length > 0) {
+            return deckIds.some(id => selectedDeckSet.has(id));
           }
           return false;
         })
@@ -274,7 +285,10 @@
     const filteredBlocks = selectedDeckSet
       ? allBlocks.filter(block => {
           const deck = allIRDecks.find(d => d.blockIds?.includes(block.id));
-          return deck && selectedDeckSet.has(deck.id);
+          return !!deck && (
+            selectedDeckSet.has(deck.id) ||
+            selectedDeckSet.has(String((deck as any)?.path || '').trim())
+          );
         })
       : allBlocks;
 
@@ -297,10 +311,10 @@
     }
 
     const filteredPdfTasks = selectedDeckSet
-      ? allPdfTasks.filter(t => selectedDeckSet.has(String(t.deckId || '')))
+      ? allPdfTasks.filter(t => selectedDeckSet.has(String(getTaskTopicId(t) || '').trim()))
       : allPdfTasks;
     const filteredEpubTasks = selectedDeckSet
-      ? allEpubTasks.filter(t => selectedDeckSet.has(String(t.deckId || '')))
+      ? allEpubTasks.filter(t => selectedDeckSet.has(String(getTaskTopicId(t) || '').trim()))
       : allEpubTasks;
 
     // 预估每个块的阅读时间（分钟）
@@ -895,9 +909,9 @@
   <div class="ir-load-forecast-modal">
     <!-- 标签页切换与控制栏 -->
     <div class="tabs-bar">
-      <div class="tabs-left">
+      <div class="tabs-left weave-toolbar-tabs">
         <button 
-          class="tab-btn" 
+          class="tab-btn weave-toolbar-tab" 
           class:active={activeTab === 'loadRatio'}
           onclick={() => switchTab('loadRatio')}
           title="负载率"
@@ -906,7 +920,7 @@
           {#if !isMobile}<span>负载率</span>{/if}
         </button>
         <button 
-          class="tab-btn" 
+          class="tab-btn weave-toolbar-tab" 
           class:active={activeTab === 'loadForecast'}
           onclick={() => switchTab('loadForecast')}
           title="阅读时间"
@@ -915,7 +929,7 @@
           {#if !isMobile}<span>阅读时间</span>{/if}
         </button>
         <button 
-          class="tab-btn" 
+          class="tab-btn weave-toolbar-tab" 
           class:active={activeTab === 'studySessions'}
           onclick={() => switchTab('studySessions')}
           title="学习记录"
@@ -924,7 +938,7 @@
           {#if !isMobile}<span>学习记录</span>{/if}
         </button>
         <button 
-          class="tab-btn" 
+          class="tab-btn weave-toolbar-tab" 
           class:active={activeTab === 'activityHeatmap'}
           onclick={() => switchTab('activityHeatmap')}
           title="活动热力图"
@@ -1052,11 +1066,8 @@
   }
 
   .tabs-left {
-    display: flex;
-    background: var(--background-secondary);
-    border-radius: 6px;
-    padding: 2px;
-    gap: 2px;
+    flex: 1 1 auto;
+    min-width: 0;
   }
 
   .tabs-right {
@@ -1066,29 +1077,9 @@
   }
 
   .tabs-bar .tab-btn {
-    display: flex;
-    align-items: center;
     gap: 6px;
-    padding: 5px 14px;
-    font-size: 13px;
+    min-width: 0;
     font-weight: 500;
-    background: transparent;
-    color: var(--text-muted);
-    border: none;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    white-space: nowrap;
-  }
-
-  .tabs-bar .tab-btn:hover {
-    color: var(--text-normal);
-  }
-
-  .tabs-bar .tab-btn.active {
-    background: var(--background-primary);
-    color: var(--text-normal);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   }
 
   /* 控制图标按钮 */
@@ -1206,10 +1197,17 @@
       flex-wrap: nowrap;
       gap: 4px;
       flex: 1;
-      justify-content: space-around;
+      justify-content: flex-start;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .tabs-left::-webkit-scrollbar {
+      display: none;
     }
 
     .tabs-bar .tab-btn {
+      min-height: 40px;
       padding: 8px 10px;
       min-width: 40px;
       justify-content: center;

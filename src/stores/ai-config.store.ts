@@ -1,18 +1,10 @@
 /**
- * AI配置响应式Store
- * 单一数据源，所有组件从这里读取和更新配置
- *
- * 核心理念：
- * - Single Source of Truth (单一数据源)
- * - Immutable Updates (不可变更新)
- * - Reactive Propagation (响应式传播)
- *
- * @module stores/ai-config
+ * AI 配置响应式 Store。
+ * 负责统一读取、更新并持久化 AI 配置。
  */
 
 import { derived, get, writable } from "svelte/store";
 import { OFFICIAL_FORMAT_ACTIONS } from "../constants/official-format-actions";
-import { OFFICIAL_TEST_GEN_ACTIONS } from "../constants/official-test-gen-actions";
 import { DEFAULT_SPLIT_ACTIONS } from "../data/default-split-actions";
 import type { WeavePlugin } from "../main";
 import type { AIAction, AIProvider } from "../types/ai-types";
@@ -25,7 +17,6 @@ function createDefaultPersistedAIConfig(): PersistedAIConfig {
 		apiKeys: {},
 		defaultProvider: "zhipu",
 		customFormatActions: [],
-		customTestGenActions: [],
 		customSplitActions: [],
 		officialFormatActions: {
 			choice: { enabled: true },
@@ -59,10 +50,6 @@ function isActionReadyForMenu(action: AIAction, expectedType: string): boolean {
 		return false;
 	}
 
-	if (expectedType === "test-generator" && !action.testConfig) {
-		return false;
-	}
-
 	if (expectedType === "split" && !action.splitConfig) {
 		return false;
 	}
@@ -77,7 +64,6 @@ function isActionReadyForMenu(action: AIAction, expectedType: string): boolean {
 export interface AIConfigState {
 	// 自定义功能列表
 	customFormatActions: AIAction[];
-	customTestGenActions: AIAction[];
 	customSplitActions: AIAction[];
 
 	// 默认配置
@@ -116,7 +102,6 @@ class AIConfigStore {
 	private getInitialState(): AIConfigState {
 		return {
 			customFormatActions: [],
-			customTestGenActions: [],
 			customSplitActions: [],
 			defaultProvider: "zhipu",
 			apiKeys: {},
@@ -137,11 +122,9 @@ class AIConfigStore {
 			return;
 		}
 
-		// ✅ 使用安全的深拷贝方法并确保类型正确
 		try {
 			this.store.set({
 				customFormatActions: structuredClone((aiConfig.customFormatActions || []) as AIAction[]),
-				customTestGenActions: structuredClone((aiConfig.customTestGenActions || []) as AIAction[]),
 				customSplitActions: structuredClone((aiConfig.customSplitActions || []) as AIAction[]),
 				defaultProvider: aiConfig.defaultProvider || "zhipu",
 				apiKeys: structuredClone(aiConfig.apiKeys || {}),
@@ -149,14 +132,10 @@ class AIConfigStore {
 				version: 0,
 			});
 		} catch (error) {
-			// fallback到JSON方法
 			logger.warn("[AIConfigStore] 加载时structuredClone失败，使用JSON fallback:", error);
 			this.store.set({
 				customFormatActions: JSON.parse(
 					JSON.stringify((aiConfig.customFormatActions || []) as AIAction[])
-				),
-				customTestGenActions: JSON.parse(
-					JSON.stringify((aiConfig.customTestGenActions || []) as AIAction[])
 				),
 				customSplitActions: JSON.parse(
 					JSON.stringify((aiConfig.customSplitActions || []) as AIAction[])
@@ -170,7 +149,6 @@ class AIConfigStore {
 
 		logger.info("[AIConfigStore] 配置已从plugin加载", {
 			formatActions: aiConfig.customFormatActions?.length || 0,
-			testGenActions: aiConfig.customTestGenActions?.length || 0,
 			splitActions: aiConfig.customSplitActions?.length || 0,
 		});
 	}
@@ -204,20 +182,6 @@ class AIConfigStore {
 	}
 
 	/**
-	 * 更新测试题生成功能列表
-	 */
-	updateTestGenActions(actions: AIAction[]) {
-		this.store.update((state) => ({
-			...state,
-			customTestGenActions: this.validateAndClone(actions, "test-generator"),
-			lastModified: Date.now(),
-			version: state.version + 1,
-		}));
-		this.scheduleSave();
-		logger.debug("[AIConfigStore] 测试题功能已更新", { count: actions.length });
-	}
-
-	/**
 	 * 更新AI拆分功能列表
 	 */
 	updateSplitActions(actions: AIAction[]) {
@@ -234,15 +198,10 @@ class AIConfigStore {
 	/**
 	 * 批量更新所有功能
 	 */
-	updateAllActions(
-		formatActions: AIAction[],
-		testGenActions: AIAction[],
-		splitActions: AIAction[]
-	) {
+	updateAllActions(formatActions: AIAction[], splitActions: AIAction[]) {
 		this.store.update((state) => ({
 			...state,
 			customFormatActions: this.validateAndClone(formatActions, "format"),
-			customTestGenActions: this.validateAndClone(testGenActions, "test-generator"),
 			customSplitActions: this.validateAndClone(splitActions, "split"),
 			lastModified: Date.now(),
 			version: state.version + 1,
@@ -262,25 +221,17 @@ class AIConfigStore {
 	}
 
 	private deepCloneAction(action: AIAction): AIAction {
-		// ✅ 使用安全的深拷贝方法，只克隆可序列化的字段
 		try {
-			// 方法1：尝试使用 structuredClone（最快）
 			const cloned = structuredClone(action);
 			return {
 				...cloned,
 				provider: action.provider,
 				model: action.model,
-				testConfig: action.testConfig,
 				splitConfig: action.splitConfig,
 			};
 		} catch (error) {
-			// 方法2：fallback到JSON方法（兼容但会丢失undefined）
 			logger.warn("[AIConfigStore] structuredClone失败，使用JSON fallback:", error);
-
-			// 手动构造对象，显式保留所有字段
 			const cloned = JSON.parse(JSON.stringify(action)) as Partial<AIAction>;
-
-			// ✅ 显式恢复可能丢失的字段
 			return {
 				...cloned,
 				id: action.id,
@@ -291,7 +242,6 @@ class AIConfigStore {
 				userPromptTemplate: action.userPromptTemplate,
 				provider: action.provider,
 				model: action.model,
-				testConfig: action.testConfig,
 				splitConfig: action.splitConfig,
 				description: action.description,
 				icon: action.icon,
@@ -339,16 +289,11 @@ class AIConfigStore {
 
 		try {
 			aiConfig.customFormatActions = structuredClone(state.customFormatActions);
-			aiConfig.customTestGenActions = structuredClone(state.customTestGenActions);
 			aiConfig.customSplitActions = structuredClone(state.customSplitActions);
 		} catch (error) {
-			// fallback到JSON方法
 			logger.warn("[AIConfigStore] 保存时structuredClone失败，使用JSON fallback:", error);
 			aiConfig.customFormatActions = JSON.parse(
 				JSON.stringify(state.customFormatActions)
-			) as AIAction[];
-			aiConfig.customTestGenActions = JSON.parse(
-				JSON.stringify(state.customTestGenActions)
 			) as AIAction[];
 			aiConfig.customSplitActions = JSON.parse(
 				JSON.stringify(state.customSplitActions)
@@ -360,7 +305,6 @@ class AIConfigStore {
 			logger.info("[AIConfigStore] 配置已保存到磁盘", {
 				version: state.version,
 				formatActions: state.customFormatActions.length,
-				testGenActions: state.customTestGenActions.length,
 				splitActions: state.customSplitActions.length,
 			});
 		} catch (error) {
@@ -425,29 +369,6 @@ export const allFormatActions = derived(aiConfigStore, ($state) => {
 });
 
 /**
- * 所有测试题生成功能（官方 + 自定义）
- */
-export const allTestGenActions = derived(aiConfigStore, ($state) => {
-	const official = OFFICIAL_TEST_GEN_ACTIONS.map((officialAction) => {
-		return {
-			...officialAction,
-			type: "test-generator" as const,
-			category: "official" as const,
-		};
-	});
-
-	const custom = $state.customTestGenActions.map((customAction) => {
-		return {
-			...customAction,
-			type: "test-generator" as const,
-			category: "custom" as const,
-		};
-	});
-
-	return [...official, ...custom] as AIAction[];
-});
-
-/**
  * 所有AI拆分功能（官方 + 自定义）
  */
 export const allSplitActions = derived(aiConfigStore, ($state) => {
@@ -475,6 +396,5 @@ export const allSplitActions = derived(aiConfigStore, ($state) => {
  */
 export const customActionsForMenu = derived(aiConfigStore, ($state) => ({
 	format: $state.customFormatActions.filter((a) => isActionReadyForMenu(a, "format")),
-	testGen: $state.customTestGenActions.filter((a) => isActionReadyForMenu(a, "test-generator")),
 	split: $state.customSplitActions.filter((a) => isActionReadyForMenu(a, "split")),
 }));

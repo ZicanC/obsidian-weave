@@ -21,6 +21,7 @@
   import { CanvasRenderer } from 'echarts/renderers';
   import { LabelLayout } from 'echarts/features';
   import { applyRetentionChartLayout, createRetentionChartGrid, createRetentionScrollableLegend } from '../charts/retentionChartStyle';
+  import { bindPinchRangeGesture } from '../../utils/pinch-range-gesture';
 
   // 注册ECharts组件
   echarts.use([
@@ -72,6 +73,7 @@
   let difficultyChart: echarts.ECharts | null = null;
   let loadForecastChart: echarts.ECharts | null = null;
   let themeObserver: MutationObserver | null = null;
+  const pinchGestureCleanupMap = new Map<HTMLDivElement, () => void>();
   
   // 多牌组选择
   let allDecks = $state<Deck[]>([]); // 所有可用牌组
@@ -80,6 +82,7 @@
   // 时间范围展开状态：'quick' | 'custom' | null（互斥显示）
   let filterPanelOpen = $state(false);
   let expandedRange = $state<'quick' | 'custom' | null>('quick');
+  let rangeSelectionMode = $state<'quick' | 'custom'>('quick');
   let deckCardsMap = $state<Map<string, Card[]>>(new Map()); // 牌组ID -> 卡片列表
   let showGlobalLoad = $state(false); // 是否显示全局负荷（所有卡片）
   
@@ -251,8 +254,10 @@
   });
 
   const rangeSummaryText = $derived.by(() => {
-    const quickMatch = quickRangeOptions.find((option) => option.value === currentQuickRange);
-    if (quickMatch) return quickMatch.label;
+    if (rangeSelectionMode === 'quick') {
+      const quickMatch = quickRangeOptions.find((option) => option.value === currentQuickRange);
+      if (quickMatch) return quickMatch.label;
+    }
     const start = `${startDate.getMonth() + 1}/${startDate.getDate()}`;
     const end = `${endDate.getMonth() + 1}/${endDate.getDate()}`;
     return `${start}-${end}`;
@@ -1642,12 +1647,7 @@
   }
   
   // 处理快捷时间范围变化
-  function handleQuickRangeChange(days: number) {
-    const end = new Date();
-    const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
-    startDate = start;
-    endDate = end;
-    selectedDays = days;
+  function refreshActiveChart() {
     if (activeTab === 'retention') {
       updateRetentionChart();
     } else if (activeTab === 'quantity') {
@@ -1659,6 +1659,29 @@
     } else if (activeTab === 'loadForecast') {
       updateLoadForecastChart();
     }
+  }
+
+  function applyRangeWindow(
+    days: number,
+    options?: { preserveEndDate?: boolean; mode?: 'quick' | 'custom' }
+  ) {
+    const safeDays = Math.max(1, Math.round(days));
+    const preserveEndDate = options?.preserveEndDate ?? false;
+    const nextEndDate = preserveEndDate ? new Date(endDate) : new Date();
+    const nextStartDate = new Date(nextEndDate.getTime() - safeDays * 24 * 60 * 60 * 1000);
+
+    startDate = nextStartDate;
+    endDate = nextEndDate;
+    selectedDays = safeDays;
+    rangeSelectionMode = options?.mode ?? rangeSelectionMode;
+    refreshActiveChart();
+  }
+
+  function handleQuickRangeChange(days: number) {
+    applyRangeWindow(days, {
+      preserveEndDate: false,
+      mode: 'quick'
+    });
   }
   
   // 显示牌组选择菜单（Obsidian Menu API）
@@ -1716,9 +1739,26 @@
       filterPanelOpen = false;
       return;
     }
-    const quickMatch = quickRangeOptions.some((option) => option.value === currentQuickRange);
     filterPanelOpen = true;
-    expandedRange = quickMatch ? 'quick' : 'custom';
+    expandedRange = rangeSelectionMode;
+  }
+
+  function getAdjacentQuickRangeValue(currentDays: number, step: number): number | null {
+    if (step === 0) return null;
+
+    const rangeValues = quickRangeOptions.map((option) => option.value);
+
+    if (step > 0) {
+      return rangeValues.find((value) => value > currentDays) ?? null;
+    }
+
+    for (let index = rangeValues.length - 1; index >= 0; index--) {
+      if (rangeValues[index] < currentDays) {
+        return rangeValues[index];
+      }
+    }
+
+    return null;
   }
 
   // 处理自定义日期变化
@@ -1733,17 +1773,8 @@
     // 计算天数用于图表生成
     const diffTime = endDate.getTime() - startDate.getTime();
     selectedDays = Math.max(1, Math.round(diffTime / (1000 * 60 * 60 * 24)));
-    if (activeTab === 'retention') {
-      updateRetentionChart();
-    } else if (activeTab === 'quantity') {
-      updateQuantityChart();
-    } else if (activeTab === 'timing') {
-      updateTimingChart();
-    } else if (activeTab === 'difficulty') {
-      updateDifficultyChart();
-    } else if (activeTab === 'loadForecast') {
-      updateLoadForecastChart();
-    }
+    rangeSelectionMode = 'custom';
+    refreshActiveChart();
   }
   
   // 格式化日期为YYYY-MM-DD
@@ -1753,47 +1784,63 @@
     const day = String(date.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   }
+
+  function updateQuickRangeByStep(step: number) {
+    if (wheelThrottle) return;
+
+    const nextDays = getAdjacentQuickRangeValue(selectedDays, step);
+    if (nextDays === null) return;
+
+    wheelThrottle = true;
+    isUpdating = true;
+
+    requestAnimationFrame(() => {
+      applyRangeWindow(nextDays, {
+        preserveEndDate: rangeSelectionMode === 'custom',
+        mode: rangeSelectionMode
+      });
+      setTimeout(() => {
+        isUpdating = false;
+      }, 300);
+    });
+
+    setTimeout(() => {
+      wheelThrottle = false;
+    }, WHEEL_THROTTLE_MS);
+  }
   
   // 滚轮事件处理函数，在快捷范围之间切换
   function handleWheelScroll(event: WheelEvent) {
     event.preventDefault();
-    
-    if (wheelThrottle) return;
-    wheelThrottle = true;
-    
-    const currentIndex = quickRangeOptions.findIndex(opt => opt.value === currentQuickRange);
-    
-    if (event.deltaY < 0) {
-      // 向上滚动 - 增加天数
-      if (currentIndex < quickRangeOptions.length - 1) {
-        isUpdating = true;
-        const newDays = quickRangeOptions[currentIndex + 1].value;
-        
-        requestAnimationFrame(() => {
-          handleQuickRangeChange(newDays);
-          setTimeout(() => {
-            isUpdating = false;
-          }, 300);
-        });
-      }
-    } else {
-      // 向下滚动 - 减少天数
-      if (currentIndex > 0) {
-        isUpdating = true;
-        const newDays = quickRangeOptions[currentIndex - 1].value;
-        
-        requestAnimationFrame(() => {
-          handleQuickRangeChange(newDays);
-          setTimeout(() => {
-            isUpdating = false;
-          }, 300);
-        });
-      }
-    }
-    
-    setTimeout(() => {
-      wheelThrottle = false;
-    }, WHEEL_THROTTLE_MS);
+    updateQuickRangeByStep(event.deltaY < 0 ? 1 : -1);
+  }
+
+  function bindChartInteractions(chartRef: HTMLDivElement | null) {
+    if (!chartRef) return;
+
+    chartRef.removeEventListener('wheel', handleWheelScroll);
+    chartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+
+    pinchGestureCleanupMap.get(chartRef)?.();
+    pinchGestureCleanupMap.delete(chartRef);
+
+    if (!isMobile) return;
+
+    const cleanup = bindPinchRangeGesture(chartRef, {
+      onExpand: () => updateQuickRangeByStep(-1),
+      onContract: () => updateQuickRangeByStep(1),
+      cooldownMs: WHEEL_THROTTLE_MS
+    });
+
+    pinchGestureCleanupMap.set(chartRef, cleanup);
+  }
+
+  function unbindChartInteractions(chartRef: HTMLDivElement | null) {
+    if (!chartRef) return;
+
+    chartRef.removeEventListener('wheel', handleWheelScroll);
+    pinchGestureCleanupMap.get(chartRef)?.();
+    pinchGestureCleanupMap.delete(chartRef);
   }
 
   // 响应式调整图表大小
@@ -1884,12 +1931,11 @@
         if (!config.chart && config.ref) {
           // 初始化图表并添加事件监听器
           config.init();
-          // 防止重复添加监听器
-          config.ref.removeEventListener('wheel', handleWheelScroll);
-          config.ref.addEventListener('wheel', handleWheelScroll, { passive: false });
+          bindChartInteractions(config.ref);
         } else if (config.chart) {
           // 仅调整大小
           config.chart.resize();
+          bindChartInteractions(config.ref);
         }
       }
     }, 100);
@@ -1933,32 +1979,27 @@
         if (!retentionChart) {
           initRetentionChart();
         }
-        retentionChartRef.removeEventListener('wheel', handleWheelScroll);
-        retentionChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+        bindChartInteractions(retentionChartRef);
       } else if (activeTab === 'quantity' && quantityChartRef) {
         if (!quantityChart) {
           initQuantityChart();
         }
-        quantityChartRef.removeEventListener('wheel', handleWheelScroll);
-        quantityChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+        bindChartInteractions(quantityChartRef);
       } else if (activeTab === 'timing' && timingChartRef) {
         if (!timingChart) {
           initTimingChart();
         }
-        timingChartRef.removeEventListener('wheel', handleWheelScroll);
-        timingChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+        bindChartInteractions(timingChartRef);
       } else if (activeTab === 'difficulty' && difficultyChartRef) {
         if (!difficultyChart) {
           initDifficultyChart();
         }
-        difficultyChartRef.removeEventListener('wheel', handleWheelScroll);
-        difficultyChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+        bindChartInteractions(difficultyChartRef);
       } else if (activeTab === 'loadForecast' && loadForecastChartRef) {
         if (!loadForecastChart) {
           initLoadForecastChart();
         }
-        loadForecastChartRef.removeEventListener('wheel', handleWheelScroll);
-        loadForecastChartRef.addEventListener('wheel', handleWheelScroll, { passive: false });
+        bindChartInteractions(loadForecastChartRef);
       }
     }, 100);
   });
@@ -1969,11 +2010,11 @@
     timingChart?.dispose();
     difficultyChart?.dispose();
     loadForecastChart?.dispose();
-    retentionChartRef?.removeEventListener('wheel', handleWheelScroll);
-    quantityChartRef?.removeEventListener('wheel', handleWheelScroll);
-    timingChartRef?.removeEventListener('wheel', handleWheelScroll);
-    difficultyChartRef?.removeEventListener('wheel', handleWheelScroll);
-    loadForecastChartRef?.removeEventListener('wheel', handleWheelScroll);
+    unbindChartInteractions(retentionChartRef);
+    unbindChartInteractions(quantityChartRef);
+    unbindChartInteractions(timingChartRef);
+    unbindChartInteractions(difficultyChartRef);
+    unbindChartInteractions(loadForecastChartRef);
     window.removeEventListener('resize', handleResize);
     themeObserver?.disconnect();
   });
@@ -1992,10 +2033,10 @@
     
     <!-- 标签页导航 + 牌组选择器 -->
     <div class="tabs-header" class:mobile={isMobile}>
-      <div class="tabs-nav">
+      <div class="tabs-nav weave-toolbar-tabs">
         <button 
           type="button"
-          class="tab-btn"
+          class="tab-btn weave-toolbar-tab"
           class:active={activeTab === 'retention'}
           onclick={(e) => { e.preventDefault(); switchTab('retention'); }}
           title="记忆率曲线图"
@@ -2004,7 +2045,7 @@
         </button>
         <button 
           type="button"
-          class="tab-btn"
+          class="tab-btn weave-toolbar-tab"
           class:active={activeTab === 'quantity'}
           onclick={(e) => { e.preventDefault(); switchTab('quantity'); }}
           title="卡片数量变化双轴图"
@@ -2013,7 +2054,7 @@
         </button>
         <button 
           type="button"
-          class="tab-btn"
+          class="tab-btn weave-toolbar-tab"
           class:active={activeTab === 'timing'}
           onclick={(e) => { e.preventDefault(); switchTab('timing'); }}
           title="复习时机分析图"
@@ -2022,7 +2063,7 @@
         </button>
         <button 
           type="button"
-          class="tab-btn"
+          class="tab-btn weave-toolbar-tab"
           class:active={activeTab === 'difficulty'}
           onclick={(e) => { e.preventDefault(); switchTab('difficulty'); }}
           title="难度-标签矩阵图"
@@ -2031,7 +2072,7 @@
         </button>
         <button 
           type="button"
-          class="tab-btn"
+          class="tab-btn weave-toolbar-tab"
           class:active={activeTab === 'loadForecast'}
           onclick={(e) => { e.preventDefault(); switchTab('loadForecast'); }}
           title="负荷预测"
@@ -2100,7 +2141,7 @@
                 {#each quickRangeOptions as option}
                   <button 
                     class="time-range-btn"
-                    class:active={currentQuickRange === option.value}
+                    class:active={rangeSelectionMode === 'quick' && currentQuickRange === option.value}
                     onclick={() => handleQuickRangeChange(option.value)}
                   >
                     {isMobile ? option.mobileLabel : option.label}
@@ -2217,56 +2258,20 @@
   .tabs-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-start;
     gap: 12px;
     margin-bottom: 2px;
   }
   
   /* 标签页导航 */
   .tabs-nav {
-    display: flex;
-    background: var(--background-primary);
-    border-radius: 8px;
-    padding: 2px;
-    gap: 4px;
     max-width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
     -ms-overflow-style: none;
     -webkit-overflow-scrolling: touch;
   }
-
-  .tabs-nav::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
-  }
   
   .tab-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 7px 12px;
-    border: none;
-    border-radius: 6px;
-    background: var(--background-primary);
-    color: var(--text-muted);
-    font-size: 12.5px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.16s ease;
-    white-space: nowrap;
-    line-height: 1.15;
-  }
-  
-  .tab-btn:hover {
-    color: var(--text-normal);
-    background: var(--background-primary);
-  }
-  
-  .tab-btn.active {
-    background: var(--background-primary);
-    color: var(--interactive-accent);
+    min-width: 0;
     font-weight: 600;
   }
 
@@ -2469,6 +2474,7 @@
     min-height: 500px;
     border-radius: 10px;
     background: var(--background-primary);
+    touch-action: pan-y;
     border: none;
     padding: 4px 0;
     cursor: default;
@@ -2617,11 +2623,6 @@
   /* ==================== 移动端适配样式 ==================== */
   
   /* 移动端标签页头部 */
-  .tabs-header.mobile {
-    flex-direction: column;
-    gap: 10px;
-  }
-  
   .tabs-header.mobile .tabs-nav {
     width: 100%;
     justify-content: flex-start;
@@ -2629,6 +2630,7 @@
   }
   
   .tabs-header.mobile .tab-btn {
+    min-height: 40px;
     padding: 8px 10px;
     min-width: max-content;
     display: flex;

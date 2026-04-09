@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { setIcon } from 'obsidian';
+	import { Notice, setIcon } from 'obsidian';
 	import type { App } from 'obsidian';
 	import { logger } from '../../utils/logger';
 	import type { EpubBook, TocItem, Highlight, Note } from '../../services/epub';
@@ -439,36 +439,88 @@
 		}
 	}
 
-	function ensureEpubLeafActive(): void {
-		if (!sharedState?.filePath) return;
+	function waitForAnimationFrame(): Promise<void> {
+		return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+	}
+
+	async function ensureEpubLeafActive(): Promise<boolean> {
+		if (!sharedState?.filePath) return false;
 		const leaves = app.workspace.getLeavesOfType(VIEW_TYPE_EPUB);
+		let targetLeaf = leaves[0] ?? null;
 		for (const leaf of leaves) {
 			const state = leaf.view?.getState?.();
 			if (state?.filePath === sharedState.filePath || state?.file === sharedState.filePath) {
-				app.workspace.revealLeaf(leaf);
-				return;
+				targetLeaf = leaf;
+				break;
 			}
 		}
-		if (leaves.length > 0) {
-			app.workspace.revealLeaf(leaves[0]);
+		if (!targetLeaf) {
+			return false;
 		}
+		app.workspace.setActiveLeaf(targetLeaf, { focus: true });
+		void app.workspace.revealLeaf(targetLeaf);
+		await waitForAnimationFrame();
+		await waitForAnimationFrame();
+		return true;
 	}
 
 	async function handleTocNavigate(href: string) {
-		if (!sharedState?.readerService) return;
+		if (!sharedState?.readerService || !sharedState.filePath) return;
 		try {
-			ensureEpubLeafActive();
-			await sharedState.readerService.navigateTo({ href });
+			const activated = await ensureEpubLeafActive();
+			if (!activated) {
+				return;
+			}
+			window.dispatchEvent(new CustomEvent('Weave:epub-navigate', {
+				detail: {
+					filePath: sharedState.filePath,
+					href,
+					flashStyle: 'none',
+					showLocateOverlay: true,
+				}
+			}));
 		} catch (error) {
 			logger.error('[EpubGlobalSidebar] Failed to navigate:', error);
 		}
 	}
 
-	async function handleHighlightNavigate(cfi: string, text?: string, color?: string) {
+	async function handleTocCreateReadingPoint(item: TocItem) {
+		if (!sharedState?.onCreateChapterReadingPoint) {
+			new Notice('当前章节添加到增量阅读功能暂不可用');
+			return;
+		}
+
+		try {
+			await ensureEpubLeafActive();
+			await sharedState.onCreateChapterReadingPoint(item);
+		} catch (error) {
+			logger.error('[EpubGlobalSidebar] Failed to add toc item to incremental reading:', error);
+			new Notice('添加到增量阅读失败，未写入增量阅读任务');
+		}
+	}
+
+	async function handleHighlightNavigate(
+		cfi: string,
+		text?: string,
+		color?: string,
+		metadata?: {
+			sourceFile?: string;
+			sourceRef?: string;
+			createdTime?: number;
+		}
+	) {
 		if (!sharedState?.readerService) return;
 		try {
-			ensureEpubLeafActive();
-			await sharedState.readerService.navigateAndHighlight({ cfi, text, flashStyle: 'pulse', flashColor: color });
+			await ensureEpubLeafActive();
+			await sharedState.readerService.navigateAndHighlight({
+				cfi,
+				text,
+				flashStyle: 'pulse',
+				flashColor: color,
+				sourceFile: metadata?.sourceFile,
+				sourceRef: metadata?.sourceRef,
+				createdTime: metadata?.createdTime,
+			});
 		} catch (error) {
 			logger.error('[EpubGlobalSidebar] Failed to navigate to highlight:', error);
 		}
@@ -477,7 +529,7 @@
 	async function handleSearchResultNavigate(cfi: string, text?: string) {
 		if (!sharedState?.readerService) return;
 		try {
-			ensureEpubLeafActive();
+			await ensureEpubLeafActive();
 			await sharedState.readerService.navigateAndHighlight({ cfi, text, flashStyle: 'highlight' });
 		} catch (error) {
 			logger.error('[EpubGlobalSidebar] Failed to navigate to search result:', error);
@@ -775,7 +827,11 @@
 						{/if}
 					</div>
 				{:else if activeTab === 'toc'}
-					<TableOfContents items={tocItems} onNavigate={handleTocNavigate} />
+					<TableOfContents
+						items={tocItems}
+						onNavigate={handleTocNavigate}
+						onAddToIncrementalReading={handleTocCreateReadingPoint}
+					/>
 				{:else if activeTab === 'highlights'}
 					{#if sharedState.annotationService}
 						<NotesPanel book={sharedState.book} annotationService={sharedState.annotationService} backlinkService={sharedState.backlinkService ?? undefined} filePath={sharedState.filePath ?? undefined} annotationRevision={sharedState.annotationRevision} onNavigate={handleHighlightNavigate} />

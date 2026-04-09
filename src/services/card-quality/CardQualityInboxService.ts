@@ -28,9 +28,11 @@ import { DEFAULT_SCAN_CONFIG } from "../../types/card-quality-types";
 import { DirectoryUtils } from "../../utils/directory-utils";
 import { generateId } from "../../utils/helpers";
 import { logger } from "../../utils/logger";
+import { extractSourcePath } from "../../utils/source-path-matcher";
 import {
 	extractBodyContent,
 	parseObsidianLink,
+	parseSourceInfo,
 	parseYAMLFromContent,
 } from "../../utils/yaml-utils";
 import { EpubLinkService } from "../epub/EpubLinkService";
@@ -210,10 +212,12 @@ export class CardQualityInboxService {
 			// 5. 检测源文档缺失（补全 we_source YAML字段检查）
 			if (fullConfig.detectMissingSource) {
 				const yaml = parseYAMLFromContent(card.content || "");
+				const sourceInfo = parseSourceInfo(card.content || "");
 				const hasSource =
-					card.sourceFile ||
-					card.fields?.source_file ||
-					card.fields?.obsidian_block_link ||
+					extractSourcePath(card) ||
+					sourceInfo.sourceBlock ||
+					card.sourceBlock ||
+					card.customFields?.blockId ||
 					yaml.we_source;
 				if (!hasSource) {
 					// 检查是否手动创建的卡片（无源文档是正常的）

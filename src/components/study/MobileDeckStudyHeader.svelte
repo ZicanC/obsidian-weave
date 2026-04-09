@@ -19,16 +19,12 @@
     selectedFilter?: DeckFilter;
     onMenuClick: (evt: MouseEvent) => void;
     onFilterSelect?: (filter: DeckFilter) => void;
-    showKanbanSettings?: boolean;
-    onKanbanSettingsClick?: (evt: MouseEvent) => void;
   }
 
   let {
     selectedFilter = 'memory',
     onMenuClick,
-    onFilterSelect,
-    showKanbanSettings = false,
-    onKanbanSettingsClick
+    onFilterSelect
   }: Props = $props();
 
   let t = $derived($tr);
@@ -43,9 +39,6 @@
     }
   }
 
-  function handleKanbanSettingsClick(evt: MouseEvent) {
-    onKanbanSettingsClick?.(evt);
-  }
 </script>
 
 <header class="mobile-deck-study-header">
@@ -67,17 +60,7 @@
   </div>
 
   <!-- 右侧：看板列设置（仅在看板视图显示） -->
-  {#if showKanbanSettings}
-    <button
-      class="mobile-kanban-settings"
-      onclick={handleKanbanSettingsClick}
-      aria-label={t('study.mobileHeader.kanbanColumnSettings')}
-    >
-      <ObsidianIcon name="sliders" size={18} />
-    </button>
-  {:else}
-    <div class="mobile-header-spacer"></div>
-  {/if}
+  <div class="mobile-header-spacer" aria-hidden="true"></div>
 </header>
 
 <style>
@@ -139,28 +122,4 @@
     flex-shrink: 0;
   }
 
-  .mobile-kanban-settings {
-    width: 44px;
-    height: 44px;
-    border-radius: 6px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    color: var(--interactive-normal);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: background-color 0.15s ease, color 0.15s ease;
-  }
-
-  .mobile-kanban-settings:hover {
-    background: var(--interactive-hover);
-    color: var(--interactive-hover);
-  }
-
-  .mobile-kanban-settings:active {
-    background: var(--interactive-active);
-    color: var(--text-on-accent);
-  }
 </style>

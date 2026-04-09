@@ -1,16 +1,4 @@
-/**
- * 增量阅读存储服务
- *
- * 负责管理增量阅读数据的持久化存储：
- * - blocks.json: 内容块数据
- * - decks.json: 牌组配置
- * - history.json: 阅读历史
- *
- * 存储路径: weave/incremental-reading/
- *
- * @module services/incremental-reading/IRStorageService
- * @version 2.0.0 - 引入式架构
- */
+/** 负责增量阅读相关 JSON 存储的读写与目录初始化。 */
 
 import { App, TFile, TFolder, normalizePath } from "obsidian";
 import {
@@ -23,12 +11,9 @@ import {
 import type {
 	FileSyncState,
 	IRBlock,
-	IRBlocksData,
 	IRBlocksStore,
 	IRDeck,
-	IRDecksData,
 	IRDecksStore,
-	IRHistoryData,
 	IRHistoryStore,
 	IRSession,
 	IRStudySession,
@@ -194,19 +179,14 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 初始化存储目录（带锁防止并发）
-	 */
+	/** 初始化存储目录，并复用进行中的初始化任务。 */
 	async initialize(): Promise<void> {
-		// 如果已初始化，直接返回
 		if (this.initialized) return;
 
-		// 如果正在初始化，等待完成
 		if (this.initPromise) {
 			return this.initPromise;
 		}
 
-		// 开始初始化
 		this.initPromise = this.doInitialize();
 
 		try {
@@ -221,20 +201,17 @@ export class IRStorageService {
 			const storageDir = this.getStorageDir();
 			logger.info(`[IRStorageService] ⚡ 开始初始化, STORAGE_DIR=${storageDir}`);
 
-			// 确保存储目录存在（迁移由 SchemaV2MigrationService 统一处理）
+			// 这里只保证基础目录和文件存在，迁移由专门的迁移链负责。
 			await this.ensureDirectory(storageDir);
 			logger.info(`[IRStorageService] ⚡ 目录创建完成: ${storageDir}`);
 
-			// 🔧 优化：移除不必要的 sleep，并行初始化文件
 			const defaultBlocks: IRBlocksStore = { version: IR_STORAGE_VERSION, blocks: {} };
 			const defaultDecks: IRDecksStore = { version: IR_STORAGE_VERSION, decks: {} };
 			const defaultHistory: IRHistoryStore = { version: IR_STORAGE_VERSION, sessions: [] };
 			const defaultCalendarProgress = { version: IR_STORAGE_VERSION, byDate: {} };
-			// v5.3: 添加 chunks.json 和 sources.json 初始化
 			const defaultChunks = { version: IR_STORAGE_VERSION, chunks: {} };
 			const defaultSources = { version: IR_STORAGE_VERSION, sources: {} };
 
-			// 并行确保文件存在
 			await Promise.all([
 				this.ensureFile(`${storageDir}/${BLOCKS_FILE}`, JSON.stringify(defaultBlocks)),
 				this.ensureFile(
@@ -258,7 +235,7 @@ export class IRStorageService {
 			logger.info("[IRStorageService] ✅ 存储服务初始化完成");
 		} catch (error) {
 			logger.error("[IRStorageService] 初始化失败:", error);
-			// 不抛出错误，允许后续操作继续（会使用默认值）
+			// 保持服务可继续运行，由后续读写退回默认值。
 			this.initialized = true;
 		}
 	}
@@ -313,9 +290,7 @@ export class IRStorageService {
 	// 内容块操作
 	// ============================================
 
-	/**
-	 * 获取所有内容块（支持版本化结构）
-	 */
+	/** 返回所有内容块，并在需要时修正可读根目录路径。 */
 	async getAllBlocks(): Promise<Record<string, IRBlock>> {
 		await this.initialize();
 
@@ -328,7 +303,6 @@ export class IRStorageService {
 		try {
 			const data = JSON.parse(content);
 
-			// 版本化结构
 			if (data.version && data.blocks) {
 				if (!this.migratedBlockReadablePaths) {
 					const roots = this.getReadableRoots();
@@ -357,7 +331,6 @@ export class IRStorageService {
 				return data.blocks as Record<string, IRBlock>;
 			}
 
-			// v1.0 兼容: 直接是块对象
 			if (!this.migratedBlockReadablePaths && data && typeof data === "object") {
 				const roots = this.getReadableRoots();
 				if (roots) {
@@ -389,20 +362,13 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 获取单个内容块
-	 */
+	/** 获取单个内容块。 */
 	async getBlock(id: string): Promise<IRBlock | null> {
 		const blocks = await this.getAllBlocks();
 		return blocks[id] || null;
 	}
 
-	/**
-	 * 获取牌组的所有内容块（支持 blockIds 索引）
-	 * @param deckId 牌组ID
-	 * @param includeIgnored 是否包含已忽略的内容块（默认false）
-	 * @param caller 调用者标识（用于调试）
-	 */
+	/** 获取牌组下的内容块，优先使用 blockIds，必要时回退到旧的 deckPath。 */
 	async getBlocksByDeck(
 		deckId: string,
 		includeIgnored = false,
@@ -417,12 +383,9 @@ export class IRStorageService {
 			}, all blocks count=${Object.keys(blocks).length}`
 		);
 
-		// 过滤函数：排除suspended状态和带有ignore标签的内容块
 		const filterIgnored = (block: IRBlock): boolean => {
 			if (includeIgnored) return true;
-			// 排除suspended状态
 			if (block.state === "suspended") return false;
-			// v2.3.1: 排除带有ignore标签的内容块（同时检查 tags 数组和 contentPreview）
 			const hasIgnoreInTags =
 				block.tags?.some(
 					(tag) => tag.toLowerCase() === "ignore" || tag.toLowerCase() === "#ignore"
@@ -432,14 +395,13 @@ export class IRStorageService {
 			return true;
 		};
 
-		// 使用 blockIds 索引
 		if (deck?.blockIds && deck.blockIds.length > 0) {
-			// 🔍 调试：检查 blockIds 和 blocks 键的匹配情况
 			const blockKeys = Object.keys(blocks);
 			const matchedCount = deck.blockIds.filter((id) => blocks[id] !== undefined).length;
 			logger.info(
 				`[IRStorageService] getBlocksByDeck: blockIds=${deck.blockIds.length}, blocks键数=${blockKeys.length}, 匹配数=${matchedCount}`
 			);
+			// 仅在索引完全失配时补充样本，方便定位旧数据或引用残留。
 			if (matchedCount === 0 && deck.blockIds.length > 0) {
 				logger.warn(
 					`[IRStorageService] ⚠️ ID不匹配！blockIds前3个: ${JSON.stringify(
@@ -455,10 +417,7 @@ export class IRStorageService {
 			return result;
 		}
 
-		// v1.0 兼容: 使用deckPath筛选（同时检查 deckPath 和 deck.path）
 		const deckPath = deck?.path || deckId;
-
-		// v1 兼容：通过 deckPath 查找
 		const allBlockValues = Object.values(blocks);
 
 		const v1Result = allBlockValues
@@ -467,9 +426,7 @@ export class IRStorageService {
 		return v1Result;
 	}
 
-	/**
-	 * 获取文件的所有内容块（使用 startLine 排序）
-	 */
+	/** 获取文件下的所有内容块，并按行号排序。 */
 	async getBlocksByFile(filePath: string): Promise<IRBlock[]> {
 		const blocks = await this.getAllBlocks();
 		return Object.values(blocks)
@@ -639,9 +596,7 @@ export class IRStorageService {
 	// 牌组操作
 	// ============================================
 
-	/**
-	 * 获取所有牌组（支持版本化结构）
-	 */
+	/** 返回所有牌组，并在需要时修正 sourceFiles 路径。 */
 	async getAllDecks(): Promise<Record<string, IRDeck>> {
 		await this.initialize();
 
@@ -693,27 +648,27 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 获取单个牌组 (v1.0 兼容: 使用path查找)
-	 * Compatibility note: 使用 getDeckById 代替
-	 */
+	/** @deprecated 建议改用 `getDeckById()`。 */
 	async getDeck(path: string): Promise<IRDeck | null> {
-		const decks = await this.getAllDecks();
-		// 先尝试使用 id 查找
-		if (decks[path]) return decks[path];
-		// v1.0 兼容: 遍历查找path字段
-		return Object.values(decks).find((d) => d.path === path) || null;
+		return await this.getDeckById(path);
 	}
 
-	/**
-	 * 获取单个牌组（使用 id 查找，兼容 path）
-	 */
+	/** 通过牌组 ID 查找，并兼容旧数据里的 path。 */
 	async getDeckById(idOrPath: string): Promise<IRDeck | null> {
 		const decks = await this.getAllDecks();
-		// 先尝试 id 查找
-		if (decks[idOrPath]) return decks[idOrPath];
-		// 兼容: 通过 path 字段查找
-		return Object.values(decks).find((d) => d.path === idOrPath) || null;
+		return this.findDeckByIdentifier(decks, idOrPath);
+	}
+
+	/** 在牌组表中按 ID 或旧 path 字段查找牌组。 */
+	private findDeckByIdentifier(
+		decks: Record<string, IRDeck>,
+		idOrPath: string
+	): IRDeck | null {
+		if (decks[idOrPath]) {
+			return decks[idOrPath];
+		}
+
+		return Object.values(decks).find((deck) => deck.path === idOrPath) || null;
 	}
 
 	async migrateChunkDeckNameInYAML(
@@ -945,6 +900,40 @@ export class IRStorageService {
 		);
 	}
 
+	private getStudySessionDeckIdentifiers(session: Partial<IRStudySession> | null | undefined): string[] {
+		return Array.from(
+			this.toNormalizedStringSet([
+				String(session?.topicId || ""),
+				String(session?.deckId || ""),
+			])
+		);
+	}
+
+	private async collectTasksByDeckIdentifiers<T extends { id?: string }>(
+		service: { getTasksByDeck(deckId: string): Promise<T[]> },
+		deckIdentifiers: string[]
+	): Promise<T[]> {
+		const identifiers = Array.from(this.toNormalizedStringSet(deckIdentifiers));
+		const taskMap = new Map<string, T>();
+
+		for (const identifier of identifiers) {
+			const tasks = await service.getTasksByDeck(identifier);
+			for (const task of tasks) {
+				const taskId = String(task?.id || "").trim();
+				if (taskId) {
+					if (!taskMap.has(taskId)) {
+						taskMap.set(taskId, task);
+					}
+					continue;
+				}
+
+				taskMap.set(`${identifier}:${taskMap.size}`, task);
+			}
+		}
+
+		return Array.from(taskMap.values());
+	}
+
 	private collectSourceFilesByExtension(sourceFiles: string[], extension: string): string[] {
 		const normalizedExtension = String(extension || "").toLowerCase();
 		return Array.from(
@@ -1021,8 +1010,12 @@ export class IRStorageService {
 
 	private async cleanupDeckStudySessions(deckId: string, deckPath: string): Promise<void> {
 		const sessions = await this.getStudySessions();
+		const deckIdentifiers = this.toNormalizedStringSet([deckId, deckPath]);
 		const filtered = sessions.filter(
-			(session) => session.deckId !== deckId && session.deckId !== deckPath
+			(session) =>
+				!this.getStudySessionDeckIdentifiers(session).some((identifier) =>
+					deckIdentifiers.has(identifier)
+				)
 		);
 		if (filtered.length === sessions.length) return;
 
@@ -1466,7 +1459,13 @@ export class IRStorageService {
 	 */
 	async getStudySessionsByDeck(deckId: string): Promise<IRStudySession[]> {
 		const sessions = await this.getStudySessions();
-		return sessions.filter((s) => (s.topicId || s.deckId) === deckId);
+		const deck = await this.getDeckById(deckId);
+		const deckIdentifiers = this.toNormalizedStringSet([deckId, deck?.path || ""]);
+		return sessions.filter((session) =>
+			this.getStudySessionDeckIdentifiers(session).some((identifier) =>
+				deckIdentifiers.has(identifier)
+			)
+		);
 	}
 
 	// ============================================
@@ -1497,7 +1496,7 @@ export class IRStorageService {
 		todayNewCount: number;
 		todayDueCount: number;
 	}> {
-		// === 1. 旧版 IRBlock 统计 ===
+		// 旧版 IRBlock 仍可能参与统计，因此这里先汇总 blocks.json 中的内容块。
 		const blocks = await this.getBlocksByDeck(deckPath);
 		const _today = new Date().toISOString().split("T")[0];
 		const _nowMs = Date.now();
@@ -1511,7 +1510,6 @@ export class IRStorageService {
 		const safeLearnAheadDays = Math.min(Math.max(learnAheadDays, 1), 14);
 		const learnAheadEndMs = endMs + (safeLearnAheadDays - 1) * dayMs;
 
-		// 🔍 调试：统计 state 分布
 		const stateDistribution: Record<string, number> = {};
 		for (const b of blocks) {
 			const s = b.state ?? "undefined";
@@ -1529,13 +1527,11 @@ export class IRStorageService {
 		for (const block of blocks) {
 			files.add(block.filePath);
 
-			// 如果 state 未定义，则视为 new
 			const state = block.state ?? "new";
 
 			switch (state) {
 				case "new":
 					newCount++;
-					// 新块视为已到期
 					dueToday++;
 					dueWithinDays++;
 					break;
@@ -1547,7 +1543,6 @@ export class IRStorageService {
 					break;
 			}
 
-			// 检查是否到期（仅针对非 new 状态的块）
 			if (state !== "new" && state !== "suspended") {
 				if (!block.nextReview) {
 					dueToday++;
@@ -1564,7 +1559,7 @@ export class IRStorageService {
 			}
 		}
 
-		// === 2. 新版 IRChunkFileData 统计 (v5.3) ===
+		// 再统计文件化块、书签任务等新链路数据，避免牌组总量失真。
 		const deck = await this.getDeckById(deckPath);
 		logger.info(
 			`[IRStorageService] getDeckStats: deckPath=${deckPath}, deck found=${!!deck}, deck.id=${
@@ -1575,6 +1570,9 @@ export class IRStorageService {
 		const deckTag = deck
 			? `#IR_deck_${deck.name}`
 			: `#IR_deck_${deckPath.split("/").pop() || deckPath}`;
+		const deckIdentifiers = Array.from(
+			this.toNormalizedStringSet([deckPath, deck?.id || "", deck?.path || ""])
+		);
 
 		const allChunkData = await this.getAllChunkData();
 		const allChunkValues = Object.values(allChunkData);
@@ -1606,7 +1604,6 @@ export class IRStorageService {
 			return fmString.includes("ignore");
 		};
 
-		// 筛选属于当前牌组的 chunks（并过滤 ignore）
 		const chunkValues = allChunkValues.filter((_chunk) => {
 			const inDeck = _chunk.deckTag === deckTag || (deck && _chunk.deckIds?.includes(deck.id));
 			if (!inDeck) return false;
@@ -1636,7 +1633,6 @@ export class IRStorageService {
 					break;
 			}
 
-			// 检查是否到期（仅针对非 new 状态的块）
 			if (
 				chunk.scheduleStatus !== "new" &&
 				chunk.scheduleStatus !== "suspended" &&
@@ -1647,11 +1643,9 @@ export class IRStorageService {
 					dueToday++;
 					dueWithinDays++;
 				} else {
-					// 过期块也应计入今日到期
 					if (chunk.nextRepDate <= endMs) {
 						dueToday++;
 					}
-					// 过期块也应计入 N 天内到期
 					if (chunk.nextRepDate <= learnAheadEndMs) {
 						dueWithinDays++;
 					}
@@ -1659,16 +1653,24 @@ export class IRStorageService {
 			}
 		}
 
-		// === 3. PDF 书签任务统计 ===
-		let pdfTaskCount = 0;
-		try {
-			const pdfService = new IRPdfBookmarkTaskService(this.app);
-			await pdfService.initialize();
-			const pdfTasks = await pdfService.getTasksByDeck(deckPath);
-			for (const task of pdfTasks) {
+		const accumulateBookmarkTaskStats = (
+			tasks: any[],
+			getSourcePath: (task: any) => string,
+			logLabel: string
+		): number => {
+			let taskCount = 0;
+			for (const task of tasks) {
 				const status = String((task as any).status || "new");
-				if (status === "done" || status === "suspended" || status === "removed") continue;
-				pdfTaskCount++;
+				if (status === "done" || status === "suspended" || status === "removed") {
+					continue;
+				}
+
+				taskCount++;
+
+				const sourcePath = String(getSourcePath(task) || "").trim();
+				if (sourcePath) {
+					files.add(sourcePath);
+				}
 
 				switch (status) {
 					case "new":
@@ -1695,16 +1697,46 @@ export class IRStorageService {
 					}
 				}
 			}
+
+			logger.debug(`[IRStorageService] getDeckStats: ${logLabel} 统计完成`, {
+				deckPath,
+				taskCount,
+			});
+			return taskCount;
+		};
+
+		let pdfTaskCount = 0;
+		try {
+			const pdfService = new IRPdfBookmarkTaskService(this.app);
+			await pdfService.initialize();
+			const pdfTasks = await this.collectTasksByDeckIdentifiers(pdfService, deckIdentifiers);
+			pdfTaskCount = accumulateBookmarkTaskStats(
+				pdfTasks,
+				(task) => String((task as any)?.pdfPath || "").trim(),
+				"PDF 书签任务"
+			);
 		} catch (e) {
 			logger.debug("[IRStorageService] getDeckStats: PDF 书签任务统计失败", e);
 		}
 
-		const totalCount = blocks.length + chunkValues.length + pdfTaskCount;
+		let epubTaskCount = 0;
+		try {
+			const epubService = new IREpubBookmarkTaskService(this.app);
+			await epubService.initialize();
+			const epubTasks = await this.collectTasksByDeckIdentifiers(epubService, deckIdentifiers);
+			epubTaskCount = accumulateBookmarkTaskStats(
+				epubTasks,
+				(task) => String((task as any)?.epubFilePath || "").trim(),
+				"EPUB 书签任务"
+			);
+		} catch (e) {
+			logger.debug("[IRStorageService] getDeckStats: EPUB 书签任务统计失败", e);
+		}
 
-		// v2.4: 统计提问数量（从源文件读取复选框+问号语法）
+		const totalCount = blocks.length + chunkValues.length + pdfTaskCount + epubTaskCount;
+
 		const questionStats = await this.countQuestionsInFiles(Array.from(files));
 
-		// v2.5: 计算应用每日限制后的今日可学数量
 		const todayNewCount = Math.min(newCount, dailyNewLimit);
 		const todayDueCount = Math.min(dueToday, dailyReviewLimit);
 
@@ -1723,12 +1755,7 @@ export class IRStorageService {
 		};
 	}
 
-	/**
-	 * 统计文件中的提问数量 (v2.4 新增)
-	 * 识别格式: - [x] 问题? 或 - [ ] 问题?
-	 * @param filePaths 文件路径列表
-	 * @returns 提问总数和已完成数
-	 */
+	/** 统计文件中的问答式待办项数量。 */
 	private async countQuestionsInFiles(filePaths: string[]): Promise<{
 		total: number;
 		completed: number;
@@ -1736,8 +1763,6 @@ export class IRStorageService {
 		let total = 0;
 		let completed = 0;
 
-		// 匹配复选框+问号的正则表达式
-		// 格式: - [x] 或 - [ ] 开头，内容包含问号
 		const completedQuestionRegex = /^[-*]\s*\[x\]\s*.+[?？]/gim;
 		const uncompletedQuestionRegex = /^[-*]\s*\[\s\]\s*.+[?？]/gim;
 
@@ -1747,28 +1772,22 @@ export class IRStorageService {
 				if (file instanceof TFile) {
 					const content = await this.app.vault.read(file);
 
-					// 统计已完成的提问（带 [x]）
 					const completedMatches = content.match(completedQuestionRegex);
 					const completedCount = completedMatches ? completedMatches.length : 0;
 
-					// 统计未完成的提问（带 [ ]）
 					const uncompletedMatches = content.match(uncompletedQuestionRegex);
 					const uncompletedCount = uncompletedMatches ? uncompletedMatches.length : 0;
 
 					completed += completedCount;
 					total += completedCount + uncompletedCount;
 				}
-			} catch (_error) {
-				// 静默跳过
-			}
+			} catch (_error) {}
 		}
 
 		return { total, completed };
 	}
 
-	/**
-	 * 获取今日到期的内容块
-	 */
+	/** 获取今日到期的旧版内容块。 */
 	async getTodayDueBlocks(): Promise<IRBlock[]> {
 		const blocks = await this.getAllBlocks();
 		const today = new Date().toISOString().split("T")[0];
@@ -2216,12 +2235,11 @@ export class IRStorageService {
 		const defaultStore = { version: IR_STORAGE_VERSION, chunks: {} };
 		const content = await this.readFile(path, JSON.stringify(defaultStore));
 
-		// v5.4: 自动迁移 - 检测并修复缺失的调度数据
+		// 读取时顺手修正旧字段，避免把半迁移数据继续写回运行时。
 		let needsSave = false;
 		const parsed = JSON.parse(content) as import("../../types/ir-types").IRChunksStore;
 		const now = Date.now();
 
-		// v6.2: 为 TagGroup 回填准备 sources 数据（如读取失败则忽略）
 		let sources: Record<string, import("../../types/ir-types").IRSourceFileMeta> | null = null;
 		try {
 			sources = await this.getAllSources();
@@ -2230,7 +2248,6 @@ export class IRStorageService {
 		}
 
 		for (const [key, chunk] of Object.entries(parsed.chunks)) {
-			// v5.5: 跳过无效数据（值为字符串而非对象）
 			if (typeof chunk !== "object" || chunk === null) {
 				logger.warn(
 					`[IRStorageService] 跳过无效块数据: key=${key}, value=${String(chunk).slice(0, 50)}`
@@ -2240,7 +2257,6 @@ export class IRStorageService {
 				continue;
 			}
 
-			// v6.2: priorityUi 迁移 - 若旧数据缺失，则回填为当前 priorityEff
 			if (
 				(chunk as any).priorityUi === undefined &&
 				typeof (chunk as any).priorityEff === "number"
@@ -2249,7 +2265,6 @@ export class IRStorageService {
 				needsSave = true;
 			}
 
-			// v6.2: meta.tagGroup 回填 - 若缺失或 default，尝试从 sources[sourceId].tagGroup 获取
 			try {
 				const sourceId = (chunk as any).sourceId;
 				const sourceTagGroup =
@@ -2270,11 +2285,8 @@ export class IRStorageService {
 						}
 					}
 				}
-			} catch {
-				// ignore
-			}
+			} catch {}
 
-			// 修复 nextRepDate === 0 的旧数据
 			if (chunk.nextRepDate === 0 || chunk.nextRepDate === undefined) {
 				chunk.nextRepDate = now;
 				chunk.intervalDays = chunk.intervalDays || 1;
@@ -2283,7 +2295,6 @@ export class IRStorageService {
 			}
 		}
 
-		// 如果有数据需要迁移，保存更新
 		if (!this.migratedChunkReadablePaths) {
 			const roots = this.getReadableRoots();
 			if (roots && parsed?.chunks && typeof parsed.chunks === "object") {
@@ -2317,9 +2328,7 @@ export class IRStorageService {
 		);
 	}
 
-	/**
-	 * 获取单个块文件调度数据
-	 */
+	/** 获取单个块文件的调度数据。 */
 	async getChunkData(
 		chunkId: string
 	): Promise<import("../../types/ir-types").IRChunkFileData | null> {
@@ -2327,9 +2336,7 @@ export class IRStorageService {
 		return chunks[chunkId] || null;
 	}
 
-	/**
-	 * 保存块文件调度数据
-	 */
+	/** 保存单个块文件的调度数据。 */
 	async saveChunkData(chunk: import("../../types/ir-types").IRChunkFileData): Promise<void> {
 		await this.initialize();
 		const chunks = await this.getAllChunkData();
@@ -2341,9 +2348,7 @@ export class IRStorageService {
 		await this.writeFile(path, JSON.stringify(store));
 	}
 
-	/**
-	 * 批量保存块文件调度数据
-	 */
+	/** 批量保存块文件调度数据。 */
 	async saveChunkDataBatch(
 		chunkList: import("../../types/ir-types").IRChunkFileData[]
 	): Promise<void> {
@@ -2368,9 +2373,7 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 删除块文件调度数据
-	 */
+	/** 删除块文件调度数据，并清理相关来源记录。 */
 	async deleteChunkData(chunkId: string): Promise<void> {
 		await this.initialize();
 		const chunks = await this.getAllChunkData();
@@ -2458,9 +2461,7 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 获取源材料的所有块调度数据
-	 */
+	/** 获取某个源材料下的全部块调度数据。 */
 	async getChunkDataBySource(
 		sourceId: string
 	): Promise<import("../../types/ir-types").IRChunkFileData[]> {
@@ -2468,9 +2469,7 @@ export class IRStorageService {
 		return Object.values(chunks).filter((c) => c.sourceId === sourceId);
 	}
 
-	/**
-	 * 获取所有活跃状态的块调度数据（排除 done/archived）
-	 */
+	/** 获取仍在调度链路中的块数据。 */
 	async getActiveChunkData(): Promise<import("../../types/ir-types").IRChunkFileData[]> {
 		const chunks = await this.getAllChunkData();
 		return Object.values(chunks).filter(
@@ -2481,24 +2480,19 @@ export class IRStorageService {
 		);
 	}
 
-	/**
-	 * 获取今日到期的块调度数据
-	 */
+	/** 获取今天应进入队列的块调度数据。 */
 	async getTodayDueChunkData(): Promise<import("../../types/ir-types").IRChunkFileData[]> {
 		const chunks = await this.getAllChunkData();
 		const now = Date.now();
 
 		return Object.values(chunks).filter((_chunk) => {
-			// 新块立即可用
 			if (_chunk.scheduleStatus === "new") return true;
-			// 已完成或暂停的跳过
 			if (
 				_chunk.scheduleStatus === "done" ||
 				_chunk.scheduleStatus === "suspended" ||
 				_chunk.scheduleStatus === "removed"
 			)
 				return false;
-			// 检查是否到期
 			return _chunk.nextRepDate <= now;
 		});
 	}
@@ -2707,31 +2701,24 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 同步所有内容块的 deck_tag（以 YAML 为基准）
-	 * 返回需要更新的块数量
-	 */
+	/** 按 YAML 中的单牌组标签同步块记录。 */
 	async syncDeckTagsFromYAML(): Promise<{ synced: number; removed: Map<string, string[]> }> {
 		await this.initialize();
 
 		const chunks = await this.getAllChunkData();
 		const chunksToUpdate: import("../../types/ir-types").IRChunkFileData[] = [];
-		// 记录每个牌组需要移除的块 ID
 		const removedFromDecks = new Map<string, string[]>();
 
 		for (const chunk of Object.values(chunks)) {
 			const yamlDeckTag = await this.readDeckTagFromYAML(chunk.filePath);
 
 			if (yamlDeckTag === null) {
-				// 文件不存在或无法读取，跳过
 				continue;
 			}
 
-			// 如果 YAML 中的 deck_tag 与 chunks.json 不一致，以 YAML 为准
 			if (yamlDeckTag !== chunk.deckTag) {
 				const oldDeckTag = chunk.deckTag;
 
-				// 记录从旧牌组移除
 				if (oldDeckTag && oldDeckTag !== yamlDeckTag) {
 					if (!removedFromDecks.has(oldDeckTag)) {
 						removedFromDecks.set(oldDeckTag, []);
@@ -2745,7 +2732,6 @@ export class IRStorageService {
 			}
 		}
 
-		// 批量保存更新
 		if (chunksToUpdate.length > 0) {
 			await this.saveChunkDataBatch(chunksToUpdate);
 			logger.info(`[IRStorageService] 同步 ${chunksToUpdate.length} 个块的 deck_tag`);
@@ -2754,16 +2740,11 @@ export class IRStorageService {
 		return { synced: chunksToUpdate.length, removed: removedFromDecks };
 	}
 
-	/**
-	 * 获取所有块数据（同步 YAML deck_tag 后）
-	 * 在 getAllChunkData 的基础上，同步 deck_tag 与文件 YAML 保持一致
-	 */
+	/** 先同步 YAML 牌组数据，再返回最新块数据。 */
 	async getAllChunkDataWithSync(): Promise<
 		Record<string, import("../../types/ir-types").IRChunkFileData>
 	> {
-		// 先同步牌组数据（包含验证）
 		await this.syncDeckDataFromYAML();
-		// 返回最新数据
 		return this.getAllChunkData();
 	}
 
@@ -2771,11 +2752,7 @@ export class IRStorageService {
 	// v5.5: 多牌组支持与牌组验证
 	// ============================================
 
-	/**
-	 * 从内容块文件 YAML 读取 deck_names（多牌组）
-	 * @param filePath 块文件路径
-	 * @returns deck_names 数组，如果读取失败返回 null
-	 */
+	/** 从块文件 YAML 读取多牌组名称。 */
 	async readDeckNamesFromYAML(filePath: string): Promise<string[] | null> {
 		try {
 			const adapter = this.app.vault.adapter;
@@ -2789,11 +2766,9 @@ export class IRStorageService {
 
 			const yamlContent = yamlMatch[1];
 
-			// 尝试解析 deck_names 数组
 			const deckNamesMatch =
 				yamlContent.match(/^topic_names:\s*$/m) || yamlContent.match(/^deck_names:\s*$/m);
 			if (deckNamesMatch) {
-				// 多行数组格式
 				const arrayItems: string[] = [];
 				const lines = yamlContent.split("\n");
 				let inDeckNames = false;
@@ -2810,14 +2785,13 @@ export class IRStorageService {
 								.trim();
 							if (item) arrayItems.push(item);
 						} else if (!line.match(/^\s/)) {
-							break; // 新的顶级键，结束
+							break;
 						}
 					}
 				}
 				if (arrayItems.length > 0) return arrayItems;
 			}
 
-			// 尝试单行数组格式: deck_names: ["a", "b"]
 			const inlineMatch =
 				yamlContent.match(/^topic_names:\s*\[(.*)\]\s*$/m) ||
 				yamlContent.match(/^deck_names:\s*\[(.*)\]\s*$/m);
@@ -2829,7 +2803,6 @@ export class IRStorageService {
 				if (items.length > 0) return items;
 			}
 
-			// 回退：从 deck_tag 提取单个牌组名
 			const deckTagMatch =
 				yamlContent.match(/^topic_tag:\s*["']?#?IR_deck_([^"'\n]+)["']?\s*$/m) ||
 				yamlContent.match(/^deck_tag:\s*["']?#?IR_deck_([^"'\n]+)["']?\s*$/m);
@@ -2844,20 +2817,13 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 验证牌组名称，返回有效的牌组ID列表
-	 * @param deckNames 用户填写的牌组名称列表
-	 * @returns 验证通过的牌组ID列表
-	 */
+	/** 验证 YAML 中的牌组名称，并返回对应的有效牌组 ID。 */
 	async validateDeckNames(deckNames: string[]): Promise<string[]> {
 		const validDecks = await this.getAllDecks();
 		const validDeckIds: string[] = [];
 
 		for (const name of deckNames) {
-			// 根据名称查找正式牌组
-			const matchedDeck = Object.values(validDecks).find(
-				(d) => d.name === name || d.name === name.replace("#IR_deck_", "")
-			);
+			const matchedDeck = this.findDeckByDisplayName(validDecks, name);
 			if (matchedDeck) {
 				validDeckIds.push(matchedDeck.id);
 			} else {
@@ -2868,32 +2834,26 @@ export class IRStorageService {
 		return validDeckIds;
 	}
 
-	/**
-	 * 根据牌组ID获取牌组名称
-	 */
+	/** 根据牌组 ID 获取牌组名称。 */
 	async getDeckNameById(deckId: string): Promise<string | null> {
 		const decks = await this.getAllDecks();
 		const deck = decks[deckId];
 		return deck ? deck.name : null;
 	}
 
-	/**
-	 * 根据牌组名称获取牌组ID
-	 */
+	/** 根据牌组名称获取牌组 ID。 */
 	async getDeckIdByName(deckName: string): Promise<string | null> {
 		const decks = await this.getAllDecks();
-		const deck = Object.values(decks).find((d) => d.name === deckName);
+		const deck = this.findDeckByDisplayName(decks, deckName);
 		return deck ? deck.id : null;
 	}
 
-	/**
-	 * 同步内容块的牌组数据（从 YAML 读取并验证）
-	 * 支持多牌组，以 YAML 中的 deck_names 为基准
-	 */
+	/** 按 YAML 中的多牌组定义同步块的牌组数据。 */
 	async syncDeckDataFromYAML(): Promise<{ synced: number; invalidDecks: string[] }> {
 		await this.initialize();
 
 		const chunks = await this.getAllChunkData();
+		const decks = await this.getAllDecks();
 		const chunksToUpdate: import("../../types/ir-types").IRChunkFileData[] = [];
 		const invalidDecks = new Set<string>();
 
@@ -2904,33 +2864,22 @@ export class IRStorageService {
 				continue;
 			}
 
-			// 验证牌组名称
-			const validDeckIds = await this.validateDeckNames(yamlDeckNames);
+			const validDeckIds = yamlDeckNames
+				.map((name) => this.findDeckByDisplayName(decks, name)?.id)
+				.filter((deckId): deckId is string => typeof deckId === "string" && deckId.length > 0);
 
-			// 记录无效的牌组名称
 			for (const name of yamlDeckNames) {
-				const isValid = await this.getDeckIdByName(name);
+				const isValid = this.findDeckByDisplayName(decks, name);
 				if (!isValid) {
 					invalidDecks.add(name);
 				}
 			}
 
-			// 检查是否需要更新
 			const currentDeckIds = chunk.deckIds || [];
 			const needsUpdate = !this.arraysEqual(validDeckIds, currentDeckIds);
 
 			if (needsUpdate) {
-				chunk.topicIds = validDeckIds;
-				chunk.deckIds = validDeckIds;
-				// 保持 deckTag 兼容性（使用第一个牌组）
-				if (validDeckIds.length > 0) {
-					const firstName = await this.getDeckNameById(validDeckIds[0]);
-					chunk.topicTag = firstName ? `#IR_deck_${firstName}` : undefined;
-					chunk.deckTag = firstName ? `#IR_deck_${firstName}` : undefined;
-				} else {
-					chunk.topicTag = undefined;
-					chunk.deckTag = undefined;
-				}
+				this.assignChunkDecks(chunk, validDeckIds, decks);
 				chunk.updatedAt = Date.now();
 				chunksToUpdate.push(chunk);
 			}
@@ -2944,9 +2893,7 @@ export class IRStorageService {
 		return { synced: chunksToUpdate.length, invalidDecks: Array.from(invalidDecks) };
 	}
 
-	/**
-	 * 辅助函数：比较两个数组是否相等
-	 */
+	/** 比较两个字符串数组在忽略顺序后是否相等。 */
 	private arraysEqual(a: string[], b: string[]): boolean {
 		if (a.length !== b.length) return false;
 		const sortedA = [...a].sort();
@@ -2954,11 +2901,7 @@ export class IRStorageService {
 		return sortedA.every((val, i) => val === sortedB[i]);
 	}
 
-	/**
-	 * 更新内容块的牌组（支持多牌组）
-	 * @param chunkId 块 ID
-	 * @param deckIds 牌组 ID 列表
-	 */
+	/** 更新内容块的牌组集合，并同步块文件 YAML。 */
 	async updateChunkDecks(chunkId: string, deckIds: string[]): Promise<void> {
 		const chunks = await this.getAllChunkData();
 		const chunk = chunks[chunkId];
@@ -2966,37 +2909,23 @@ export class IRStorageService {
 			throw new Error(`块不存在: ${chunkId}`);
 		}
 
-		// 验证所有牌组 ID 都是有效的
 		const validDecks = await this.getAllDecks();
 		const validIds = deckIds.filter((id) => validDecks[id]);
 
-		chunk.topicIds = validIds;
-		chunk.deckIds = validIds;
-		// 保持 deckTag 兼容性
-		if (validIds.length > 0) {
-			const firstName = validDecks[validIds[0]]?.name;
-			chunk.topicTag = firstName ? `#IR_deck_${firstName}` : undefined;
-			chunk.deckTag = firstName ? `#IR_deck_${firstName}` : undefined;
-		} else {
-			chunk.topicTag = undefined;
-			chunk.deckTag = undefined;
-		}
+		this.assignChunkDecks(chunk, validIds, validDecks);
 		chunk.updatedAt = Date.now();
 
 		const store = this.buildSerializedChunkStore(chunks);
 		const path = `${this.getStorageDir()}/${this.CHUNKS_FILE}`;
 		await this.writeFile(path, JSON.stringify(store));
 
-		// 同时更新块文件 YAML
 		const deckNames = validIds.map((id) => validDecks[id]?.name).filter(Boolean);
 		await this.updateChunkFileYAMLDeckNames(chunk.filePath, deckNames as string[]);
 
 		logger.info(`[IRStorageService] 更新块牌组: ${chunkId}, 牌组数: ${validIds.length}`);
 	}
 
-	/**
-	 * 向内容块添加牌组
-	 */
+	/** 向内容块追加一个牌组。 */
 	async addDeckToChunk(chunkId: string, deckId: string): Promise<void> {
 		const chunks = await this.getAllChunkData();
 		const chunk = chunks[chunkId];
@@ -3010,9 +2939,7 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 从内容块移除牌组
-	 */
+	/** 从内容块移除一个牌组。 */
 	async removeDeckFromChunk(chunkId: string, deckId: string): Promise<void> {
 		const chunks = await this.getAllChunkData();
 		const chunk = chunks[chunkId];
@@ -3025,9 +2952,7 @@ export class IRStorageService {
 		await this.updateChunkDecks(chunkId, newDeckIds);
 	}
 
-	/**
-	 * 更新块文件 YAML 中的 deck_names
-	 */
+	/** 把多牌组信息写回块文件 YAML。 */
 	private async updateChunkFileYAMLDeckNames(filePath: string, deckNames: string[]): Promise<void> {
 		const adapter = this.app.vault.adapter;
 		if (!(await adapter.exists(filePath))) {
@@ -3081,7 +3006,6 @@ export class IRStorageService {
 
 		nextContent = setCardProperty(nextContent, "tags", Array.from(tags));
 
-		// 兼容字段：deck_tag 仅保存第一个牌组名
 		nextContent = setCardProperty(nextContent, "topic_tag", `#IR_deck_${primaryName}`);
 		nextContent = setCardProperty(nextContent, "deck_tag", undefined);
 
@@ -3090,22 +3014,45 @@ export class IRStorageService {
 		}
 	}
 
-	/**
-	 * 获取所有正式牌组列表（用于UI显示）
-	 */
+	/** 获取可供 UI 展示的正式牌组列表。 */
 	async getValidDeckList(): Promise<Array<{ id: string; name: string }>> {
 		const decks = await this.getAllDecks();
 		return Object.values(decks).map((d) => ({ id: d.id, name: d.name }));
 	}
 
+	/** 按显示名称查找牌组，兼容 `#IR_deck_` 前缀。 */
+	private findDeckByDisplayName(
+		decks: Record<string, IRDeck>,
+		deckName: string
+	): IRDeck | null {
+		const normalizedName = String(deckName || "").trim().replace(/^#IR_deck_/, "");
+		if (!normalizedName) {
+			return null;
+		}
+
+		return Object.values(decks).find((deck) => deck.name === normalizedName) || null;
+	}
+
+	/** 把牌组 ID 集合同步到块的兼容字段。 */
+	private assignChunkDecks(
+		chunk: import("../../types/ir-types").IRChunkFileData,
+		deckIds: string[],
+		decks: Record<string, IRDeck>
+	): void {
+		chunk.topicIds = deckIds;
+		chunk.deckIds = deckIds;
+
+		const primaryDeckName = deckIds.length > 0 ? decks[deckIds[0]]?.name : undefined;
+		const primaryDeckTag = primaryDeckName ? `#IR_deck_${primaryDeckName}` : undefined;
+		chunk.topicTag = primaryDeckTag;
+		chunk.deckTag = primaryDeckTag;
+	}
+
 	// ============================================
-	// v5.5: 数据完整性检查与清理
+	// 数据完整性检查与清理
 	// ============================================
 
-	/**
-	 * 清理无效的块数据（对应文件不存在的块）
-	 * 返回被清理的块数量
-	 */
+	/** 清理指向不存在文件的块调度数据。 */
 	async cleanupInvalidChunks(): Promise<{ removed: number; invalidPaths: string[] }> {
 		await this.initialize();
 		const adapter = this.app.vault.adapter;
@@ -3121,7 +3068,6 @@ export class IRStorageService {
 				continue;
 			}
 
-			// 检查块文件是否存在
 			const exists = await adapter.exists(chunk.filePath);
 			if (!exists) {
 				invalidChunkIds.push(chunkId);
@@ -3129,7 +3075,6 @@ export class IRStorageService {
 			}
 		}
 
-		// 删除无效块
 		if (invalidChunkIds.length > 0) {
 			for (const chunkId of invalidChunkIds) {
 				delete chunks[chunkId];
@@ -3145,29 +3090,37 @@ export class IRStorageService {
 		return { removed: invalidChunkIds.length, invalidPaths };
 	}
 
+	/** 递归列出目录下的所有文件路径。 */
+	private async listFilesRecursively(dir: string): Promise<string[]> {
+		const adapter = this.app.vault.adapter;
+		const result: string[] = [];
+		try {
+			const listed = await adapter.list(dir);
+			for (const file of listed.files) {
+				result.push(file);
+			}
+			for (const sub of listed.folders) {
+				const nested = await this.listFilesRecursively(sub);
+				for (const file of nested) {
+					result.push(file);
+				}
+			}
+		} catch {
+			return result;
+		}
+
+		return result;
+	}
+
+	/** 精简 IR Markdown 文件 frontmatter 中已不再需要的字段。 */
 	async slimIRMarkdownFrontmatter(
 		scanRoot?: string
 	): Promise<{ updated: number; scanned: number }> {
 		await this.initialize();
 		const adapter = this.app.vault.adapter;
 
-		const walk = async (dir: string): Promise<string[]> => {
-			const result: string[] = [];
-			try {
-				const listed = await adapter.list(dir);
-				for (const f of listed.files) result.push(f);
-				for (const sub of listed.folders) {
-					const nested = await walk(sub);
-					for (const f of nested) result.push(f);
-				}
-			} catch {
-				return result;
-			}
-			return result;
-		};
-
 		const root = resolveIRImportFolder(scanRoot);
-		const files = await walk(root);
+		const files = await this.listFilesRecursively(root);
 
 		let updated = 0;
 		let scanned = 0;
@@ -3216,6 +3169,7 @@ export class IRStorageService {
 		return { updated, scanned };
 	}
 
+	/** 删除没有对应 chunk/source 记录的孤儿块文件。 */
 	async cleanupOrphanChunkFiles(scanRoot?: string): Promise<{ removed: number }> {
 		await this.initialize();
 		const adapter = this.app.vault.adapter;
@@ -3226,23 +3180,7 @@ export class IRStorageService {
 		const knownSourceIds = new Set(Object.keys(sources));
 
 		const chunkRoot = resolveIRImportFolder(scanRoot);
-
-		const walk = async (dir: string): Promise<string[]> => {
-			const result: string[] = [];
-			try {
-				const listed = await adapter.list(dir);
-				for (const f of listed.files) result.push(f);
-				for (const sub of listed.folders) {
-					const nested = await walk(sub);
-					for (const f of nested) result.push(f);
-				}
-			} catch {
-				return result;
-			}
-			return result;
-		};
-
-		const files = await walk(chunkRoot);
+		const files = await this.listFilesRecursively(chunkRoot);
 		let removed = 0;
 
 		for (const filePath of files) {
@@ -3286,9 +3224,7 @@ export class IRStorageService {
 		return { removed };
 	}
 
-	/**
-	 * 清理无效的旧版块数据（blocks.json）
-	 */
+	/** 清理指向不存在源文件的旧版 blocks.json 数据。 */
 	async cleanupInvalidBlocks(): Promise<{ removed: number; invalidPaths: string[] }> {
 		await this.initialize();
 		const adapter = this.app.vault.adapter;
@@ -3307,7 +3243,6 @@ export class IRStorageService {
 				continue;
 			}
 
-			// 检查源文件是否存在
 			const exists = await adapter.exists(block.filePath);
 			if (!exists) {
 				invalidBlockIds.push(blockId);
@@ -3315,7 +3250,6 @@ export class IRStorageService {
 			}
 		}
 
-		// 删除无效块
 		if (invalidBlockIds.length > 0) {
 			for (const blockId of invalidBlockIds) {
 				delete blocks[blockId];
@@ -3334,9 +3268,7 @@ export class IRStorageService {
 		return { removed: invalidBlockIds.length, invalidPaths };
 	}
 
-	/**
-	 * 清理无效的源材料数据
-	 */
+	/** 清理既没有索引文件也没有关联块的源材料记录。 */
 	async cleanupInvalidSources(): Promise<{ removed: number }> {
 		await this.initialize();
 		const adapter = this.app.vault.adapter;
@@ -3346,9 +3278,7 @@ export class IRStorageService {
 		const invalidSourceIds: string[] = [];
 
 		for (const [sourceId, source] of Object.entries(sources)) {
-			// 检查索引文件是否存在
 			const indexExists = source.indexFilePath ? await adapter.exists(source.indexFilePath) : false;
-			// 检查是否有任何关联的块
 			const hasChunks = Object.values(chunks).some((c) => c.sourceId === sourceId);
 
 			if (!indexExists && !hasChunks) {
@@ -3356,7 +3286,6 @@ export class IRStorageService {
 			}
 		}
 
-		// 删除无效源材料
 		if (invalidSourceIds.length > 0) {
 			for (const sourceId of invalidSourceIds) {
 				delete sources[sourceId];
@@ -3375,10 +3304,7 @@ export class IRStorageService {
 		return { removed: invalidSourceIds.length };
 	}
 
-	/**
-	 * 执行完整的数据完整性检查和清理
-	 * 在加载数据前调用，确保显示的数据都是有效的
-	 */
+	/** 执行完整的数据完整性检查和清理。 */
 	async performIntegrityCheck(scanRoot?: string): Promise<{
 		chunksRemoved: number;
 		blocksRemoved: number;
@@ -3407,18 +3333,12 @@ export class IRStorageService {
 		};
 	}
 
-	/**
-	 * 获取所有块数据（带完整性检查）
-	 * 先清理无效数据，再返回有效数据
-	 */
+	/** 先做完整性检查，再返回最新块数据。 */
 	async getAllChunkDataWithIntegrityCheck(
 		scanRoot?: string
 	): Promise<Record<string, import("../../types/ir-types").IRChunkFileData>> {
-		// 先执行完整性检查
 		await this.performIntegrityCheck(scanRoot);
-		// 再同步牌组数据
 		await this.syncDeckDataFromYAML();
-		// 返回最新有效数据
 		return this.getAllChunkData();
 	}
 }

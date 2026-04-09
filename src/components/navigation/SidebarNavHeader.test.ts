@@ -131,6 +131,7 @@ describe('SidebarNavHeader', () => {
         currentPage: 'weave-card-management',
         currentView: 'table',
         cardDataSource: 'memory',
+        isInSidebarMode: true,
         onNavigate: mockOnNavigate,
         onViewChange: mockOnViewChange,
         onCardDataSourceChange: mockOnCardDataSourceChange
@@ -165,6 +166,7 @@ describe('SidebarNavHeader', () => {
         currentPage: 'weave-card-management',
         currentView: 'table',
         cardDataSource: 'memory',
+        isInSidebarMode: true,
         onNavigate: mockOnNavigate,
         onCardDataSourceChange: mockOnCardDataSourceChange
       }
@@ -191,6 +193,7 @@ describe('SidebarNavHeader', () => {
         currentPage: 'weave-card-management',
         currentView: 'table',
         cardDataSource: 'memory',
+        isInSidebarMode: true,
         onNavigate: mockOnNavigate,
         onCardDataSourceChange: mockOnCardDataSourceChange
       }
@@ -215,6 +218,7 @@ describe('SidebarNavHeader', () => {
         currentPage: 'weave-card-management',
         currentView: 'table',
         cardDataSource: 'memory',
+        isInSidebarMode: true,
         onNavigate: mockOnNavigate,
         onViewChange: mockOnViewChange,
         onCardDataSourceChange: mockOnCardDataSourceChange
@@ -242,7 +246,7 @@ describe('SidebarNavHeader', () => {
 
     const menu = menuInstances[0];
     expect(menu.findItemByTitle('切换视图')?.getIcon()).toBe('layout-grid');
-    expect(menu.findItemByTitle('新建牌组')?.getIcon()).toBe('folder-plus');
+    expect(menu.findItemByTitle('创建记忆牌组')?.getIcon()).toBe('folder-plus');
   });
 
   it('在牌组学习页面点击切换视图时派发菜单事件', async () => {
@@ -298,6 +302,7 @@ describe('SidebarNavHeader', () => {
         currentPage: 'weave-card-management',
         currentView: 'table',
         cardDataSource: 'memory',
+        isInSidebarMode: true,
         onNavigate: mockOnNavigate,
         onViewChange: mockOnViewChange,
         onCardDataSourceChange: mockOnCardDataSourceChange
@@ -326,6 +331,7 @@ describe('SidebarNavHeader', () => {
         currentPage: 'weave-card-management',
         currentView: 'table',
         cardDataSource: 'memory',
+        isInSidebarMode: true,
         onNavigate: mockOnNavigate,
         onViewChange: mockOnViewChange,
         onCardDataSourceChange: mockOnCardDataSourceChange

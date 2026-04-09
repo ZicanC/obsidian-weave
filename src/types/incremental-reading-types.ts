@@ -4,7 +4,7 @@
  * 核心设计原则：
  * - 不存储MD文件内容，只存储索引和元数据
  * - 通过文件路径和YAML frontmatter关联
- * - 复用现有FSRS6算法进行调度
+ * - 块级增量阅读调度使用独立策略；材料级到期时间暂沿用历史字段存储
  *
  * @module types/incremental-reading-types
  * @version 1.0.0
@@ -20,11 +20,11 @@ import type { FSRSCard, Rating } from "../data/types";
 export enum ReadingCategory {
 	/** 稍后阅读 - 新添加的材料默认分类 */
 	Later = "later",
-	/** 正在阅读 - 激活FSRS调度 */
+	/** 正在阅读 - 纳入材料级续读安排 */
 	Reading = "reading",
-	/** 收藏 - 重要材料，保持FSRS调度 */
+	/** 收藏 - 重要材料，保留材料级续读安排 */
 	Favorite = "favorite",
-	/** 已归档 - 完成或暂停，停止FSRS调度 */
+	/** 已归档 - 完成或暂停，停止材料级续读安排 */
 	Archived = "archived",
 }
 
@@ -98,8 +98,10 @@ export interface ReadingMaterial {
 	/** 最后访问时间 (ISO 8601) */
 	lastAccessed: string;
 
-	// ===== FSRS6调度 =====
-	/** FSRS卡片数据，复用现有算法 */
+	// ===== 材料级续读时间 =====
+	/** 材料级下次续读时间。 */
+	nextDueAt?: string;
+	/** 历史沿用的材料级到期时间字段；当前仅作为兼容载体保留。 */
 	fsrs?: FSRSCard;
 
 	// ===== 阅读进度 =====
@@ -313,7 +315,7 @@ export enum ReadingEventType {
 	SessionEnded = "session_ended",
 	/** 卡片提取 */
 	CardExtracted = "card_extracted",
-	/** FSRS调度更新 */
+	/** 材料级续读时间更新 */
 	ScheduleUpdated = "schedule_updated",
 }
 

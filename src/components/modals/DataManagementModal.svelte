@@ -1,6 +1,6 @@
 <!--
-  数据管理与质量扫描统一模态窗
-  职责：通过标签页切换数据管理和卡片质量扫描功能
+  数据管理模态窗
+  职责：集中展示数据检查、修复与迁移能力
 -->
 <script lang="ts">
   import { onMount, untrack } from 'svelte';
@@ -34,12 +34,12 @@
   interface Props {
     /** 插件实例 */
     plugin: WeavePlugin;
-    /** 当前筛选的卡片（质量扫描用） */
+    /** 当前筛选的卡片 */
     cards?: Card[];
-    /** 全部卡片（用于“扫描全部”范围） */
+    /** 全部卡片 */
     allCards?: Card[];
     /** 初始标签页 */
-    initialTab?: 'data' | 'quality';
+    initialTab?: 'data';
   }
 
   let {
@@ -55,12 +55,7 @@
   let scanTargetCards = $derived(scanScope === 'all' ? allCards : cards);
 
   // ===== 标签页 =====
-  type TabId = 'data' | 'quality';
-  let activeTab = $state<TabId>(untrack(() => initialTab));
-  
-  function handleTabChange(tabId: TabId) {
-    activeTab = tabId;
-  }
+  const activeTab = 'data';
 
   // ===== 数据管理 State =====
   let isChecking = $state(false);
@@ -448,6 +443,7 @@
       'yaml_migration': 'YAML 元数据迁移',
       'we_decks_fix': 'we_decks 牌组 ID',
       'we_block_migration': 'we_block 合并迁移',
+      'epub_source_link_migration': 'EPUB 溯源链接迁移',
       'deprecated_fields': '弃用字段',
       'card_deck_consistency': '引用式牌组一致性',
       'ir_material_consistency': '导入材料一致性',
@@ -630,10 +626,8 @@
 
   // 初始化时自动检测
   onMount(() => {
-    if (activeTab === 'data') {
-      handleCheckAll();
-      void refreshLatestMigrationSummary();
-    }
+    handleCheckAll();
+    void refreshLatestMigrationSummary();
   });
 </script>
 
@@ -641,69 +635,44 @@
     <!-- 顶部导航栏：分段标签 + 上下文操作 -->
     <div class="modal-header-bar">
       <div class="segmented-tabs">
-        <button
-          class="seg-tab"
-          class:active={activeTab === 'data'}
-          onclick={() => handleTabChange('data')}
-        >
+        <div class="seg-tab active">
           <EnhancedIcon name="database" size={14} />
           数据管理
-        </button>
-        <button
-          class="seg-tab"
-          class:active={activeTab === 'quality'}
-          onclick={() => handleTabChange('quality')}
-        >
-          <EnhancedIcon name="search" size={14} />
-          质量扫描
-        </button>
+        </div>
       </div>
       <div class="header-actions">
-        {#if activeTab === 'data'}
-          <button
-            class="header-action-btn"
-            onclick={handleCheckAll}
-            disabled={isChecking || isFixing}
-            title="检测全部"
-          >
-            {#if isChecking}
-              <EnhancedIcon name="loader" size={14} animation="spin" />
-            {:else}
-              <EnhancedIcon name="refresh-cw" size={14} />
-            {/if}
-            <span>检测全部</span>
-          </button>
-          <button
-            class="header-action-btn fix"
-            onclick={handleFixAll}
-            disabled={isChecking || isFixing || checkResults.every(r => r.count === 0)}
-            title="一键修复"
-          >
-            {#if isFixing}
-              <EnhancedIcon name="loader" size={14} animation="spin" />
-            {:else}
-              <EnhancedIcon name="wrench" size={14} />
-            {/if}
-            <span>一键修复</span>
-          </button>
-        {:else if activeTab === 'quality' && scanView === 'result'}
-          <button
-            class="header-action-btn"
-            onclick={rescan}
-            title="重新扫描"
-          >
+        <button
+          class="header-action-btn"
+          onclick={handleCheckAll}
+          disabled={isChecking || isFixing}
+          title="检测全部"
+        >
+          {#if isChecking}
+            <EnhancedIcon name="loader" size={14} animation="spin" />
+          {:else}
             <EnhancedIcon name="refresh-cw" size={14} />
-            <span>重新扫描</span>
-          </button>
-        {/if}
+          {/if}
+          <span>检测全部</span>
+        </button>
+        <button
+          class="header-action-btn fix"
+          onclick={handleFixAll}
+          disabled={isChecking || isFixing || checkResults.every(r => r.count === 0)}
+          title="一键修复"
+        >
+          {#if isFixing}
+            <EnhancedIcon name="loader" size={14} animation="spin" />
+          {:else}
+            <EnhancedIcon name="wrench" size={14} />
+          {/if}
+          <span>一键修复</span>
+        </button>
       </div>
     </div>
 
     <!-- 标签页内容 -->
     <div class="modal-tab-content">
-      {#if activeTab === 'data'}
-        <!-- 数据管理标签页 -->
-        <div class="data-management-content">
+      <div class="data-management-content">
           <!-- 检测状态 -->
           <section class="section">
             <h3 class="section-title">数据检测</h3>
@@ -895,233 +864,7 @@
               {/if}
             </div>
           </section>
-        </div>
-      {:else if activeTab === 'quality'}
-        <!-- 质量扫描标签页 -->
-        <div class="quality-scan-content">
-          {#if scanView === 'config'}
-            <!-- 配置视图 -->
-            <div class="scan-info">
-              <EnhancedIcon name="info" size={18} />
-              <div class="scan-scope-area">
-                <span>扫描范围:</span>
-                <label class="scope-option">
-                  <input type="radio" name="scan-scope" value="filtered" bind:group={scanScope} />
-                  <span>当前筛选 ({cards.length})</span>
-                </label>
-                {#if allCards.length > 0 && allCards.length !== cards.length}
-                <label class="scope-option">
-                  <input type="radio" name="scan-scope" value="all" bind:group={scanScope} />
-                  <span>全部卡片 ({allCards.length})</span>
-                </label>
-                {/if}
-              </div>
-            </div>
-            
-            <div class="config-section">
-              <h3 class="section-title">扫描选项</h3>
-              <div class="config-grid">
-                <label class="config-item">
-                  <input type="checkbox" bind:checked={scanConfig.detectDuplicates} />
-                  <span>检测重复卡片</span>
-                </label>
-                <label class="config-item">
-                  <input type="checkbox" bind:checked={scanConfig.detectEmpty} />
-                  <span>检测空内容</span>
-                </label>
-                <label class="config-item">
-                  <input type="checkbox" bind:checked={scanConfig.detectShort} />
-                  <span>检测过短内容</span>
-                </label>
-                <label class="config-item">
-                  <input type="checkbox" bind:checked={scanConfig.detectLong} />
-                  <span>检测过长内容</span>
-                </label>
-                <label class="config-item">
-                  <input type="checkbox" bind:checked={scanConfig.detectOrphans} />
-                  <span>检测孤儿卡片</span>
-                </label>
-                <label class="config-item">
-                  <input type="checkbox" bind:checked={scanConfig.detectMissingSource} />
-                  <span>检测源文档缺失</span>
-                </label>
-                <label class="config-item">
-                  <input type="checkbox" bind:checked={scanConfig.detectFSRSIssues} />
-                  <span>检测学习问题</span>
-                </label>
-              </div>
-            </div>
-            
-            {#if scanConfig.detectDuplicates}
-            <div class="config-section">
-              <h3 class="section-title">重复检测阈值</h3>
-              <div class="slider-container">
-                <input type="range" min="0.5" max="1" step="0.05" bind:value={scanConfig.similarityThreshold} />
-                <span class="slider-value">{(scanConfig.similarityThreshold * 100).toFixed(0)}%</span>
-              </div>
-              <p class="hint">相似度达到此阈值的卡片将被标记为相似</p>
-            </div>
-            {/if}
-            
-            {#if scanConfig.detectShort || scanConfig.detectLong}
-            <div class="config-section">
-              <h3 class="section-title">内容长度阈值</h3>
-              <div class="threshold-row">
-                {#if scanConfig.detectShort}
-                <label class="threshold-item">
-                  <span>最短字符数</span>
-                  <input type="number" min="1" max="100" bind:value={scanConfig.minContentLength} class="threshold-input" />
-                </label>
-                {/if}
-                {#if scanConfig.detectLong}
-                <label class="threshold-item">
-                  <span>最长字符数</span>
-                  <input type="number" min="100" max="10000" step="100" bind:value={scanConfig.maxContentLength} class="threshold-input" />
-                </label>
-                {/if}
-              </div>
-            </div>
-            {/if}
-            
-            <div class="action-buttons">
-              <EnhancedButton variant="primary" onclick={startScan} disabled={scanTargetCards.length === 0}>
-                <EnhancedIcon name="search" size={16} />
-                扫描 {scanTargetCards.length} 张卡片
-              </EnhancedButton>
-            </div>
-            
-          {:else if scanView === 'scanning'}
-            <!-- 扫描进度视图 -->
-            <div class="scanning-view">
-              <div class="scan-spinner"></div>
-              <div class="progress-info">
-                <p class="phase-text">{scanProgress.message}</p>
-                <div class="progress-bar">
-                  <div class="progress-fill" style="width: {scanProgress.total > 0 ? (scanProgress.current / scanProgress.total * 100) : 0}%"></div>
-                </div>
-                <p class="progress-text">{scanProgress.current} / {scanProgress.total}</p>
-              </div>
-            </div>
-            
-          {:else if scanView === 'result'}
-            <!-- 结果视图 -->
-            {#if scanResult}
-              <!-- Bug#4: 使用动态计算的统计数据 -->
-              <div class="result-summary">
-                <div class="summary-item">
-                  <span class="summary-label">扫描卡片</span>
-                  <span class="summary-value">{scanResult.totalCards}</span>
-                </div>
-                <div class="summary-item">
-                  <span class="summary-label">发现问题</span>
-                  <span class="summary-value" class:has-issues={currentIssues.length > 0}>{currentIssues.length}</span>
-                </div>
-                <div class="summary-item error">
-                  <span class="summary-label">严重</span>
-                  <span class="summary-value">{computedStats.bySeverity.error}</span>
-                </div>
-                <div class="summary-item warning">
-                  <span class="summary-label">警告</span>
-                  <span class="summary-value">{computedStats.bySeverity.warning}</span>
-                </div>
-                <div class="summary-item info">
-                  <span class="summary-label">提示</span>
-                  <span class="summary-value">{computedStats.bySeverity.info}</span>
-                </div>
-              </div>
-              
-              {#if currentIssues.length === 0}
-                <div class="no-issues">
-                  <EnhancedIcon name="check-circle" size={48} />
-                  <h3>未发现质量问题</h3>
-                  <p>所有卡片均符合质量标准</p>
-                </div>
-              {:else}
-                <!-- UX#12: 筛选栏 -->
-                <div class="scan-filter-bar">
-                  <select class="scan-filter-select" bind:value={filterSeverity}>
-                    <option value="all">全部严重程度</option>
-                    <option value="error">严重 ({computedStats.bySeverity.error})</option>
-                    <option value="warning">警告 ({computedStats.bySeverity.warning})</option>
-                    <option value="info">提示 ({computedStats.bySeverity.info})</option>
-                  </select>
-                  <select class="scan-filter-select" bind:value={filterType}>
-                    <option value="all">全部类型</option>
-                    {#each Object.entries(computedStats.byType) as [type, count]}
-                      <option value={type}>{issueTypeLabels[type as QualityIssueType]} ({count})</option>
-                    {/each}
-                  </select>
-                  {#if filterSeverity !== 'all' || filterType !== 'all'}
-                    <button class="scan-filter-reset" onclick={resetFilters}>清除筛选</button>
-                  {/if}
-                  <span class="scan-filter-count">{filteredIssues.length}/{currentIssues.length}</span>
-                </div>
-                
-                <div class="issues-table-container">
-                  <table class="issues-table">
-                    <thead>
-                      <tr>
-                        <th class="col-checkbox">
-                          <input type="checkbox" checked={selectedIssues.size === filteredIssues.length && filteredIssues.length > 0} onchange={toggleSelectAll} />
-                        </th>
-                        <th class="col-id">卡片ID</th>
-                        <th class="col-content">卡片内容</th>
-                        <th class="col-issue">存在问题</th>
-                        <th class="col-action">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {#each groupedIssues as group}
-                        {@const card = cards.find(c => c.uuid === group.cardUuid)}
-                        <tr class:selected={isGroupSelected(group)}>
-                          <td class="col-checkbox">
-                            <input type="checkbox" checked={isGroupSelected(group)} onchange={() => toggleGroupSelection(group)} />
-                          </td>
-                          <td class="col-id">
-                            <span class="uuid-text" title={group.cardUuid}>{truncateUUID(group.cardUuid)}</span>
-                          </td>
-                          <td class="col-content">
-                            <span class="content-text" title={card ? CardQualityInboxService.getDisplayContent(card, 200) : ''}>{getCardDisplayContent(card)}</span>
-                          </td>
-                          <td class="col-issue">
-                            <div class="issue-badges">
-                              {#each group.issues as issue}
-                                <span class="issue-badge" style="border-left: 3px solid {severityColors[issue.severity]}">{issueTypeLabels[issue.type]}</span>
-                              {/each}
-                            </div>
-                          </td>
-                          <td class="col-action">
-                            <div class="action-btn-group">
-                              <button class="view-card-btn" onclick={() => viewCard(group.cardUuid)} title="查看卡片">
-                                <EnhancedIcon name="eye" size={14} />
-                              </button>
-                              <button class="view-card-btn" onclick={() => editCard(group.cardUuid)} title="编辑卡片">
-                                <EnhancedIcon name="edit" size={14} />
-                              </button>
-                              <button class="view-card-btn delete-btn" onclick={() => deleteCard(group.cardUuid)} title="删除卡片">
-                                <EnhancedIcon name="trash-2" size={14} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      {/each}
-                    </tbody>
-                  </table>
-                </div>
-              {/if}
-              
-              {#if selectedIssues.size > 0}
-              <div class="result-actions">
-                <EnhancedButton variant="secondary" onclick={batchIgnoreSelected}>
-                  <EnhancedIcon name="x" size={14} />
-                  忽略选中 ({selectedIssues.size})
-                </EnhancedButton>
-              </div>
-              {/if}
-            {/if}
-          {/if}
-        </div>
-      {/if}
+      </div>
     </div>
   </div>
 
@@ -1286,10 +1029,6 @@
   .scope-option:hover {
     background: var(--background-modifier-hover);
     border-color: var(--background-modifier-border-hover);
-  }
-
-  .scope-option input[type="radio"] {
-    margin: 0;
   }
 
   .section {
@@ -1551,18 +1290,10 @@
     border-color: var(--background-modifier-border-hover);
   }
 
-  .config-item input[type="checkbox"] {
-    margin: 0;
-  }
-
   .slider-container {
     display: flex;
     align-items: center;
     gap: 12px;
-  }
-
-  .slider-container input[type="range"] {
-    flex: 1;
   }
 
   .slider-value {
@@ -1699,16 +1430,6 @@
     min-height: 150px;
   }
 
-  .no-issues h3 {
-    margin: 0;
-    color: var(--text-normal);
-  }
-
-  .no-issues p {
-    margin: 0;
-    color: var(--text-muted);
-  }
-
   .issues-table-container {
     flex: 1;
     overflow-y: auto;
@@ -1722,43 +1443,6 @@
     width: 100%;
     border-collapse: collapse;
     font-size: 13px;
-  }
-
-  .issues-table thead {
-    position: sticky;
-    top: 0;
-    background: var(--background-secondary);
-    z-index: 1;
-    box-shadow: inset 0 -1px 0 var(--background-modifier-border);
-  }
-
-  .issues-table th {
-    padding: 11px 12px;
-    text-align: left;
-    font-weight: 600;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--background-modifier-border);
-    white-space: nowrap;
-    font-size: 0.74rem;
-    letter-spacing: 0.02em;
-  }
-
-  .issues-table td {
-    padding: 11px 12px;
-    border-bottom: 1px solid var(--background-modifier-border);
-    vertical-align: middle;
-  }
-
-  .issues-table tbody tr {
-    transition: background 0.15s ease;
-  }
-
-  .issues-table tbody tr:hover {
-    background: var(--background-modifier-hover);
-  }
-
-  .issues-table tbody tr.selected {
-    background: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
   }
 
   .col-checkbox { width: 40px; text-align: center; }

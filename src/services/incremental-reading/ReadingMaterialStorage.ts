@@ -19,6 +19,7 @@ import type {
 } from "../../types/incremental-reading-types";
 import { DirectoryUtils } from "../../utils/directory-utils";
 import {
+	getReadingMaterialDueAt,
 	normalizeReadingMaterialForRuntime,
 	serializeReadingMaterialForStorage,
 } from "../../utils/ir-topic-compat";
@@ -395,8 +396,9 @@ export class ReadingMaterialStorage {
 
 		return Array.from(this.materialsCache.values())
 			.filter((_m) => {
-				if (!_m.fsrs?.due) return false;
-				const dueDate = new Date(_m.fsrs.due);
+				const dueAt = getReadingMaterialDueAt(_m);
+				if (!dueAt) return false;
+				const dueDate = new Date(dueAt);
 				return dueDate <= today;
 			})
 			.sort((a, b) => {
@@ -410,8 +412,9 @@ export class ReadingMaterialStorage {
 	 */
 	async getMaterialsInDateRange(startDate: Date, endDate: Date): Promise<ReadingMaterial[]> {
 		return Array.from(this.materialsCache.values()).filter((_m) => {
-			if (!_m.fsrs?.due) return false;
-			const dueDate = new Date(_m.fsrs.due);
+			const dueAt = getReadingMaterialDueAt(_m);
+			if (!dueAt) return false;
+			const dueDate = new Date(dueAt);
 			return dueDate >= startDate && dueDate <= endDate;
 		});
 	}
@@ -455,8 +458,9 @@ export class ReadingMaterialStorage {
 			totalProgress += material.progress.percentage;
 
 			// 今日到期
-			if (material.fsrs?.due) {
-				const dueDate = new Date(material.fsrs.due);
+			const dueAt = getReadingMaterialDueAt(material);
+			if (dueAt) {
+				const dueDate = new Date(dueAt);
 				if (dueDate <= today) {
 					todayDue++;
 				}

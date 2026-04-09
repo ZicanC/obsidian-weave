@@ -29,8 +29,9 @@
 
 <style>
   .modified-cell {
-    padding: 10px 16px;
-    border-right: 1px solid color-mix(in srgb, var(--background-modifier-border) 45%, transparent);
+    padding: var(--weave-table-cell-padding-y, 6px) var(--weave-table-cell-padding-x, 16px);
+    border-right: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
+    border-bottom: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
     vertical-align: middle;
     font-variant-numeric: tabular-nums;
   }

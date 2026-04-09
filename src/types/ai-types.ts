@@ -77,22 +77,6 @@ export interface GeneratedCard {
 	// 卡片内容（统一使用 content 字段）
 	content: string; // 原始Markdown内容，使用 ---div--- 分隔正反面
 
-	//  向后兼容字段（已废弃，但保留以支持旧代码）
-	/** Compatibility note: 使用 content 字段代替 */
-	front?: string;
-	/** Compatibility note: 使用 content 字段代替 */
-	back?: string;
-
-	// 选择题特有字段（已废弃，信息包含在content中）
-	/** Compatibility note: 选择题信息已包含在 content 字段中 */
-	choices?: string[];
-	/** Compatibility note: 选择题信息已包含在 content 字段中 */
-	correctAnswer?: number;
-
-	// 挖空题特有字段（已废弃，信息包含在content中）
-	/** Compatibility note: 挖空题信息已包含在 content 字段中 */
-	clozeText?: string;
-
 	// 附加信息
 	tags?: string[];
 	images?: string[];
@@ -369,15 +353,9 @@ export const TEMPLATE_VARIABLES: Record<string, string> = {
 /**
  * AI功能类型
  * - format: 格式化功能（在现有卡片基础上优化内容）
- * - test-generator: 测试题生成功能（基于卡片生成测试题到考试牌组）
  * - split: 拆分功能（将复杂卡片拆分成多张简单子卡片）
  */
-export type AIActionType = "format" | "test-generator" | "split";
-
-/**
- * 题目类型
- */
-export type QuestionType = "single" | "multiple" | "judge" | "fill";
+export type AIActionType = "format" | "split";
 
 /**
  * 难度级别
@@ -385,28 +363,8 @@ export type QuestionType = "single" | "multiple" | "judge" | "fill";
 export type DifficultyLevel = "easy" | "medium" | "hard" | "mixed";
 
 /**
- * 测试题生成配置
- */
-export interface TestGenConfig {
-	/** 默认生成数量 */
-	defaultCount: number;
-
-	/** 题目类型 */
-	questionType: QuestionType;
-
-	/** 难度级别 */
-	difficultyLevel: DifficultyLevel;
-
-	/** 目标牌组策略：auto=自动创建对应考试牌组, manual=手动指定 */
-	targetDeckStrategy: "auto" | "manual";
-
-	/** 手动指定的目标牌组ID（当strategy为manual时使用） */
-	targetDeckId?: string;
-}
-
-/**
  * 统一的AI功能配置接口
- * 支持格式化、测试题生成和卡片拆分三种功能类型
+ * 支持格式化和卡片拆分两种功能类型
  */
 export interface AIAction {
 	// 基础信息
@@ -425,9 +383,6 @@ export interface AIAction {
 	provider?: AIProvider;
 	model?: string;
 
-	// 测试题生成特有配置（仅当type='test-generator'时有效）
-	testConfig?: TestGenConfig;
-
 	// 拆分功能特有配置（仅当type='split'时有效）
 	splitConfig?: {
 		targetCount: number;
@@ -444,91 +399,4 @@ export interface AIAction {
 	// 官方模板专用字段
 	isModified?: boolean; // 用户是否修改过（仅官方模板使用）
 	originalVersion?: string; // 原始版本号（用于升级检测）
-}
-
-/**
- * 测试题生成专用模板变量
- */
-export const TEST_GEN_TEMPLATE_VARIABLES: Record<string, string> = {
-	"{{cardContent}}": "卡片完整内容（包含正反面）",
-	"{{cardFront}}": "卡片正面内容",
-	"{{cardBack}}": "卡片背面内容",
-	"{{cardType}}": "卡片类型（问答/选择/挖空）",
-	"{{templateName}}": "当前使用的模板名称",
-	"{{deckName}}": "所属牌组名称",
-	"{{tags}}": "卡片标签（逗号分隔）",
-	"{{数量}}": "生成题目数量",
-	"{{类型}}": "题目类型（单选/多选/判断/填空）",
-	"{{难度}}": "难度级别（简单/中等/困难/混合）",
-	"{{目标牌组}}": "目标考试牌组名称",
-};
-
-/**
- * 测试题生成请求
- */
-export interface TestGenerationRequest {
-	/** 源卡片ID */
-	sourceCardId: string;
-
-	/** 源卡片内容 */
-	sourceContent: {
-		front: string;
-		back: string;
-		tags?: string[];
-	};
-
-	/** 生成配置 */
-	config: {
-		count: number;
-		questionType: QuestionType;
-		difficulty: DifficultyLevel;
-		customPrompt?: string;
-	};
-
-	/** 目标题库牌组ID */
-	targetDeckId: string;
-}
-
-/**
- * 单个生成的测试题
- *
- *  数据结构说明：
- * - 统一使用 `content` 作为权威字段，存储完整的Markdown内容
- * - `front` 和 `back` 仅作为临时中间字段（用于AI解析），不应持久化到数据库
- * - 最终导入时必须将 front+back 转换为 content 格式
- */
-export interface GeneratedTestQuestion {
-	/** Compatibility note: 临时字段，用于AI解析，不应持久化 */
-	front?: string;
-	/** Compatibility note: 临时字段，用于AI解析，不应持久化 */
-	back?: string;
-
-	/**  权威字段：完整的Markdown格式内容（问题+答案，使用 ---div--- 分隔） */
-	content: string;
-
-	type: "choice" | "fill" | "judge";
-
-	// 选择题专用字段
-	choices?: string[];
-	correctAnswer?: number | number[];
-
-	// 通用字段
-	explanation?: string;
-	difficulty?: DifficultyLevel;
-	tags?: string[];
-}
-
-/**
- * 测试题生成响应
- */
-export interface TestGenerationResponse {
-	success: boolean;
-	generatedQuestions?: GeneratedTestQuestion[];
-	error?: string;
-	metadata?: {
-		provider: string;
-		model: string;
-		tokensUsed: number;
-		cost?: number;
-	};
 }

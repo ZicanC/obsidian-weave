@@ -59,16 +59,21 @@
     min-width: 64px;
     max-width: 64px;
     text-align: center;
+    padding: var(--weave-table-cell-padding-y, 6px) var(--weave-table-cell-padding-x, 16px);
+    border-right: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
+    border-bottom: 1px solid var(--weave-table-grid-border-color, var(--background-modifier-border));
+    vertical-align: middle;
+    box-sizing: border-box;
   }
 
   .weave-priority-badge {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 4px;
     min-width: 42px;
-    height: 24px;
-    padding: 0 9px;
+    min-height: var(--weave-table-pill-height, 22px);
+    padding: 0 var(--weave-table-pill-padding-x, 8px);
     border: 1px solid transparent;
     border-radius: 999px;
     font-size: 11px;
@@ -127,13 +132,14 @@
       width: 72px;
       min-width: 72px;
       max-width: 72px;
+      padding: 6px 10px;
     }
 
     .weave-priority-badge {
       gap: 4px;
       min-width: 50px;
-      height: 24px;
-      padding: 0 10px;
+      min-height: 17px;
+      padding: 0 7px;
       font-size: 11px;
       border-radius: 10px;
     }

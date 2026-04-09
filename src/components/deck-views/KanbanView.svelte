@@ -12,13 +12,23 @@
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import DeckGridCard from './DeckGridCard.svelte';
   import ChineseElegantDeckCard from './ChineseElegantDeckCard.svelte';
+  import { QuestionBankAnalyticsModalObsidian } from '../modals/QuestionBankAnalyticsModalObsidian';
   import type { DeckCardStyle } from '../../types/plugin-settings.d';
   import { getColorSchemeForDeck } from '../../config/card-color-schemes';
   
   // 导入牌组聚合服务和类型
   import { DeckAggregationService } from '../../services/deck/DeckAggregationService';
   import type { DeckGroupByType, DeckTagGroup } from '../../types/deck-kanban-types';
-  import { DECK_GROUP_CONFIGS, DECK_GROUP_BY_LABELS } from '../../types/deck-kanban-types';
+  import {
+    createDeckTagColumnKey,
+    DECK_GROUP_CONFIGS,
+    DECK_GROUP_BY_LABELS,
+    DECK_TAG_EMPTY_GROUP_KEY,
+    DECK_TAG_GROUP_OTHER_KEY,
+    normalizeDeckTagGroup,
+    normalizeDeckTagGroupTags,
+    normalizeDeckTagName
+  } from '../../types/deck-kanban-types';
   import { tr } from '../../utils/i18n';
   import { showObsidianConfirm } from '../../utils/obsidian-confirm';
   import { buildMemoryDeckMenu, type MemoryDeckMenuAction } from '../../services/deck/MemoryDeckMenu';
@@ -48,6 +58,7 @@
     onEditDeck?: (deckId: string) => void;
     onDeleteDeck?: (deckId: string) => void;
     onOpenKnowledgeGraph?: (deckId: string) => void;
+    onAssociateQuestionBank?: (deckId: string) => void | Promise<void>;
     // 引用式牌组系统
     onDissolveDeck?: (deckId: string) => void;
   }
@@ -69,6 +80,7 @@
     onEditDeck,
     onDeleteDeck,
     onOpenKnowledgeGraph,
+    onAssociateQuestionBank,
     // 引用式牌组系统
     onDissolveDeck
   }: Props = $props();
@@ -88,6 +100,7 @@
   // 看板配置状态
   let activeKanbanMenu: Menu | null = null;
   let lastKanbanMenuPosition: MenuPositionDef | null = null;
+  let questionBankAnalyticsModalInstance: QuestionBankAnalyticsModalObsidian | null = null;
   
   // 列可见性配置
   interface ColumnConfig {
@@ -139,7 +152,8 @@
   // 获取选定的标签组
   const selectedTagGroup = $derived((() => {
     if (groupBy === 'tagGroup' && selectedTagGroupId && plugin?.settings.deckTagGroups) {
-      return plugin.settings.deckTagGroups.find(tg => tg.id === selectedTagGroupId);
+      const tagGroup = plugin.settings.deckTagGroups.find(tg => tg.id === selectedTagGroupId);
+      return tagGroup ? normalizeDeckTagGroup(tagGroup) : null;
     }
     return null;
   })());
@@ -151,13 +165,16 @@
       const tagSet = new Set<string>();
       allDecks.forEach(deck => {
         if (deck.tags && deck.tags.length > 0) {
-          tagSet.add(deck.tags[0]); // 单选标签
+          const normalizedTag = normalizeDeckTagName(deck.tags[0]);
+          if (normalizedTag) {
+            tagSet.add(normalizedTag);
+          }
         }
       });
       
       const tagColors = ['#3b82f6', '#10b981', '#f59e0b', '#ec4899', '#8b5cf6', '#06b6d4', '#ef4444'];
       const tagGroups = Array.from(tagSet).sort().map((tag, index) => ({
-        key: tag,
+        key: createDeckTagColumnKey(tag),
         label: tag,
         color: tagColors[index % tagColors.length],
         icon: 'tag'
@@ -165,7 +182,7 @@
       
       // 添加"无标签"分组
       tagGroups.push({
-        key: 'noTag',
+        key: DECK_TAG_EMPTY_GROUP_KEY,
         label: t('decks.kanban.noTag'),
         color: '#6b7280',
         icon: 'circle'
@@ -178,8 +195,8 @@
       };
     } else if (groupBy === 'tagGroup' && selectedTagGroup) {
       // 标签组分组
-      const tagGroups = selectedTagGroup.tags.map((tag: string, index: number) => ({
-        key: tag,
+      const tagGroups = normalizeDeckTagGroupTags(selectedTagGroup.tags).map((tag: string) => ({
+        key: createDeckTagColumnKey(tag),
         label: tag,
         color: selectedTagGroup.color || '#3b82f6',
         icon: 'tag'
@@ -187,7 +204,7 @@
       
       // 添加"其他"分组
       tagGroups.push({
-        key: '__other__',
+        key: DECK_TAG_GROUP_OTHER_KEY,
         label: t('decks.kanban.other'),
         color: '#6b7280',
         icon: 'circle'
@@ -253,9 +270,36 @@
     
     updateGrouping();
   });
+
+  function hasTagGroupChanged(original: DeckTagGroup, normalized: DeckTagGroup): boolean {
+    if (original.name !== normalized.name) return true;
+    if (original.tags.length !== normalized.tags.length) return true;
+    return original.tags.some((tag, index) => tag !== normalized.tags[index]);
+  }
+
+  async function normalizePersistedTagGroupsIfNeeded() {
+    if (!plugin?.settings.deckTagGroups?.length) {
+      return;
+    }
+
+    const normalizedGroups = plugin.settings.deckTagGroups.map((tagGroup) => normalizeDeckTagGroup(tagGroup));
+    const hasChanges = normalizedGroups.some((tagGroup, index) => {
+      const original = plugin.settings.deckTagGroups?.[index];
+      return original ? hasTagGroupChanged(original, tagGroup) : false;
+    });
+
+    if (!hasChanges) {
+      return;
+    }
+
+    plugin.settings.deckTagGroups = normalizedGroups;
+    await plugin.saveSettings();
+  }
   
   // 从 localStorage 加载配置
   onMount(() => {
+    void normalizePersistedTagGroupsIfNeeded();
+
     // 加载分组方式
     const saved = vaultStorage.getItem('weave-deck-kanban-groupby');
     const validTypes = deckMode === 'memory'
@@ -299,6 +343,8 @@
     window.addEventListener('Weave:open-deck-kanban-menu', handleOpenKanbanMenu);
     
     return () => {
+      questionBankAnalyticsModalInstance?.close();
+      questionBankAnalyticsModalInstance = null;
       closeActiveKanbanMenu();
       window.removeEventListener('Weave:open-deck-kanban-menu', handleOpenKanbanMenu);
     };
@@ -705,25 +751,26 @@
 
   async function handleSaveTagGroup(tagGroup: DeckTagGroup) {
     if (!plugin) return;
+    const normalizedTagGroup = normalizeDeckTagGroup(tagGroup);
     
     const tagGroups = plugin.settings.deckTagGroups || [];
-    const existingIndex = tagGroups.findIndex(tg => tg.id === tagGroup.id);
+    const existingIndex = tagGroups.findIndex(tg => tg.id === normalizedTagGroup.id);
     
     if (existingIndex !== -1) {
       // 更新现有标签组
-      tagGroups[existingIndex] = tagGroup;
-      new Notice(t('decks.kanban.tagGroupUpdated', { name: tagGroup.name }));
+      tagGroups[existingIndex] = normalizedTagGroup;
+      new Notice(t('decks.kanban.tagGroupUpdated', { name: normalizedTagGroup.name }));
     } else {
       // 添加新标签组
-      tagGroups.push(tagGroup);
-      new Notice(t('decks.kanban.tagGroupCreated', { name: tagGroup.name }));
+      tagGroups.push(normalizedTagGroup);
+      new Notice(t('decks.kanban.tagGroupCreated', { name: normalizedTagGroup.name }));
     }
     
     plugin.settings.deckTagGroups = tagGroups;
     await plugin.saveSettings();
     
     // 自动选择标签组
-    setSelectedTagGroupId(tagGroup.id);
+    setSelectedTagGroupId(normalizedTagGroup.id);
     
     // 关闭创建器并清除编辑状态
     showQuickCreator = false;
@@ -858,6 +905,34 @@
     }
   }
 
+  async function openQuestionBankAnalytics(deckId: string): Promise<void> {
+    try {
+      if (!plugin?.questionBankService) {
+        new Notice(t('decks.kanban.qbServiceNotInit'));
+        return;
+      }
+
+      const bank = await plugin.questionBankService.getBankById(deckId);
+      if (!bank) {
+        new Notice(t('decks.kanban.qbNotFound'));
+        return;
+      }
+
+      questionBankAnalyticsModalInstance?.close();
+      questionBankAnalyticsModalInstance = new QuestionBankAnalyticsModalObsidian(plugin.app, {
+        plugin,
+        questionBank: bank,
+        onClose: () => {
+          questionBankAnalyticsModalInstance = null;
+        }
+      });
+      questionBankAnalyticsModalInstance.open();
+    } catch (error) {
+      logger.error('[KanbanView] 打开题组分析图表失败:', error);
+      new Notice(t('decks.kanban.openAnalyticsFailed'));
+    }
+  }
+
   function showDeckMenu(event: MouseEvent, deckId: string) {
     event.preventDefault();
     const menu = new Menu();
@@ -943,18 +1018,7 @@
       
       menu.addItem((item) =>
         item.setTitle(t('decks.kanban.analytics')).setIcon('bar-chart-2')
-          .onClick(async () => {
-            try {
-              if (!plugin?.questionBankService) { new Notice(t('decks.kanban.qbServiceNotInit')); return; }
-              const bank = await plugin.questionBankService.getBankById(deckId);
-              if (!bank) { new Notice(t('decks.kanban.qbNotFound')); return; }
-              // 触发分析事件，由父组件处理
-              window.dispatchEvent(new CustomEvent('Weave:open-qb-analytics', { detail: { bankId: deckId } }));
-            } catch (e) {
-              logger.error('[KanbanView] 题库分析失败:', e);
-              new Notice(t('decks.kanban.openAnalyticsFailed'));
-            }
-          })
+          .onClick(async () => await openQuestionBankAnalytics(deckId))
       );
       
       menu.addSeparator();
@@ -974,6 +1038,7 @@
           advanceStudy: t('decks.menu.advanceStudy'),
           deckAnalytics: t('decks.menu.deckAnalytics'),
           knowledgeGraph: t('decks.menu.knowledgeGraph'),
+          linkQuestionBank: t('decks.menu.linkQuestionBank'),
           editDeck: t('decks.menu.editDeck'),
           deleteDeck: t('decks.menu.delete'),
           dissolveDeck: t('decks.menu.dissolveDeck')
@@ -982,6 +1047,7 @@
           onAdvanceStudy: async () => await dispatchMemoryDeckMenuAction('advance-study', deckId),
           onOpenDeckAnalytics: async () => await dispatchMemoryDeckMenuAction('deck-analytics', deckId),
           onOpenKnowledgeGraph: async () => await dispatchMemoryDeckMenuAction('knowledge-graph', deckId),
+          onAssociateQuestionBank: async () => await onAssociateQuestionBank?.(deckId),
           onEditDeck: async () => await dispatchMemoryDeckMenuAction('edit-deck', deckId),
           onDeleteDeck: async () => await dispatchMemoryDeckMenuAction('delete-deck', deckId),
           onDissolveDeck: async () => await dispatchMemoryDeckMenuAction('dissolve-deck', deckId)
@@ -1404,7 +1470,7 @@
   :global(body.is-mobile) .kanban-columns {
     display: flex;
     flex-direction: row;
-    gap: 8px;
+    gap: 12px;
     overflow-x: auto;
     overflow-y: hidden;
     grid-template-columns: unset;
@@ -1414,12 +1480,33 @@
   }
   
   :global(body.is-mobile) .kanban-column {
-    min-width: 140px;
-    max-width: 180px;
+    min-width: 168px;
+    max-width: 220px;
     flex-shrink: 0;
-    padding: 10px;
+    padding: 12px;
     border-radius: 10px;
     scroll-snap-align: start;
+  }
+
+  :global(body.is-tablet) .kanban-columns {
+    gap: 14px;
+    padding-bottom: 10px;
+  }
+
+  :global(body.is-tablet) .kanban-column {
+    min-width: 240px;
+    max-width: 320px;
+    padding: 14px;
+  }
+
+  :global(body.is-tablet) .header-title {
+    font-size: 14px;
+  }
+
+  :global(body.is-tablet) .count-badge {
+    min-width: 22px;
+    height: 22px;
+    font-size: 11px;
   }
   
   :global(body.is-mobile) .column-header {

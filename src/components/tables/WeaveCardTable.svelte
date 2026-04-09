@@ -497,7 +497,7 @@
   // 分页每页25-50条，不需要额外的虚拟滚动
 </script>
 
-<div class="weave-table-wrapper">
+<div class="weave-table-wrapper show-grid-borders">
   {#if !loading && Array.isArray(cards) && cards.length > 0}
     <!-- 顶部横向滚动条 -->
     <div 
@@ -566,13 +566,31 @@
   .weave-table-wrapper {
     --weave-table-page-bg: var(--weave-card-management-page-bg, var(--weave-surface-background, var(--weave-surface, var(--background-primary))));
     --weave-table-surface-bg: var(--weave-card-management-surface-bg, var(--weave-elevated-background, var(--weave-surface-secondary, var(--background-secondary))));
+    --weave-table-grid-border-color: var(--table-border-color, var(--divider-color, var(--background-modifier-border)));
+    --weave-table-grid-strong-border-color: var(--divider-color, var(--background-modifier-border-hover, var(--background-modifier-border)));
+    --weave-table-grid-hover-border-color: var(--divider-color, var(--background-modifier-border-hover, var(--background-modifier-border)));
+    --weave-table-header-cell-height: 32px;
+    --weave-table-header-padding-y: 8px;
+    --weave-table-header-padding-x: 16px;
+    --weave-table-cell-padding-y: 6px;
+    --weave-table-cell-padding-x: 16px;
+    --weave-table-pill-height: 20px;
+    --weave-table-pill-padding-x: 7px;
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
     background: var(--weave-table-page-bg);
     border-radius: var(--radius-m);
-    border: 1px solid var(--background-modifier-border);
+    border: 1px solid var(--weave-table-grid-strong-border-color);
+  }
+
+  .weave-table-wrapper.show-grid-borders {
+    --weave-table-grid-border-color: var(--divider-color, var(--background-modifier-border-hover, var(--background-modifier-border)));
+    --weave-table-grid-strong-border-color: var(--divider-color, var(--background-modifier-border-hover, var(--background-modifier-border)));
+    --weave-table-grid-hover-border-color: var(--divider-color, var(--background-modifier-border-hover, var(--background-modifier-border)));
+    border-color: var(--weave-table-grid-strong-border-color);
+    box-shadow: inset 0 0 0 1px var(--weave-table-grid-border-color);
   }
 
   /* 顶部横向滚动条 */
@@ -581,7 +599,7 @@
     overflow-y: hidden;
     height: 12px;
     background: var(--weave-table-page-bg);
-    border-bottom: 1px solid var(--background-modifier-border);
+    border-bottom: 1px solid var(--weave-table-grid-strong-border-color);
   }
 
   .weave-table-scrollbar-content {

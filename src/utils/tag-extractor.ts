@@ -1,31 +1,22 @@
-/**
- * Markdown标签提取工具
- * 从Markdown内容中自动提取#标签
- *
- * 特性：
- * - 支持中英文标签：#tag #标签
- * - 支持嵌套标签：#父标签/子标签
- * - 支持多词标签：#my-tag #my_tag
- * - 排除代码块中的标签
- * - 自动去重和排序
- */
+const TAG_BODY_PATTERN = String.raw`[\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*`;
+const EXTRACT_TAG_REGEX = new RegExp(`#(${TAG_BODY_PATTERN})`, "gu");
+const REMOVE_TAG_REGEX = new RegExp(`#${TAG_BODY_PATTERN}`, "gu");
+const VALID_TAG_REGEX = new RegExp(`^${TAG_BODY_PATTERN}$`, "u");
+const FENCED_CODE_BLOCK_REGEX = /```[\s\S]*?```/g;
+const INLINE_CODE_REGEX = /`[^`]+`/g;
+const WIKILINK_REGEX = /\[\[[^\]]*\]\]/g;
+const MARKDOWN_LINK_URL_REGEX = /\]\([^)]*\)/g;
+
+/** 提取和整理 Markdown 中的内联标签。 */
 
 export class TagExtractor {
-	/**
-	 * 从Markdown内容中提取所有#标签
-	 * @param content - Markdown内容
-	 * @returns 标签数组（去重、排序，不含#前缀）
-	 */
+	/** 提取内容中的所有内联标签，不含 `#` 前缀。 */
 	static extractTags(content: string): string[] {
 		if (!content || typeof content !== "string") {
 			return [];
 		}
 
-		// Unicode属性转义：\p{L}=字母 \p{N}=数字
-		// 支持：#tag #中文标签 #parent/child #my-tag #my_tag
-		const tagPattern = /#([\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*)/gu;
-
-		const matches = content.matchAll(tagPattern);
+		const matches = content.matchAll(EXTRACT_TAG_REGEX);
 		const tags = new Set<string>();
 
 		for (const match of matches) {
@@ -38,38 +29,22 @@ export class TagExtractor {
 		return Array.from(tags).sort();
 	}
 
-	/**
-	 * 提取标签，但排除代码块中的内容
-	 * @param content - Markdown内容
-	 * @returns 标签数组（去重、排序，不含#前缀）
-	 */
+	/** 提取标签，并跳过代码块、行内代码和链接目标中的 `#`。 */
 	static extractTagsExcludingCode(content: string): string[] {
 		if (!content || typeof content !== "string") {
 			return [];
 		}
 
-		// 移除代码块（```...```）
-		let cleanedContent = content.replace(/```[\s\S]*?```/g, "");
+		// 去掉 Markdown 语法里的非标签 `#`，避免把链接锚点或代码误判为标签。
+		let cleanedContent = content.replace(FENCED_CODE_BLOCK_REGEX, "");
+		cleanedContent = cleanedContent.replace(INLINE_CODE_REGEX, "");
+		cleanedContent = cleanedContent.replace(WIKILINK_REGEX, "");
+		cleanedContent = cleanedContent.replace(MARKDOWN_LINK_URL_REGEX, "](removed)");
 
-		// 移除行内代码（`...`）
-		cleanedContent = cleanedContent.replace(/`[^`]+`/g, "");
-
-		// 移除 wikilink（[[...]]），避免 [[note#section]] 中的 # 被误识别为标签
-		cleanedContent = cleanedContent.replace(/\[\[[^\]]*\]\]/g, "");
-		// 移除 markdown 链接 URL（[text](url#fragment)）
-		cleanedContent = cleanedContent.replace(/\]\([^)]*\)/g, "](removed)");
-
-		// 从清理后的内容中提取标签
 		return this.extractTags(cleanedContent);
 	}
 
-	/**
-	 * 智能合并标签
-	 * @param content - 内容
-	 * @param existingTags - 现有标签
-	 * @param mode - 合并模式
-	 * @returns 合并后的标签数组
-	 */
+	/** 按指定策略合并现有标签和内容中提取出的标签。 */
 	static mergeTags(
 		content: string,
 		existingTags: string[] = [],
@@ -79,66 +54,44 @@ export class TagExtractor {
 
 		switch (mode) {
 			case "replace":
-				// 完全替换：只使用提取的标签
 				return extractedTags;
-
 			case "append":
-				// 追加模式：保留现有 + 添加提取的
 				return Array.from(new Set([...existingTags, ...extractedTags])).sort();
 			default: {
-				// 智能模式：合并去重
-				// 保留手动添加的标签（不在content中的）+ 提取的标签
 				const allTags = new Set([...existingTags, ...extractedTags]);
 				return Array.from(allTags).sort();
 			}
 		}
 	}
 
-	/**
-	 * 验证标签格式是否有效
-	 * @param tag - 标签（不含#前缀）
-	 * @returns 是否有效
-	 */
+	/** 校验标签格式，入参不含 `#` 前缀。 */
 	static isValidTag(tag: string): boolean {
 		if (!tag || typeof tag !== "string") {
 			return false;
 		}
 
-		// 标签规则：
-		// - 只包含字母、数字、下划线、连字符、斜杠
-		// - 不能为空
-		// - 长度合理（1-100字符）
-		const validPattern = /^[\p{L}\p{N}_\-\/]+$/u;
-		return validPattern.test(tag) && tag.length > 0 && tag.length <= 100;
+		return VALID_TAG_REGEX.test(tag) && tag.length > 0 && tag.length <= 100;
 	}
 
-	/**
-	 * 清理无效标签
-	 * @param tags - 标签数组
-	 * @returns 清理后的标签数组
-	 */
+	/** 去掉空白和无效标签，保留原有顺序。 */
 	static cleanTags(tags: string[]): string[] {
 		if (!Array.isArray(tags)) {
 			return [];
 		}
 
 		return tags
-			.filter((tag) => this.isValidTag(tag))
 			.map((tag) => tag.trim())
-			.filter((tag) => tag.length > 0);
+			.filter((tag) => tag.length > 0)
+			.filter((tag) => this.isValidTag(tag))
+			.filter((tag, index, array) => array.indexOf(tag) === index);
 	}
 
-	/**
-	 * 从内容中移除#标签（提取后清理）
-	 * @param content - 原始内容
-	 * @returns 移除标签后的内容
-	 */
+	/** 从正文中移除内联标签。 */
 	static removeTags(content: string): string {
 		if (!content || typeof content !== "string") {
 			return "";
 		}
 
-		// 移除#标签，但保留周围的空格
-		return content.replace(/#[\p{L}\p{N}_-]+(?:\/[\p{L}\p{N}_-]+)*/gu, "").trim();
+		return content.replace(REMOVE_TAG_REGEX, "").trim();
 	}
 }

@@ -11,6 +11,7 @@ import {
 import {
 	type WeaveCardDataSource,
 	type WeaveCardViewType,
+	type WeaveDeckStudyFilter,
 	type WeaveGridLayoutMode,
 	type WeaveIRTypeFilter,
 	type WeaveKanbanLayoutMode,
@@ -38,6 +39,8 @@ export class WeaveView extends ItemView {
 	private aiPromptAction: HTMLElement | null = null;
 	private aiGenerateAction: HTMLElement | null = null;
 	private cardViewChangeHandler: ((event: Event) => void) | null = null;
+	private deckViewChangeHandler: ((event: Event) => void) | null = null;
+	private deckFilterChangeHandler: ((event: Event) => void) | null = null;
 	private cardDataSourceChangeHandler: ((event: Event) => void) | null = null;
 	private cardToolbarStateHandler: ((event: Event) => void) | null = null;
 	private aiSelectionState = {
@@ -47,6 +50,8 @@ export class WeaveView extends ItemView {
 		isAllSelected: false,
 	};
 	private currentCardView: WeaveCardViewType = "table";
+	private currentDeckStudyView: "grid" | "kanban" = "grid";
+	private currentDeckStudyFilter: WeaveDeckStudyFilter = "memory";
 	private currentCardDataSource: WeaveCardDataSource = "memory";
 	private cardToolbarState: {
 		tableViewMode: WeaveTableViewMode;
@@ -56,6 +61,7 @@ export class WeaveView extends ItemView {
 		documentFilterMode: "all" | "current";
 		currentActiveDocument: string | null;
 		enableCardLocationJump: boolean;
+		showTableGridBorders: boolean;
 	} = {
 		tableViewMode: "basic",
 		gridLayoutMode: "fixed",
@@ -64,11 +70,13 @@ export class WeaveView extends ItemView {
 		documentFilterMode: "all",
 		currentActiveDocument: null,
 		enableCardLocationJump: false,
+		showTableGridBorders: false,
 	};
 
 	constructor(leaf: WorkspaceLeaf, plugin: WeavePlugin) {
 		super(leaf);
 		this.plugin = plugin;
+		this.currentDeckStudyView = plugin.getCachedDeckViewPreference() === "kanban" ? "kanban" : "grid";
 	}
 
 	getViewType() {
@@ -178,6 +186,22 @@ export class WeaveView extends ItemView {
 				this.currentCardView = view;
 			}
 		};
+		this.deckViewChangeHandler = (event: Event) => {
+			const view = (event as CustomEvent<string>).detail;
+			if (view === "grid" || view === "kanban") {
+				this.currentDeckStudyView = view;
+			}
+		};
+		this.deckFilterChangeHandler = (event: Event) => {
+			const filter = (event as CustomEvent<string>).detail;
+			if (
+				filter === "memory" ||
+				filter === "question-bank" ||
+				filter === "incremental-reading"
+			) {
+				this.currentDeckStudyFilter = filter;
+			}
+		};
 		this.cardDataSourceChangeHandler = (event: Event) => {
 			const source = (event as CustomEvent<string>).detail;
 			if (
@@ -198,6 +222,7 @@ export class WeaveView extends ItemView {
 					documentFilterMode?: "all" | "current";
 					currentActiveDocument?: string | null;
 					enableCardLocationJump?: boolean;
+					showTableGridBorders?: boolean;
 					dataSource?: WeaveCardDataSource;
 				}>
 			).detail;
@@ -224,6 +249,9 @@ export class WeaveView extends ItemView {
 			if (typeof detail.enableCardLocationJump === "boolean") {
 				this.cardToolbarState.enableCardLocationJump = detail.enableCardLocationJump;
 			}
+			if (typeof detail.showTableGridBorders === "boolean") {
+				this.cardToolbarState.showTableGridBorders = detail.showTableGridBorders;
+			}
 			if (
 				detail.dataSource === "memory" ||
 				detail.dataSource === "questionBank" ||
@@ -239,6 +267,11 @@ export class WeaveView extends ItemView {
 			this.aiSelectionStateHandler as EventListener
 		);
 		window.addEventListener("Weave:card-view-change", this.cardViewChangeHandler as EventListener);
+		window.addEventListener("Weave:deck-view-change", this.deckViewChangeHandler as EventListener);
+		window.addEventListener(
+			"Weave:deck-filter-change",
+			this.deckFilterChangeHandler as EventListener
+		);
 		window.addEventListener(
 			"Weave:card-data-source-change",
 			this.cardDataSourceChangeHandler as EventListener
@@ -269,10 +302,13 @@ export class WeaveView extends ItemView {
 			return;
 		}
 
-		openWeaveMainMenu({
-			currentPage: this.currentPage,
-			leaf: this.leaf,
-			navigationVisibility: this.plugin.settings.navigationVisibility,
+                openWeaveMainMenu({
+                        currentPage: this.currentPage,
+                        leaf: this.leaf,
+                        isMobile: Platform.isMobile,
+                        navigationVisibility: this.plugin.settings.navigationVisibility,
+                        deckStudyView: this.currentDeckStudyView,
+			deckStudyFilter: this.currentDeckStudyFilter,
 			cardDataSource: this.currentCardDataSource,
 			currentView: this.currentCardView,
 			tableViewMode: this.cardToolbarState.tableViewMode,
@@ -282,6 +318,7 @@ export class WeaveView extends ItemView {
 			documentFilterMode: this.cardToolbarState.documentFilterMode,
 			currentActiveDocument: this.cardToolbarState.currentActiveDocument,
 			enableCardLocationJump: this.cardToolbarState.enableCardLocationJump,
+			showTableGridBorders: this.cardToolbarState.showTableGridBorders,
 			event: menuEvent,
 			anchorEl: this.mainMenuAction,
 			onNavigate: (pageId) => {
@@ -762,6 +799,17 @@ export class WeaveView extends ItemView {
 		if (this.cardViewChangeHandler) {
 			window.removeEventListener("Weave:card-view-change", this.cardViewChangeHandler as EventListener);
 			this.cardViewChangeHandler = null;
+		}
+		if (this.deckViewChangeHandler) {
+			window.removeEventListener("Weave:deck-view-change", this.deckViewChangeHandler as EventListener);
+			this.deckViewChangeHandler = null;
+		}
+		if (this.deckFilterChangeHandler) {
+			window.removeEventListener(
+				"Weave:deck-filter-change",
+				this.deckFilterChangeHandler as EventListener
+			);
+			this.deckFilterChangeHandler = null;
 		}
 		if (this.cardDataSourceChangeHandler) {
 			window.removeEventListener(

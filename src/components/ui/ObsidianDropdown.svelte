@@ -36,10 +36,11 @@
   let selectedOption = $derived(options.find(opt => opt.id === value));
 
   // 显示菜单
-  function showMenu(event: MouseEvent | KeyboardEvent) {
+  function showMenu() {
     if (disabled) return;
 
     const menu = new Menu();
+    menu.setUseNativeMenu?.(false);
 
     for (const option of options) {
       menu.addItem((item) => {
@@ -65,26 +66,28 @@
       });
     }
 
-    // 根据事件类型显示菜单
-    if (event instanceof MouseEvent) {
-      menu.showAtMouseEvent(event);
-    } else {
-      // 键盘事件，在按钮位置显示
-      const rect = buttonRef.getBoundingClientRect();
-      menu.showAtPosition({ x: rect.left, y: rect.bottom });
-    }
+    const rect = buttonRef.getBoundingClientRect();
+    const ownerDocument = buttonRef.ownerDocument ?? document;
+    menu.showAtPosition(
+      {
+        x: Math.round(rect.left),
+        y: Math.round(rect.bottom)
+      },
+      ownerDocument
+    );
   }
 
   // 处理点击
   function handleClick(event: MouseEvent) {
-    showMenu(event);
+    event.preventDefault();
+    showMenu();
   }
 
   // 处理键盘
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      showMenu(event);
+      showMenu();
     }
   }
 </script>

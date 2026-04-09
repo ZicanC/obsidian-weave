@@ -1,14 +1,17 @@
 <script lang="ts">
   import EnhancedIcon from './EnhancedIcon.svelte';
+  import ObsidianIcon from './ObsidianIcon.svelte';
   import type { TabDefinition } from '../../types/view-card-modal-types';
 
   interface Props {
     tabs: TabDefinition[];
     activeTab: string;
     onTabChange: (tabId: string) => void;
+    useObsidianIcons?: boolean;
+    toolbarStyle?: boolean;
   }
 
-  let { tabs, activeTab, onTabChange }: Props = $props();
+  let { tabs, activeTab, onTabChange, useObsidianIcons = false, toolbarStyle = false }: Props = $props();
 
   // 检测是否为图标模式（所有标签都没有label）
   let isIconOnly = $derived(tabs.every(tab => !tab.label));
@@ -35,7 +38,8 @@
 </script>
 
 <div 
-  class="tab-navigation" 
+  class="tab-navigation"
+  class:weave-toolbar-tabs={toolbarStyle}
   class:icon-only={isIconOnly}
   role="tablist"
   tabindex="0"
@@ -44,6 +48,7 @@
   {#each tabs as tab}
     <button
       class="tab-button"
+      class:weave-toolbar-tab={toolbarStyle}
       class:active={activeTab === tab.id}
       class:disabled={tab.disabled}
       class:icon-only={!tab.label && tab.icon}
@@ -56,7 +61,11 @@
       onclick={() => onTabChange(tab.id)}
     >
       {#if tab.icon}
-        <EnhancedIcon name={tab.icon} size={isIconOnly ? 20 : 14} />
+        {#if useObsidianIcons}
+          <ObsidianIcon name={tab.icon} size={isIconOnly ? 20 : 16} />
+        {:else}
+          <EnhancedIcon name={tab.icon} size={isIconOnly ? 20 : 14} />
+        {/if}
       {/if}
       {#if tab.label}
         <span class="tab-label">{tab.label}</span>

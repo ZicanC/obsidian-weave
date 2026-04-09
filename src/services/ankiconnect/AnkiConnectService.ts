@@ -31,6 +31,7 @@ import type { ParseTemplate } from "../../types/newCardParsingTypes";
 import type { WeavePlugin } from "../../main";
 import { AnkiConnectError, ConnectionErrorType, SyncStatus } from "../../types/ankiconnect-types";
 import type { ConnectionState, IncrementalSyncResult } from "../../types/ankiconnect-types";
+import { getCardBack, getCardFront } from "../../utils/card-field-helper";
 import { AnkiConnectClient } from "./AnkiConnectClient";
 import { AnkiTemplateConverter } from "./AnkiTemplateConverter";
 import { AutoSyncScheduler } from "./AutoSyncScheduler";
@@ -321,7 +322,7 @@ export class AnkiConnectService {
 					logEntry.summary.successCount++;
 					logEntry.details?.push({
 						cardId: card.uuid,
-						cardTitle: (card.fields?.front || card.fields?.question || "").substring(0, 50),
+						cardTitle: getCardFront(card).substring(0, 50),
 						status: "success",
 					});
 				} catch (error: any) {
@@ -329,7 +330,7 @@ export class AnkiConnectService {
 					logEntry.errors?.push(`卡片 ${card.uuid}: ${error.message}`);
 					logEntry.details?.push({
 						cardId: card.uuid,
-						cardTitle: (card.fields?.front || card.fields?.question || "").substring(0, 50),
+						cardTitle: getCardFront(card).substring(0, 50),
 						status: "failed",
 						reason: error.message,
 					});
@@ -353,8 +354,8 @@ export class AnkiConnectService {
 	 */
 	private async syncSingleCard(card: Card, deck: Deck, template: ParseTemplate): Promise<void> {
 		// 处理媒体文件
-		let frontContent = card.fields?.front || card.fields?.question || "";
-		let backContent = card.fields?.back || card.fields?.answer || "";
+		let frontContent = getCardFront(card);
+		let backContent = getCardBack(card);
 
 		if (this.settings.mediaSync.enabled) {
 			const deckPath = (deck.metadata?.path as string) || "";
@@ -663,10 +664,6 @@ export class AnkiConnectService {
 	 * 注意：此方法已废弃，批量同步逻辑已迁移到 UI 层（AnkiConnectPanel.performSync）
 	 * 保留此方法仅为向后兼容，实际不再使用
 	 */
-	async batchSyncDecks(_deckIds: string[], _options: any): Promise<SyncLogEntry[]> {
-		logger.warn("batchSyncDecks 方法已废弃，请使用 UI 层的批量同步逻辑");
-		return [];
-	}
 
 	/**
 	 * 取消当前同步
@@ -1261,116 +1258,6 @@ export class AnkiConnectService {
 
 	async performIncrementalSync(): Promise<IncrementalSyncResult> {
 		return this.performIncrementalSyncV2();
-	}
-
-	/**
-	 * 执行增量同步
-	 */
-	private async performIncrementalSyncLegacy(): Promise<any> {
-		const startTime = Date.now();
-
-		logger.debug("[AnkiConnectService] 🔄 开始增量同步...");
-
-		try {
-			// 获取所有牌组映射
-			const deckMappings = Object.values(this.settings.deckMappings || {});
-
-			if (deckMappings.length === 0) {
-				logger.debug("[AnkiConnectService] 无牌组映射，跳过同步");
-				return {
-					totalCards: 0,
-					changedCards: 0,
-					skippedCards: 0,
-					importedCards: 0,
-					exportedCards: 0,
-					errors: [],
-					duration: Date.now() - startTime,
-				};
-			}
-
-			let totalCards = 0;
-			let changedCards = 0;
-			let importedCards = 0;
-			let exportedCards = 0;
-			const errors: string[] = [];
-
-			// 遍历牌组映射执行同步
-			for (const mapping of deckMappings) {
-				if (!mapping.enabled) {
-					continue;
-				}
-
-				try {
-					// 根据同步方向执行
-					if (mapping.syncDirection === "from_anki") {
-						// 从 Anki 导入
-						const importResult = await this.cardImporter.importDeck(
-							mapping.ankiDeckName,
-							mapping.weaveDeckId
-						);
-
-						importedCards += importResult.importedCards;
-						totalCards += importResult.importedCards + importResult.skippedCards;
-
-						if (importResult.errors.length > 0) {
-							errors.push(...importResult.errors.map((e) => e.message));
-						}
-					}
-
-					if (mapping.syncDirection === "to_anki") {
-						// 导出到 Anki
-						const exportResult = await this.cardExporter.exportDeck(
-							mapping.weaveDeckId,
-							mapping.ankiDeckName
-						);
-
-						exportedCards += exportResult.exportedCards;
-
-						if (exportResult.errors.length > 0) {
-							errors.push(
-								...exportResult.errors.map((error: { message: string }) => error.message)
-							);
-						}
-					}
-				} catch (error) {
-					errors.push(
-						`牌组 ${mapping.ankiDeckName}: ${error instanceof Error ? error.message : "未知错误"}`
-					);
-				}
-			}
-
-			changedCards = importedCards + exportedCards;
-			const skippedCards = totalCards - changedCards;
-
-			const result = {
-				totalCards,
-				changedCards,
-				skippedCards,
-				importedCards,
-				exportedCards,
-				errors,
-				duration: Date.now() - startTime,
-			};
-
-			logger.debug("[AnkiConnectService] ✅ 增量同步完成:", result);
-
-			// 持久化同步状态
-			await this.incrementalTracker.persist();
-
-			return result;
-		} catch (error) {
-			logger.error("[AnkiConnectService] ❌ 增量同步失败:", error);
-
-			return {
-				totalCards: 0,
-				changedCards: 0,
-				skippedCards: 0,
-				importedCards: 0,
-				exportedCards: 0,
-				errors: [error instanceof Error ? error.message : "未知错误"],
-				duration: Date.now() - startTime,
-			};
-		}
 	}
 
 	/**

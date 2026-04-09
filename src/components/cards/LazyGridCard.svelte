@@ -12,6 +12,7 @@
   import type { WeavePlugin } from '../../main';
   import EnhancedIcon from '../ui/EnhancedIcon.svelte';
   import { stripClozeForDisplay } from '../../utils/cloze-utils';
+  import { getCardFieldContent } from '../../utils/card-field-helper';
   import { parseSourceInfo } from '../../utils/yaml-utils';
   import { getQuestionTypeLabelFromCard } from '../../utils/question-type-utils';
 
@@ -29,6 +30,7 @@
     onEdit?: (card: Card) => void;
     onDelete?: (card: Card) => void;
     onView?: (card: Card) => void;
+    onConvertToMarkdown?: (card: Card) => void;
     onSourceJump?: (card: Card) => void; // 源文档跳转
     onLongPress?: (card: Card) => void; // 长按触发多选
   }
@@ -45,6 +47,7 @@
     onEdit,
     onDelete,
     onView,
+    onConvertToMarkdown,
     onSourceJump,
     onLongPress
   }: Props = $props();
@@ -115,8 +118,8 @@
   let showMobileActions = $state(false);
 
   // 计算属性
-  const frontText = $derived(card.fields?.front || card.fields?.question || '');
-  const backText = $derived(card.fields?.back || card.fields?.answer || '');
+  const frontText = $derived(getCardFieldContent(card, 'front'));
+  const backText = $derived(getCardFieldContent(card, 'back'));
   const tags = $derived(card.tags || []);
 
   const sourceInfo = $derived.by(() => {
@@ -138,10 +141,8 @@
       return card.sourceFile.replace(/\.md$/, '');
     }
 
-    // 兼容 Anki 同步字段
-    if (card.fields?.source_document) {
-      return card.fields.source_document as string;
-    }
+    const legacySourceDocument = getCardFieldContent(card, 'source_document').trim();
+    if (legacySourceDocument) return legacySourceDocument;
 
     return '';
   });
@@ -172,13 +173,14 @@
     if (card.sourceFile) {
       return card.sourceFile.endsWith('.md') ? card.sourceFile : `${card.sourceFile}.md`;
     }
-    if (card.fields?.source_document) {
-      const doc = card.fields.source_document as string;
-      if (doc.endsWith('.md')) return doc;
-      return `${doc}.md`;
-    }
     if (card.customFields?.obsidianFilePath) {
       return card.customFields.obsidianFilePath as string;
+    }
+    const legacySourceDocument = getCardFieldContent(card, 'source_document').trim();
+    if (legacySourceDocument) {
+      return legacySourceDocument.endsWith('.md')
+        ? legacySourceDocument
+        : `${legacySourceDocument}.md`;
     }
     return '';
   });
@@ -377,6 +379,10 @@
   function handleView(event: MouseEvent) {
     onView?.(card);
   }
+
+  function handleConvertToMarkdown(event: MouseEvent) {
+    onConvertToMarkdown?.(card);
+  }
   
   // 处理源文档跳转
   function handleSourceJump(event: MouseEvent) {
@@ -536,6 +542,11 @@
         <EnhancedIcon name="file-text" size={16} />
       </button>
     {/if}
+    {#if onConvertToMarkdown}
+      <button class="action-menu-item" onclick={handleConvertToMarkdown} title="转换为 MD">
+        <EnhancedIcon name="markdown" size={16} />
+      </button>
+    {/if}
     {#if onEdit}
       <button class="action-menu-item" onclick={handleEdit} title="编辑">
         <EnhancedIcon name="edit" size={16} />
@@ -594,6 +605,14 @@
 
 <style>
   .lazy-grid-card {
+    --weave-grid-card-border-color: var(
+      --weave-card-border-color,
+      var(--divider-color, var(--background-modifier-border-hover, var(--background-modifier-border, var(--text-faint))))
+    );
+    --weave-grid-card-hover-shadow: var(
+      --shadow-s,
+      0 2px 8px rgba(0, 0, 0, 0.12)
+    );
     position: relative;
     background: var(--weave-surface-background, var(--background-primary));
     /*  不依赖变量，直接使用box-shadow实现边框 */
@@ -605,6 +624,7 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    box-shadow: inset 0 0 0 1px var(--weave-grid-card-border-color);
   }
 
   /* 固定高度模式 */
@@ -631,39 +651,15 @@
     max-height: none;
   }
 
-  /*  深色模式边框 - 精细调整，美观实用 */
-  :global(body.theme-dark) .lazy-grid-card {
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
-  }
-
-  /*  浅色模式边框 - 精细调整，美观实用 */
-  :global(body.theme-light) .lazy-grid-card {
-    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
-  }
-  
-  /* 默认边框（主题类未命中时使用） */
-  .lazy-grid-card {
-    box-shadow: inset 0 0 0 1px rgba(128, 128, 128, 0.2);
-  }
-
-  /* 悬停效果 - 深色模式 */
-  :global(body.theme-dark) .lazy-grid-card:hover,
-  :global(body.theme-dark) .lazy-grid-card.hovered {
+  /* 由 Obsidian 主题变量统一驱动边框和悬停阴影，避免深浅色硬编码 */
+  .lazy-grid-card:hover,
+  .lazy-grid-card.hovered {
     box-shadow: 
       inset 0 0 0 1px var(--interactive-accent),
-      0 2px 8px rgba(0, 0, 0, 0.15);
+      var(--weave-grid-card-hover-shadow);
     transform: translateY(-1px);
   }
 
-  /* 悬停效果 - 浅色模式 */
-  :global(body.theme-light) .lazy-grid-card:hover,
-  :global(body.theme-light) .lazy-grid-card.hovered {
-    box-shadow: 
-      inset 0 0 0 1px var(--interactive-accent),
-      0 2px 8px rgba(0, 0, 0, 0.1);
-    transform: translateY(-1px);
-  }
-  
   /* 移动端禁用 hover 效果 - 避免触摸时触发浮动动画 */
   :global(body.is-mobile) .lazy-grid-card:hover,
   :global(body.is-phone) .lazy-grid-card:hover,

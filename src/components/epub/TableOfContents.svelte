@@ -1,12 +1,14 @@
 <script lang="ts">
+	import { Menu } from 'obsidian';
 	import type { TocItem } from '../../services/epub';
 
 	interface Props {
 		items: TocItem[];
 		onNavigate: (href: string) => void;
+		onAddToIncrementalReading?: (item: TocItem) => void | Promise<void>;
 	}
 
-	let { items, onNavigate }: Props = $props();
+	let { items, onNavigate, onAddToIncrementalReading }: Props = $props();
 
 	let activeHref = $state<string | null>(null);
 
@@ -22,6 +24,23 @@
 			event.preventDefault();
 			handleClick(item);
 		}
+	}
+
+	function showContextMenu(event: MouseEvent, item: TocItem) {
+		if (!onAddToIncrementalReading) {
+			return;
+		}
+
+		event.preventDefault();
+		const menu = new Menu();
+		menu.addItem((menuItem) => {
+			menuItem.setTitle('添加到增量阅读');
+			menuItem.setIcon('book-plus');
+			menuItem.onClick(() => {
+				void onAddToIncrementalReading?.(item);
+			});
+		});
+		menu.showAtMouseEvent(event);
 	}
 
 	function flattenItems(source: TocItem[], depth = 0): FlatTocItem[] {
@@ -49,6 +68,7 @@
 					class:active={activeHref === item.href}
 					style={`--toc-depth:${item.depth};`}
 					onclick={() => handleClick(item)}
+					oncontextmenu={(event) => showContextMenu(event, item)}
 					onkeydown={(event) => handleKeydown(event, item)}
 					role="button"
 					tabindex="0"

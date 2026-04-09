@@ -469,7 +469,7 @@
         // 构建 YAML 元数据（支持任意键值对）
         const yamlMetadata: Record<string, any> = {
           we_type: mapCardType(cardType),
-          we_created: new Date().toISOString(),
+          created: new Date().toISOString(),
         };
         if (deckName) {
           yamlMetadata.we_decks = [deckName];

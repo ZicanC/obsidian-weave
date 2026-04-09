@@ -258,6 +258,41 @@ export abstract class AIService implements IAIService {
 		return null;
 	}
 
+	protected ensureString(value: unknown): string {
+		if (value === null || value === undefined) {
+			return "";
+		}
+
+		if (typeof value === "string") {
+			return value;
+		}
+
+		if (typeof value === "object") {
+			logger.warn("AI返回了非字符串类型的卡片内容:", value);
+			try {
+				return JSON.stringify(value);
+			} catch {
+				return String(value);
+			}
+		}
+
+		return String(value);
+	}
+
+	protected buildContentFromLegacyFields(front: unknown, back: unknown): string {
+		const normalizedFront = this.ensureString(front);
+		const normalizedBack = this.ensureString(back);
+		return normalizedBack ? `${normalizedFront}\n\n---div---\n\n${normalizedBack}` : normalizedFront;
+	}
+
+	protected getParsedCardContent(card: ParsedAICard): string {
+		return card.content
+			? this.ensureString(card.content)
+			: card.front || card.back
+				? this.buildContentFromLegacyFields(card.front, card.back)
+				: "";
+	}
+
 	/**
 	 * 生成卡片ID
 	 */

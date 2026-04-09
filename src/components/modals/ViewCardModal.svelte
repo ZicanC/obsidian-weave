@@ -50,9 +50,9 @@
 
   // Tab定义 - 移动端显示文本功能键（不显示图标）
   let tabs = $derived([
-    { id: 'info' as TabId, label: t('modals.viewCard.tabInfo'), icon: isMobile ? '' : 'file-text' },
-    { id: 'stats' as TabId, label: t('modals.viewCard.tabStats'), icon: isMobile ? '' : 'bar-chart-2' },
-    { id: 'curve' as TabId, label: t('modals.viewCard.tabCurve'), icon: isMobile ? '' : 'activity' }
+    { id: 'info' as TabId, label: t('modals.viewCard.tabInfo'), icon: '' },
+    { id: 'stats' as TabId, label: t('modals.viewCard.tabStats'), icon: '' },
+    { id: 'curve' as TabId, label: t('modals.viewCard.tabCurve'), icon: '' }
   ]);
 
   // 牌组名称和模板名称 - 使用$derived确保响应式更新
@@ -121,6 +121,8 @@
       {tabs}
       {activeTab}
       onTabChange={handleTabChange}
+      useObsidianIcons={false}
+      toolbarStyle={true}
     />
   </div>
 
@@ -157,30 +159,16 @@
   }
 
   .modal-tabs :global(.tab-navigation) {
-    border-radius: 10px;
-    padding: 4px;
-    gap: 4px;
-    border: 1px solid var(--background-modifier-border);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    width: fit-content;
+    max-width: 100%;
   }
 
-  .modal-tabs :global(.tab-button) {
-    border-radius: 8px;
-    border: 1px solid transparent;
-    padding: 7px 14px;
-    font-size: 12.5px;
-    line-height: 1.1;
-    transition: all 0.16s ease;
+  .modal-tabs :global(.tab-button.active .tab-label) {
+    font-weight: 600;
   }
 
-  .modal-tabs :global(.tab-button:hover) {
-    background: var(--background-modifier-hover);
-    border-color: var(--background-modifier-border);
-  }
-
-  .modal-tabs :global(.tab-button.active) {
-    border-color: var(--background-modifier-border);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.12);
+  .modal-tabs :global(.tab-button svg) {
+    flex-shrink: 0;
   }
 
   .modal-tab-content {
@@ -221,6 +209,10 @@
   /* 移动端Tab导航 - 图标居中，增大触摸区域 */
   .modal-tabs.mobile {
     padding: 8px 10px 0 10px;
+  }
+
+  .modal-tabs.mobile :global(.tab-navigation) {
+    gap: 4px;
   }
 
   .modal-tabs.mobile :global(.tab-button) {

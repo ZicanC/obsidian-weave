@@ -1138,8 +1138,16 @@ export class EpubStorageService {
 			return { ...DEFAULT_READER_SETTINGS };
 		}
 
-		if (Platform.isMobile && this.matchesLegacyForcedMobileReaderSettings(mergedSettings)) {
-			return { ...DEFAULT_MOBILE_READER_SETTINGS };
+		if (Platform.isMobile) {
+			if (this.matchesLegacyForcedMobileReaderSettings(mergedSettings)) {
+				return { ...DEFAULT_MOBILE_READER_SETTINGS };
+			}
+
+			return {
+				...mergedSettings,
+				layoutMode: "paginated",
+				flowMode: "scrolled",
+			};
 		}
 
 		return mergedSettings;
@@ -1237,6 +1245,7 @@ const DEFAULT_MOBILE_READER_SETTINGS: EpubReaderSettings = {
 	...DEFAULT_READER_SETTINGS,
 	lineHeight: 1.66,
 	widthMode: "full",
+	flowMode: "scrolled",
 };
 
 const LEGACY_DESKTOP_READER_SETTINGS: EpubReaderSettings = {
@@ -1249,6 +1258,7 @@ const LEGACY_DESKTOP_READER_SETTINGS: EpubReaderSettings = {
 };
 
 const LEGACY_FORCED_MOBILE_READER_SETTINGS: EpubReaderSettings = {
-	...LEGACY_DESKTOP_READER_SETTINGS,
-	flowMode: "scrolled",
+	...DEFAULT_READER_SETTINGS,
+	lineHeight: 1.66,
+	widthMode: "full",
 };

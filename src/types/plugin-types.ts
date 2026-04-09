@@ -13,7 +13,6 @@ import type { BlockLinkCleanupService } from "../services/cleanup/BlockLinkClean
 import type { CardIndexService } from "../services/data/CardIndexService";
 import type { DirectFileCardReader } from "../services/data/DirectFileCardReader";
 import type { EmbeddableEditorManager } from "../services/editor/EmbeddableEditorManager";
-import type { TemplateService } from "../services/template/TemplateService";
 
 /**
  * Weave 插件主接口（内部名称）
@@ -43,7 +42,6 @@ export interface WeavePlugin extends Plugin {
 	editorPoolManager: EmbeddableEditorManager;
 
 	/** 模板服务 */
-	templateService?: TemplateService;
 
 	/** 高性能数据读取服务 */
 	directFileReader?: DirectFileCardReader;

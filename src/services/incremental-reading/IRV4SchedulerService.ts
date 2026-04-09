@@ -169,12 +169,72 @@ export class IRV4SchedulerService {
 			this.autoBackfillTagGroupsOnce().catch((error) => {
 				logger.warn("[IRV4SchedulerService] autoBackfillTagGroupsOnce 失败:", error);
 			});
-		} catch (error) {
+			/*
 			logger.warn("[IRV4SchedulerService] autoBackfillTagGroupsOnce 失败:", error);
+			*/
+		} catch (error) {
 		}
 		this.initialized = true;
 
 		logger.info("[IRV4SchedulerService] 初始化完成");
+	}
+
+	private toNormalizedDeckIdentifiers(values: string[]): string[] {
+		return Array.from(
+			new Set(
+				(Array.isArray(values) ? values : [])
+					.map((value) => String(value || "").trim())
+					.filter(Boolean)
+			)
+		);
+	}
+
+	private async resolveDeckIdentifiers(deckPath: string): Promise<string[]> {
+		const deck = await this.storageAdapterV4.getDeckById(deckPath);
+		return this.toNormalizedDeckIdentifiers([deckPath, deck?.id || "", deck?.path || ""]);
+	}
+
+	private async resolveCanonicalDeckId(deckPath: string): Promise<string> {
+		const normalizedDeckPath = String(deckPath || "").trim();
+		if (!normalizedDeckPath) {
+			return "";
+		}
+
+		const deck = await this.storageAdapterV4.getDeckById(normalizedDeckPath);
+		return deck?.id || deck?.path || normalizedDeckPath;
+	}
+
+	private async collectBookmarkTaskBlocks(
+		deckPath: string
+	): Promise<{ pdfTaskBlocks: IRBlockV4[]; epubTaskBlocks: IRBlockV4[] }> {
+		const deckIdentifiers = await this.resolveDeckIdentifiers(deckPath);
+
+		const pdfTaskMap = new Map<string, IRBlockV4>();
+		for (const identifier of deckIdentifiers) {
+			const tasks = await this._pdfBookmarkTaskService.getTasksByDeck(identifier);
+			for (const task of tasks) {
+				const block = this._pdfBookmarkTaskService.toBlockV4(task);
+				if (!pdfTaskMap.has(block.id)) {
+					pdfTaskMap.set(block.id, block);
+				}
+			}
+		}
+
+		const epubTaskMap = new Map<string, IRBlockV4>();
+		for (const identifier of deckIdentifiers) {
+			const tasks = await this._epubBookmarkTaskService.getTasksByDeck(identifier);
+			for (const task of tasks) {
+				const block = this._epubBookmarkTaskService.toBlockV4(task);
+				if (!epubTaskMap.has(block.id)) {
+					epubTaskMap.set(block.id, block);
+				}
+			}
+		}
+
+		return {
+			pdfTaskBlocks: Array.from(pdfTaskMap.values()),
+			epubTaskBlocks: Array.from(epubTaskMap.values()),
+		};
 	}
 
 	private async autoBackfillTagGroupsOnce(): Promise<void> {
@@ -302,6 +362,9 @@ export class IRV4SchedulerService {
 				...defaults,
 				dailyTimeBudgetMinutes: ir?.dailyTimeBudgetMinutes ?? defaults.dailyTimeBudgetMinutes,
 				maxAppearancesPerDay: ir?.maxAppearancesPerDay ?? defaults.maxAppearancesPerDay,
+				interleaveMode: ir?.interleaveMode ?? defaults.interleaveMode,
+				maxConsecutiveSameTopic:
+					ir?.maxConsecutiveSameTopic ?? defaults.maxConsecutiveSameTopic,
 				enableTagGroupPrior,
 				agingStrength: ir?.agingStrength ?? defaults.agingStrength,
 				autoPostponeStrategy: ir?.autoPostponeStrategy ?? defaults.autoPostponeStrategy,
@@ -358,6 +421,10 @@ export class IRV4SchedulerService {
 
 		// 同步 agingStrength 到队列生成器
 		this.queueGenerator.setAgingStrength(advSettings.agingStrength);
+		this.queueGenerator.setInterleavePreferences(
+			advSettings.interleaveMode !== false,
+			advSettings.maxConsecutiveSameTopic ?? 3
+		);
 
 		const endOfToday = new Date();
 		endOfToday.setHours(23, 59, 59, 999);
@@ -372,27 +439,29 @@ export class IRV4SchedulerService {
 			: await this.storageAdapterV4.getBlocksByDeckV4(deckPath);
 
 		let pdfTaskBlocks: IRBlockV4[] = [];
+		let epubTaskBlocks: IRBlockV4[] = [];
 		try {
-			const tasks = await this._pdfBookmarkTaskService.getTasksByDeck(deckPath);
-			pdfTaskBlocks = tasks.map((t) => this._pdfBookmarkTaskService.toBlockV4(t));
+			const bookmarkBlocks = await this.collectBookmarkTaskBlocks(deckPath);
+			pdfTaskBlocks = bookmarkBlocks.pdfTaskBlocks;
+			epubTaskBlocks = bookmarkBlocks.epubTaskBlocks;
 		} catch (error) {
 			logger.warn(
-				"[IRV4SchedulerService] 读取 PDF 书签任务失败（将继续仅使用 chunk 队列）:",
+				"[IRV4SchedulerService] 璇诲彇 PDF/EPUB 涔︾浠诲姟澶辫触锛堝皢缁х画浠呬娇鐢?chunk 闃熷垪锛?",
 				error
 			);
 		}
+		/*
+				"[IRV4SchedulerService] 读取 PDF 书签任务失败（将继续仅使用 chunk 队列）:",
+			);
+		}
 
-		let epubTaskBlocks: IRBlockV4[] = [];
-		try {
-			const epubTasks = await this._epubBookmarkTaskService.getTasksByDeck(deckPath);
-			epubTaskBlocks = epubTasks.map((t) => this._epubBookmarkTaskService.toBlockV4(t));
 		} catch (error) {
-			logger.warn(
 				"[IRV4SchedulerService] 读取 EPUB 书签任务失败（将继续仅使用 chunk 队列）:",
 				error
 			);
 		}
 
+		*/
 		const allBlocks: IRBlockV4[] = [...chunkBlocks, ...pdfTaskBlocks, ...epubTaskBlocks];
 
 		// maxAppearancesPerDay 过滤：跳过今日已达上限的块
@@ -617,9 +686,12 @@ export class IRV4SchedulerService {
 		};
 	} {
 		const plannedItems = candidates.map((block) => this.toPlannedItem(block, currentSourcePath));
+		const advSettings = this.getAdvancedSettingsSnapshot();
 		const plan = this.planGenerator.generatePlan(plannedItems, {
 			horizonDays: 7,
 			dailyBudgetMinutes: timeBudgetMinutes,
+			enableInterleaving: advSettings.interleaveMode !== false,
+			maxConsecutiveSameTopic: advSettings.maxConsecutiveSameTopic ?? 3,
 		});
 
 		const today = new Date();
@@ -661,11 +733,19 @@ export class IRV4SchedulerService {
 		logger.info("[IRV4SchedulerService] 统一计划生成器未产出今日队列，回退到 DRR 生成器");
 		return this.queueGenerator.generateQueue(
 			candidates,
-			Object.fromEntries(candidates.map((block) => [block.id, block.meta?.tagGroup || "default"])),
+			Object.fromEntries(candidates.map((block) => [block.id, this.resolveTopicKey(block)])),
 			undefined,
 			timeBudgetMinutes,
 			currentSourcePath
 		);
+	}
+
+	private resolveTopicKey(block: IRBlockV4): string {
+		const tagGroup = String(block.meta?.tagGroup || "").trim();
+		if (tagGroup && tagGroup !== "default") {
+			return `tag:${tagGroup}`;
+		}
+		return `source:${block.sourcePath}`;
 	}
 
 	private toPlannedItem(block: IRBlockV4, currentSourcePath: string | null): IRPlannedScheduleItem {
@@ -684,6 +764,7 @@ export class IRV4SchedulerService {
 			id: block.id,
 			title: block.blockId || block.id,
 			sourceFile: block.sourcePath,
+			topicKey: this.resolveTopicKey(block),
 			priority: block.priorityUi ?? block.priorityEff ?? 5,
 			intervalDays: block.intervalDays ?? 1,
 			scheduleStatus: block.status,
@@ -1645,11 +1726,12 @@ export class IRV4SchedulerService {
 		action: "completed" | "skipped"
 	): Promise<void> {
 		const now = new Date();
+		const canonicalDeckId = await this.resolveCanonicalDeckId(deckPath);
 
 		const session: IRSession = {
 			id: generateCardUUID(),
 			blockId: block.id,
-			deckId: deckPath,
+			deckId: canonicalDeckId,
 			startTime: new Date(now.getTime() - data.readingTimeSeconds * 1000).toISOString(),
 			endTime: now.toISOString(),
 			duration: data.readingTimeSeconds,
@@ -1757,12 +1839,15 @@ export class IRV4SchedulerService {
 			const chunkBlocks = await this.storageAdapterV4.getBlocksByDeckV4(deckPath);
 
 			let pdfTaskBlocks: IRBlockV4[] = [];
+			let epubTaskBlocks: IRBlockV4[] = [];
 			try {
-				const tasks = await this._pdfBookmarkTaskService.getTasksByDeck(deckPath);
-				pdfTaskBlocks = tasks.map((task) => this._pdfBookmarkTaskService.toBlockV4(task));
+				const bookmarkBlocks = await this.collectBookmarkTaskBlocks(deckPath);
+				pdfTaskBlocks = bookmarkBlocks.pdfTaskBlocks;
+				epubTaskBlocks = bookmarkBlocks.epubTaskBlocks;
 			} catch (error) {
 				logger.warn("[IRV4SchedulerService] futurePlanPreview 读取 PDF 任务失败:", error);
 			}
+			/*
 
 			let epubTaskBlocks: IRBlockV4[] = [];
 			try {
@@ -1772,6 +1857,7 @@ export class IRV4SchedulerService {
 				logger.warn("[IRV4SchedulerService] futurePlanPreview 读取 EPUB 任务失败:", error);
 			}
 
+			*/
 			const mergedBlocks = [...chunkBlocks, ...pdfTaskBlocks, ...epubTaskBlocks];
 			const afterBlockMap = new Map<string, IRBlockV4>(
 				mergedBlocks.map((block) => [block.id, block])
@@ -1798,6 +1884,8 @@ export class IRV4SchedulerService {
 				{
 					horizonDays: 7,
 					dailyBudgetMinutes: timeBudgetMinutes,
+					enableInterleaving: advSettings.interleaveMode !== false,
+					maxConsecutiveSameTopic: advSettings.maxConsecutiveSameTopic ?? 3,
 				}
 			);
 			const afterPlan = this.planGenerator.generatePlan(
@@ -1807,6 +1895,8 @@ export class IRV4SchedulerService {
 				{
 					horizonDays: 7,
 					dailyBudgetMinutes: timeBudgetMinutes,
+					enableInterleaving: advSettings.interleaveMode !== false,
+					maxConsecutiveSameTopic: advSettings.maxConsecutiveSameTopic ?? 3,
 				}
 			);
 			const changeSummary = this.summarizeFuturePlanChanges(beforePlan.days, afterPlan.days);

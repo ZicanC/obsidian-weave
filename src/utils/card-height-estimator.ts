@@ -7,6 +7,7 @@
  */
 
 import type { Card } from "../data/types";
+import { getCardBack, getCardFront } from "./card-field-helper";
 
 /**
  * 布局模式类型
@@ -78,8 +79,8 @@ export function estimateCardHeight(
  */
 function applyContentLengthAdjustment(baseHeight: number, card: Card): number {
 	// 获取卡片正反面内容
-	const frontContent = card.fields?.front || card.fields?.question || "";
-	const backContent = card.fields?.back || card.fields?.answer || "";
+	const frontContent = getCardFront(card);
+	const backContent = getCardBack(card);
 	const totalContent = frontContent + backContent;
 	const contentLength = totalContent.length;
 
@@ -104,8 +105,8 @@ function applyContentLengthAdjustment(baseHeight: number, card: Card): number {
  * @returns 修正后的高度
  */
 function applyMarkdownComplexityAdjustment(baseHeight: number, card: Card): number {
-	const frontContent = card.fields?.front || card.fields?.question || "";
-	const backContent = card.fields?.back || card.fields?.answer || "";
+	const frontContent = getCardFront(card);
+	const backContent = getCardBack(card);
 	const combinedContent = frontContent + backContent;
 
 	let adjustment = 0;

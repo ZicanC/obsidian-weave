@@ -63,7 +63,9 @@ export interface CardYAMLMetadata {
 	we_type?: CardYAMLType;
 	/** 题目难度 */
 	we_difficulty?: CardYAMLDifficulty;
-	/** 创建日期 */
+	/** 创建日期（Obsidian 通用字段） */
+	created?: string;
+	/** @deprecated 兼容旧数据，写回时会自动迁移到 created */
 	we_created?: string;
 	/** 标签（Obsidian 原生） */
 	tags?: string[];
@@ -284,6 +286,12 @@ export function getCardProperty<T = any>(content: string, key: string): T | unde
  */
 export function getCardMetadata(content: string): CardYAMLMetadata {
 	const yaml = parseYAMLFromContent(content);
+	const created =
+		typeof yaml.created === "string"
+			? yaml.created
+			: typeof yaml.we_created === "string"
+				? yaml.we_created
+				: undefined;
 
 	return {
 		we_source: yaml.we_source,
@@ -293,9 +301,30 @@ export function getCardMetadata(content: string): CardYAMLMetadata {
 		we_priority: typeof yaml.we_priority === "number" ? yaml.we_priority : undefined,
 		we_type: yaml.we_type,
 		we_difficulty: yaml.we_difficulty,
-		we_created: yaml.we_created,
+		created,
 		tags: normalizeToArray(yaml.tags),
 	};
+}
+
+function normalizeLegacyCreatedField(yaml: YAMLFrontmatter): YAMLFrontmatter {
+	if (!yaml || typeof yaml !== "object") {
+		return {};
+	}
+
+	const normalized = { ...yaml };
+	const canonicalCreated =
+		typeof normalized.created === "string" && normalized.created.trim()
+			? normalized.created
+			: typeof normalized.we_created === "string" && normalized.we_created.trim()
+				? normalized.we_created
+				: undefined;
+
+	if (canonicalCreated) {
+		normalized.created = canonicalCreated;
+	}
+	delete normalized.we_created;
+
+	return normalized;
 }
 
 /**
@@ -399,6 +428,7 @@ export function extractBodyContent(content: string): string {
  */
 function stringifyYAML(yaml: YAMLFrontmatter): string {
 	const lines: string[] = [];
+	const normalizedYaml = normalizeLegacyCreatedField(yaml);
 
 	// 定义属性的输出顺序（we_ 属性优先）
 	const orderedKeys = [
@@ -408,7 +438,7 @@ function stringifyYAML(yaml: YAMLFrontmatter): string {
 		"we_priority",
 		"we_type",
 		"we_difficulty",
-		"we_created",
+		"created",
 		"tags",
 	];
 
@@ -416,14 +446,14 @@ function stringifyYAML(yaml: YAMLFrontmatter): string {
 
 	// 先输出有序的属性
 	for (const key of orderedKeys) {
-		if (key in yaml && yaml[key] !== undefined) {
-			lines.push(formatYAMLLine(key, yaml[key]));
+		if (key in normalizedYaml && normalizedYaml[key] !== undefined) {
+			lines.push(formatYAMLLine(key, normalizedYaml[key]));
 			processedKeys.add(key);
 		}
 	}
 
 	// 再输出其他属性
-	for (const [key, value] of Object.entries(yaml)) {
+	for (const [key, value] of Object.entries(normalizedYaml)) {
 		if (!processedKeys.has(key) && value !== undefined) {
 			lines.push(formatYAMLLine(key, value));
 		}
@@ -578,7 +608,9 @@ export function createContentWithMetadata(metadata: CardYAMLMetadata, body: stri
 	if (metadata.we_priority !== undefined) yaml.we_priority = metadata.we_priority;
 	if (metadata.we_type) yaml.we_type = metadata.we_type;
 	if (metadata.we_difficulty) yaml.we_difficulty = metadata.we_difficulty;
-	if (metadata.we_created) yaml.we_created = metadata.we_created;
+	if (metadata.created || metadata.we_created) {
+		yaml.created = metadata.created || metadata.we_created;
+	}
 	if (metadata.tags && metadata.tags.length > 0) yaml.tags = metadata.tags;
 
 	if (Object.keys(yaml).length === 0) {

@@ -200,7 +200,7 @@
         easyInterval: memoryScheduling.easyInterval,
       };
       
-      const newDeck = await plugin.deckHierarchy.createRootDeck(
+      const newDeck = await plugin.deckHierarchy.createDeck(
         name.trim(),
         deckSettings
       );

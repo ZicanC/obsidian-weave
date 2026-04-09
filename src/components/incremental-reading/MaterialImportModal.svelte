@@ -15,6 +15,7 @@
   import { TFolder, TFile, Notice, normalizePath, Menu } from 'obsidian';
   import type { WeavePlugin } from '../../main';
   import { logger } from '../../utils/logger';
+  import { getReadingMaterialDueAt } from '../../utils/ir-topic-compat';
   import { resolveIRImportFolder } from '../../config/paths';
   import ObsidianIcon from '../ui/ObsidianIcon.svelte';
   import ResizableModal from '../ui/ResizableModal.svelte';
@@ -30,7 +31,7 @@
   import { IRPdfBookmarkTaskService } from '../../services/incremental-reading/IRPdfBookmarkTaskService';
   import { IREpubBookmarkTaskService } from '../../services/incremental-reading/IREpubBookmarkTaskService';
   import { IRV4SchedulerService } from '../../services/incremental-reading/IRV4SchedulerService';
-  import { ReadiumReaderService } from '../../services/epub';
+  import { createEpubReaderEngine } from '../../services/epub';
   import type { TocItem } from '../../services/epub/types';
   import type { SchedulingConfig, SchedulingImpact } from '../../types/ir-import-scheduling';
   import { DEFAULT_SCHEDULING_CONFIG, SCHEDULING_PRESETS } from '../../types/ir-import-scheduling';
@@ -62,6 +63,10 @@
       const scheduler = new IRV4SchedulerService(plugin.app);
       await scheduler.initialize();
       const allPdfTasks = await pdfService.getAllTasks();
+      const selectedDeck = availableDecks.find(d => d.id === selectedDeckId);
+      const deckIdentifiers = [selectedDeckId, selectedDeck?.path].filter(
+        (value): value is string => Boolean(value && value.trim())
+      );
 
       let assignments: Map<ContentBlock, Date> | null = null;
       if (contentBlocks.length > 0) {
@@ -108,7 +113,7 @@
         assignments = schedulingService.applyScheduling(contentBlocks, schedulingImpact);
       }
 
-      const existing = await pdfService.getTasksByDeck(selectedDeckId);
+      const existing = await pdfService.getTasksByDeckIdentifiers(deckIdentifiers);
       const existingKeys = new Set<string>();
       for (const t of existing) {
         const link = String((t as any)?.link || '').trim();
@@ -199,12 +204,19 @@
     path: string;
     type: 'folder' | 'file';
     children: TreeNode[];
+    childrenLoaded: boolean;
+    hasChildren: boolean;
     expanded: boolean;
     selected: boolean;
     indeterminate: boolean;
+    fileCount: number | null;
   }
 
+  const IMPORTABLE_EXTENSIONS = new Set(['md', 'pdf', 'epub']);
+  const PDF_OUTLINE_SIZE_LIMIT_BYTES = 32 * 1024 * 1024;
+
   let treeData = $state<TreeNode[]>([]);
+  let searchFullTreeReady = $state(false);
   let searchQuery = $state('');
   let showContent = $state(false);
   let importing = $state(false);
@@ -353,87 +365,185 @@
     }
   }
 
-  function buildTree(folder: TFolder): TreeNode {
-    const children: TreeNode[] = [];
+  function getExcludedImportFolderPath(): string {
+    return normalizePath(
+      resolveIRImportFolder(
+        plugin.settings?.incrementalReading?.importFolder,
+        plugin.settings?.weaveParentFolder
+      )
+    );
+  }
 
-    for (const child of folder.children) {
-      if (child instanceof TFolder) {
-        const folderNode = buildTree(child);
-        if (folderNode.children.length > 0) {
-          children.push(folderNode);
-        }
-      } else if (child instanceof TFile && (child.extension === 'md' || child.extension === 'pdf' || child.extension === 'epub')) {
-        children.push({
-          name: child.name,
-          path: child.path,
-          type: 'file',
-          children: [],
-          expanded: false,
-          selected: false,
-          indeterminate: false
-        });
-      }
+  function isImportableFile(file: TFile): boolean {
+    return IMPORTABLE_EXTENSIONS.has(file.extension) && !file.name.startsWith('.');
+  }
+
+  function shouldSkipTreeFolder(folder: TFolder): boolean {
+    if (folder.path && folder.name.startsWith('.')) {
+      return true;
     }
 
-    children.sort((a, b) => {
+    const excludedImportFolder = getExcludedImportFolderPath();
+    const normalizedFolderPath = normalizePath(folder.path);
+    return (
+      normalizedFolderPath === excludedImportFolder
+      || normalizedFolderPath.startsWith(`${excludedImportFolder}/`)
+    );
+  }
+
+  const folderFileCountCache = new Map<string, number>();
+
+  function hasDisplayableChildren(folder: TFolder): boolean {
+    return folder.children.some((child) => {
+      if (child instanceof TFolder) {
+        return !shouldSkipTreeFolder(child);
+      }
+      return child instanceof TFile && isImportableFile(child);
+    });
+  }
+
+  function sortTreeNodes(nodes: TreeNode[]): TreeNode[] {
+    return nodes.sort((a, b) => {
       if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
       return a.name.localeCompare(b.name, 'zh-CN');
     });
+  }
 
+  function getLoadedTreeFileCount(nodes: TreeNode[]): number {
+    return nodes.reduce((total, node) => {
+      if (node.type === 'file') {
+        return total + 1;
+      }
+      return total + (node.fileCount ?? 0);
+    }, 0);
+  }
+
+  function createFileNode(file: TFile, selected = false): TreeNode {
+    return {
+      name: file.name,
+      path: file.path,
+      type: 'file',
+      children: [],
+      childrenLoaded: true,
+      hasChildren: false,
+      expanded: false,
+      selected,
+      indeterminate: false,
+      fileCount: 1
+    };
+  }
+
+  function createFolderNode(folder: TFolder, selected = false, deep = false): TreeNode {
+    const children = deep ? buildTreeChildren(folder, selected, true) : [];
     return {
       name: folder.name || 'Vault',
       path: folder.path,
       type: 'folder',
       children,
-      expanded: folder.path === '' || folder.path === '/',
-      selected: false,
-      indeterminate: false
+      childrenLoaded: deep,
+      hasChildren: hasDisplayableChildren(folder),
+      expanded: false,
+      selected,
+      indeterminate: false,
+      fileCount: deep ? getLoadedTreeFileCount(children) : null
     };
   }
 
-  function toggleSelect(node: TreeNode): void {
-    node.selected = !node.selected;
-    node.indeterminate = false;
-    if (node.type === 'folder' && node.children.length > 0) {
-      setChildrenSelected(node.children, node.selected);
+  function buildTreeChildren(folder: TFolder, selected = false, deep = false): TreeNode[] {
+    const children: TreeNode[] = [];
+
+    for (const child of folder.children) {
+      if (child instanceof TFolder) {
+        if (shouldSkipTreeFolder(child) || !hasDisplayableChildren(child)) {
+          continue;
+        }
+        children.push(createFolderNode(child, selected, deep));
+      } else if (child instanceof TFile && isImportableFile(child)) {
+        children.push(createFileNode(child, selected));
+      }
     }
+
+    return sortTreeNodes(children);
+  }
+
+  function buildFullTree(): TreeNode[] {
+    return buildTreeChildren(plugin.app.vault.getRoot(), false, true);
+  }
+
+  function setNodeSelection(node: TreeNode, selected: boolean): void {
+    node.selected = selected;
+    node.indeterminate = false;
+
+    if (node.type === 'folder' && node.childrenLoaded) {
+      for (const child of node.children) {
+        setNodeSelection(child, selected);
+      }
+    }
+  }
+
+  function toggleSelect(node: TreeNode): void {
+    setNodeSelection(node, !node.selected || node.indeterminate);
     updateParentStates(treeData);
     treeData = [...treeData];
   }
 
   function setChildrenSelected(children: TreeNode[], selected: boolean): void {
     for (const child of children) {
-      child.selected = selected;
-      child.indeterminate = false;
-      if (child.type === 'folder' && child.children.length > 0) {
-        setChildrenSelected(child.children, selected);
-      }
+      setNodeSelection(child, selected);
     }
   }
 
   function updateParentStates(nodes: TreeNode[]): void {
     for (const node of nodes) {
-      if (node.type === 'folder' && node.children.length > 0) {
-        updateParentStates(node.children);
-        const selCount = node.children.filter(c => c.selected).length;
-        const indeterminateCount = node.children.filter(c => c.indeterminate).length;
-        const totalCount = node.children.length;
+      if (node.type !== 'folder' || !node.childrenLoaded || node.children.length === 0) {
+        continue;
+      }
 
-        if (selCount === totalCount && indeterminateCount === 0) {
-          node.selected = true;
-          node.indeterminate = false;
-        } else if (selCount === 0 && indeterminateCount === 0) {
-          node.selected = false;
-          node.indeterminate = false;
-        } else {
-          node.selected = false;
-          node.indeterminate = true;
-        }
+      updateParentStates(node.children);
+      const selCount = node.children.filter((c) => c.selected).length;
+      const indeterminateCount = node.children.filter((c) => c.indeterminate).length;
+      const totalCount = node.children.length;
+
+      if (selCount === totalCount && indeterminateCount === 0) {
+        node.selected = true;
+        node.indeterminate = false;
+      } else if (selCount === 0 && indeterminateCount === 0) {
+        node.selected = false;
+        node.indeterminate = false;
+      } else {
+        node.selected = false;
+        node.indeterminate = true;
       }
     }
   }
 
-  function toggleExpand(node: TreeNode): void {
+  function loadNodeChildren(node: TreeNode): void {
+    if (node.type !== 'folder' || node.childrenLoaded) {
+      return;
+    }
+
+    const folder = plugin.app.vault.getAbstractFileByPath(node.path);
+    if (!(folder instanceof TFolder)) {
+      node.childrenLoaded = true;
+      node.hasChildren = false;
+      node.children = [];
+      return;
+    }
+
+    node.children = buildTreeChildren(folder, node.selected && !node.indeterminate, false);
+    node.childrenLoaded = true;
+    node.hasChildren = node.children.length > 0;
+  }
+
+  async function toggleExpand(node: TreeNode): Promise<void> {
+    if (node.type !== 'folder') {
+      return;
+    }
+
+    if (!node.childrenLoaded) {
+      loadNodeChildren(node);
+    }
+
     node.expanded = !node.expanded;
     treeData = [...treeData];
   }
@@ -441,7 +551,7 @@
   function findNodeByPath(nodes: TreeNode[], path: string): TreeNode | null {
     for (const node of nodes) {
       if (node.path === path) return node;
-      if (node.type === 'folder' && node.children.length > 0) {
+      if (node.type === 'folder' && node.childrenLoaded && node.children.length > 0) {
         const found = findNodeByPath(node.children, path);
         if (found) return found;
       }
@@ -452,30 +562,122 @@
   function countSelectedFiles(nodes: TreeNode[]): number {
     let count = 0;
     for (const node of nodes) {
-      if (node.type === 'file' && node.selected) count++;
-      else if (node.type === 'folder') count += countSelectedFiles(node.children);
+      if (node.type === 'file') {
+        if (node.selected) {
+          count++;
+        }
+        continue;
+      }
+
+      if (node.selected && !node.indeterminate) {
+        count += getFolderFileCount(node.path);
+        continue;
+      }
+
+      if (node.childrenLoaded) {
+        count += countSelectedFiles(node.children);
+      }
     }
     return count;
   }
 
-  function countTotalFiles(nodes: TreeNode[]): number {
-    let count = 0;
-    for (const node of nodes) {
-      if (node.type === 'file') count++;
-      else if (node.type === 'folder') count += countTotalFiles(node.children);
+  function collectImportableFilePathsFromFolder(folder: TFolder, paths: Set<string>): void {
+    for (const child of folder.children) {
+      if (child instanceof TFolder) {
+        if (shouldSkipTreeFolder(child)) {
+          continue;
+        }
+        collectImportableFilePathsFromFolder(child, paths);
+      } else if (child instanceof TFile && isImportableFile(child)) {
+        paths.add(child.path);
+      }
     }
+  }
+
+  function getFolderFileCount(folderPath: string): number {
+    const normalizedPath = normalizePath(folderPath);
+    const cached = folderFileCountCache.get(normalizedPath);
+    if (cached != null) {
+      return cached;
+    }
+
+    const folder = plugin.app.vault.getAbstractFileByPath(normalizedPath);
+    if (!(folder instanceof TFolder)) {
+      return 0;
+    }
+
+    let count = 0;
+    const stack: TFolder[] = [folder];
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+
+      for (const child of current.children) {
+        if (child instanceof TFolder) {
+          if (!shouldSkipTreeFolder(child)) {
+            stack.push(child);
+          }
+        } else if (child instanceof TFile && isImportableFile(child)) {
+          count++;
+        }
+      }
+    }
+
+    folderFileCountCache.set(normalizedPath, count);
     return count;
   }
 
   function getSelectedPaths(nodes: TreeNode[]): string[] {
-    const paths: string[] = [];
+    const paths = new Set<string>();
     function collect(nodeList: TreeNode[]): void {
       for (const node of nodeList) {
-        if (node.type === 'file' && node.selected) paths.push(node.path);
-        else if (node.type === 'folder') collect(node.children);
+        if (node.type === 'file') {
+          if (node.selected) {
+            paths.add(node.path);
+          }
+          continue;
+        }
+
+        if (node.selected && !node.indeterminate) {
+          const folder = plugin.app.vault.getAbstractFileByPath(node.path);
+          if (folder instanceof TFolder) {
+            collectImportableFilePathsFromFolder(folder, paths);
+          }
+          continue;
+        }
+
+        if (node.childrenLoaded) {
+          collect(node.children);
+        }
       }
     }
     collect(nodes);
+    return Array.from(paths);
+  }
+
+  function getExplicitlySelectedFilePaths(nodes: TreeNode[]): string[] {
+    const paths: string[] = [];
+    const collect = (nodeList: TreeNode[], parentSelected: boolean): void => {
+      for (const node of nodeList) {
+        const fullySelected = parentSelected || (node.type === 'folder' && node.selected && !node.indeterminate);
+        if (node.type === 'file') {
+          if (node.selected && !parentSelected) {
+            paths.push(node.path);
+          }
+          continue;
+        }
+
+        if (fullySelected) {
+          continue;
+        }
+
+        if (node.childrenLoaded) {
+          collect(node.children, false);
+        }
+      }
+    };
+
+    collect(nodes, false);
     return paths;
   }
 
@@ -489,7 +691,7 @@
           paths.push(node.path);
         }
         const nextParentSelected = parentSelected || (isFolder && node.selected);
-        if (isFolder && node.children.length > 0) {
+        if (isFolder && node.childrenLoaded && node.children.length > 0) {
           walk(node.children, nextParentSelected);
         }
       }
@@ -523,9 +725,14 @@
           result.push({ ...node });
         }
       } else {
-        const filteredChildren = filterTree(node.children, query);
+        const filteredChildren = node.childrenLoaded ? filterTree(node.children, query) : [];
         if (filteredChildren.length > 0 || node.name.toLowerCase().includes(query)) {
-          result.push({ ...node, children: filteredChildren, expanded: true });
+          result.push({
+            ...node,
+            children: filteredChildren,
+            childrenLoaded: true,
+            expanded: true
+          });
         }
       }
     }
@@ -537,6 +744,38 @@
     setChildrenSelected(treeData, !allSelected);
     updateParentStates(treeData);
     treeData = [...treeData];
+  }
+
+  function applySelectionSnapshot(
+    nodes: TreeNode[],
+    selectedFolders: Set<string>,
+    selectedFiles: Set<string>
+  ): void {
+    for (const node of nodes) {
+      if (node.type === 'folder') {
+        if (selectedFolders.has(node.path)) {
+          setNodeSelection(node, true);
+          continue;
+        }
+        applySelectionSnapshot(node.children, selectedFolders, selectedFiles);
+      } else if (selectedFiles.has(node.path)) {
+        node.selected = true;
+      }
+    }
+  }
+
+  async function ensureFullTreeLoadedForSearch(): Promise<void> {
+    if (searchFullTreeReady || !searchQuery.trim()) {
+      return;
+    }
+
+    const selectedFolders = new Set(getSelectedRootFolderPaths(treeData));
+    const selectedFiles = new Set(getExplicitlySelectedFilePaths(treeData));
+    const fullTree = buildFullTree();
+    applySelectionSnapshot(fullTree, selectedFolders, selectedFiles);
+    updateParentStates(fullTree);
+    treeData = fullTree;
+    searchFullTreeReady = true;
   }
 
   function getMarkerCount(content: string): number {
@@ -639,7 +878,7 @@
         const tfile = file instanceof TFile ? file : null;
         if (!tfile) continue;
 
-        const items = await getPdfOutlineItemsByOpeningLeaf(tfile);
+        const items = await getPdfOutlineItemsSafely(tfile);
         logger.debug('[MaterialImportModal] PDF 目录提取结果:', {
           pdf: tfile.path,
           outlineCount: items.length
@@ -827,7 +1066,8 @@
             continue;
           }
 
-          const nextRepDate = material.fsrs?.due ? new Date(material.fsrs.due).getTime() : undefined;
+          const dueAt = getReadingMaterialDueAt(material);
+          const nextRepDate = dueAt ? new Date(dueAt).getTime() : undefined;
           await ensureExternalDocumentChunkScheduled(createdFile, selectedDeckId, selectedDeck.name, nextRepDate);
         }
 
@@ -847,16 +1087,11 @@
   }
 
   /**
-   * 通过 Obsidian 的 PDF 视图获取 PDF 目录（outline）。
+   * 安全提取 PDF 目录。
    *
-   * Obsidian PDF 视图结构（参考 PDF++ typings.d.ts）：
-   *   PDFView (leaf.view)
-   *     └── viewer: PDFViewerComponent
-   *           └── child: PDFViewerChild
-   *                 └── pdfViewer: ObsidianViewer
-   *                       ├── pdfOutlineViewer  ← 已解析的目录树
-   *                       ├── pdfViewer (内层 PDF.js PDFViewer) → pdfDocument
-   *                       └── pdfLoadingTask.promise → PDFDocumentProxy
+   * 优先走稳定的 pdf.js 直读路径；如果当前平台或运行环境不可用，
+   * 则直接回退为整本 PDF 导入，不再访问 Obsidian 私有 PDF 视图对象，
+   * 以避免跨平台 renderer 崩溃。
    */
   async function getPdfOutlineDirect(pdfFile: TFile): Promise<Array<{ title: string; pageNumber: number; path: string[] }> | null> {
     const pdfjsLib = (window as any).pdfjsLib;
@@ -864,6 +1099,15 @@
 
     let loadingTask: any = null;
     try {
+      const fileSize = Number(pdfFile.stat?.size ?? 0);
+      if (fileSize > PDF_OUTLINE_SIZE_LIMIT_BYTES) {
+        logger.warn('[MaterialImportModal] PDF 过大，跳过目录提取并回退为整本导入:', {
+          pdf: pdfFile.path,
+          size: fileSize
+        });
+        return [];
+      }
+
       const arrayBuffer = await plugin.app.vault.readBinary(pdfFile);
       loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) });
       const pdfDocument = await Promise.race([
@@ -913,179 +1157,14 @@
     }
   }
 
-  async function getPdfOutlineItemsByOpeningLeaf(pdfFile: TFile): Promise<Array<{ title: string; pageNumber: number; path: string[] }>> {
+  async function getPdfOutlineItemsSafely(pdfFile: TFile): Promise<Array<{ title: string; pageNumber: number; path: string[] }>> {
     const directResult = await getPdfOutlineDirect(pdfFile);
     if (directResult !== null) return directResult;
 
-    let leaf: any = null;
-    let createdLeaf = false;
-    try {
-      // 1. 优先复用已打开的同一 PDF 的 leaf
-      try {
-        const leaves = plugin.app.workspace.getLeavesOfType('pdf') || [];
-        const existing = leaves.find((l: any) => l?.view?.file?.path === pdfFile.path);
-        if (existing) {
-          leaf = existing;
-        }
-      } catch {}
-
-      if (!leaf) {
-        leaf = plugin.app.workspace.getLeaf('tab');
-        createdLeaf = true;
-        await leaf.openFile(pdfFile, { active: false });
-      }
-
-      // 2. 等待 PDFViewerChild 就绪
-      //    PDFViewerComponent.child 初始为 null，文件加载完成后才填充
-      //    PDFViewerComponent.then(cb) 可注册就绪回调
-      const child: any = await new Promise<any>((resolve, reject) => {
-        const timeoutId = setTimeout(() => reject(new Error('PDFViewerChild 等待超时')), 8000);
-        const viewerComp = (leaf as any)?.view?.viewer;
-        if (!viewerComp) {
-          clearTimeout(timeoutId);
-          reject(new Error('未找到 PDFViewerComponent'));
-          return;
-        }
-        if (viewerComp.child) {
-          clearTimeout(timeoutId);
-          resolve(viewerComp.child);
-          return;
-        }
-        if (typeof viewerComp.then === 'function') {
-          viewerComp.then((c: any) => { clearTimeout(timeoutId); resolve(c); });
-        } else {
-          // 兜底轮询
-          const poll = setInterval(() => {
-            if (viewerComp.child) {
-              clearInterval(poll);
-              clearTimeout(timeoutId);
-              resolve(viewerComp.child);
-            }
-          }, 100);
-          setTimeout(() => clearInterval(poll), 8000);
-        }
-      });
-
-      // ObsidianViewer = child.pdfViewer
-      const obsViewer: any = child?.pdfViewer;
-
-      // 3. 方案 A：从 PDFOutlineViewer 读取已解析的目录树（最可靠）
-      const outlineViewer: any = obsViewer?.pdfOutlineViewer;
-      if (outlineViewer) {
-        // 等待 outline 加载完毕
-        for (let i = 0; i < 30; i++) {
-          const items = outlineViewer.allItems ?? outlineViewer.children;
-          if (Array.isArray(items) && items.length > 0) break;
-          if (i >= 5 && obsViewer?.pdfViewer?.pdfDocument) break;
-          await new Promise(r => setTimeout(r, 100));
-        }
-
-        const topNodes: any[] = outlineViewer.children;
-        if (Array.isArray(topNodes) && topNodes.length > 0) {
-          const results: Array<{ title: string; pageNumber: number; path: string[] }> = [];
-
-          const walkTree = async (nodes: any[], ancestors: string[]) => {
-            for (const node of nodes) {
-              const title = String(node?.item?.title || '').trim() || '目录';
-              const nextPath = [...ancestors, title];
-              let pageNumber = 0;
-              try {
-                if (typeof node.pageNumber === 'number' && node.pageNumber > 0) {
-                  pageNumber = node.pageNumber;
-                } else if (typeof node.getPageNumber === 'function') {
-                  pageNumber = await node.getPageNumber();
-                }
-              } catch {}
-              results.push({ title, pageNumber: pageNumber > 0 ? pageNumber : 0, path: nextPath });
-              if (Array.isArray(node.children) && node.children.length > 0) {
-                await walkTree(node.children, nextPath);
-              }
-            }
-          };
-
-          await walkTree(topNodes, []);
-          logger.debug('[MaterialImportModal] 通过 PDFOutlineViewer 获取目录:', {
-            pdf: pdfFile.path,
-            count: results.length
-          });
-          if (results.length > 0) return results;
-        }
-      }
-
-      // 4. 方案 B：通过 pdfLoadingTask 获取 PDFDocumentProxy，调用 getOutline()
-      let pdfDocument: any = null;
-      try {
-        if (obsViewer?.pdfLoadingTask?.promise) {
-          pdfDocument = await Promise.race([
-            obsViewer.pdfLoadingTask.promise,
-            new Promise((_, reject) => setTimeout(() => reject(new Error('pdfLoadingTask 超时')), 8000))
-          ]);
-        }
-      } catch {}
-
-      // 兜底：从内层 PDF.js PDFViewer 取
-      if (!pdfDocument) {
-        pdfDocument = obsViewer?.pdfViewer?.pdfDocument;
-      }
-
-      if (!pdfDocument?.getOutline) {
-        logger.debug('[MaterialImportModal] 未获取到 pdfDocument:', {
-          pdf: pdfFile.path,
-          hasChild: !!child,
-          hasObsViewer: !!obsViewer,
-          obsViewerKeys: obsViewer ? Object.keys(obsViewer).slice(0, 25) : []
-        });
-        return [];
-      }
-
-      let outline: any[];
-      try { outline = await pdfDocument.getOutline(); } catch { outline = []; }
-      if (!Array.isArray(outline) || outline.length === 0) return [];
-
-      logger.debug('[MaterialImportModal] 通过 pdfDocument.getOutline 获取目录:', {
-        pdf: pdfFile.path,
-        topLevelCount: outline.length
-      });
-
-      const results: Array<{ title: string; pageNumber: number; path: string[] }> = [];
-
-      const resolvePageNumber = async (item: any): Promise<number> => {
-        if (typeof item?.pageNumber === 'number' && item.pageNumber > 0) return item.pageNumber;
-        const dest = item?.dest;
-        if (!dest) return 0;
-        try {
-          const destArray = typeof dest === 'string' ? await pdfDocument.getDestination(dest) : dest;
-          if (!Array.isArray(destArray) || destArray.length === 0) return 0;
-          const idx = await pdfDocument.getPageIndex(destArray[0]);
-          return typeof idx === 'number' && !Number.isNaN(idx) ? idx + 1 : 0;
-        } catch { return 0; }
-      };
-
-      const walkRaw = async (items: any[], ancestors: string[]) => {
-        for (const it of items) {
-          const title = String(it?.title || '').trim() || '目录';
-          const nextPath = [...ancestors, title];
-          const pageNumber = await resolvePageNumber(it);
-          results.push({ title, pageNumber, path: nextPath });
-          const children = it?.items ?? it?.children;
-          if (Array.isArray(children) && children.length > 0) {
-            await walkRaw(children, nextPath);
-          }
-        }
-      };
-
-      await walkRaw(outline, []);
-      return results;
-    } catch (e) {
-      logger.warn('[MaterialImportModal] PDF 目录提取异常:', e);
-      return [];
-    } finally {
-      try {
-        if (createdLeaf) {
-          leaf?.detach?.();
-        }
-      } catch {}
-    }
+    logger.warn('[MaterialImportModal] 未能安全提取 PDF 目录，回退为整本导入以避免访问不稳定的 PDF 内部视图:', {
+      pdf: pdfFile.path
+    });
+    return [];
   }
 
   function handleSplitModeSelect(mode: SplitMode): void {
@@ -1115,7 +1194,7 @@
           continue;
         }
 
-        const readerService = new ReadiumReaderService(plugin.app);
+        const readerService = createEpubReaderEngine(plugin.app);
         try {
           await readerService.loadEpub(filePath);
           const tocItems = await readerService.getTableOfContents();
@@ -1238,11 +1317,16 @@
       const selected = epubFlatItems.filter(i => epubSelectedItems.has(i.id));
       const existingHrefMap = new Map<string, Set<string>>();
       const selectedFilePaths = Array.from(new Set(selected.map(item => item.filePath).filter(Boolean)));
+      const selectedDeck = availableDecks.find(d => d.id === selectedDeckId);
+      const deckIdentifiers = [selectedDeckId, selectedDeck?.path].filter(
+        (value): value is string => Boolean(value && value.trim())
+      );
+      const existingDeckTasks = await epubService.getTasksByDeckIdentifiers(deckIdentifiers);
       for (const filePath of selectedFilePaths) {
-        const existing = await epubService.getTasksByEpub(filePath);
+        const existing = existingDeckTasks.filter(t => t.epubFilePath === filePath);
         existingHrefMap.set(
           filePath,
-          new Set(existing.filter(t => t.deckId === selectedDeckId).map(t => t.tocHref))
+          new Set(existing.map(t => t.tocHref))
         );
       }
 
@@ -1866,6 +1950,7 @@
     editedContent = '';
     previewIndex = 0;
     searchQuery = '';
+    searchFullTreeReady = false;
     showContent = false;
     importing = false;
     importProgress = { current: 0, total: 0 };
@@ -1888,11 +1973,12 @@
     useCustomDays = false;
     customDaysValue = 21;
     availableDecks = [];
+    folderFileCountCache.clear();
   }
 
   function initializeTree() {
     const rootFolder = plugin.app.vault.getRoot();
-    treeData = [buildTree(rootFolder)];
+    treeData = buildTreeChildren(rootFolder, false, false);
     initialized = true;
     setTimeout(() => { showContent = true; }, 50);
   }
@@ -1940,6 +2026,16 @@
     if (open) {
       resetModalState();
       initializeTree();
+    }
+  });
+
+  $effect(() => {
+    if (!open) {
+      return;
+    }
+
+    if (searchQuery.trim()) {
+      void ensureFullTreeLoadedForSearch();
     }
   });
   
@@ -2572,16 +2668,18 @@
         if ((e.target as HTMLElement).closest('.checkbox-wrapper')) return;
         const realNode = findNodeByPath(treeData, node.path) ?? node;
         if (realNode.type === 'folder') {
-          toggleExpand(realNode);
+          void toggleExpand(realNode);
         } else {
           toggleSelect(realNode);
         }
       }}
     >
-      {#if node.type === 'folder'}
+      {#if node.type === 'folder' && node.hasChildren}
         <span class="expand-icon" class:expanded={node.expanded}>
           <ObsidianIcon name="chevron-right" size={14} />
         </span>
+      {:else if node.type === 'folder'}
+        <span class="expand-icon placeholder"></span>
       {/if}
 
       <label class="checkbox-wrapper">
@@ -2589,7 +2687,7 @@
           type="checkbox" 
           checked={node.selected}
           indeterminate={node.indeterminate}
-          onchange={() => toggleSelect(node)}
+          onchange={() => toggleSelect(findNodeByPath(treeData, node.path) ?? node)}
         />
         <span class="checkbox-box"></span>
       </label>
@@ -2606,7 +2704,7 @@
       <span class="node-name" title={node.path}>{node.name}</span>
 
       {#if node.type === 'folder'}
-        <span class="node-count">{countSelectedFiles([node])}/{countTotalFiles([node])}</span>
+        <span class="node-count">{node.fileCount ?? ''}</span>
       {/if}
     </svelte:element>
 

@@ -5,6 +5,7 @@
 
 import type { Card } from "../data/types";
 import { DerivationMethod } from "../services/relation/types";
+import { getCardFront } from "./card-field-helper";
 
 // ============================================================================
 // 类型定义
@@ -39,7 +40,7 @@ export function stripHtml(html: string): string {
 /**
  * 获取卡片预览文本
  * 优先使用 content 作为预览文本来源
- * 回退顺序：content > fields.front（向后兼容）> UUID
+ * 回退顺序：content > 统一字段解析 > UUID
  */
 export function getCardPreview(card: Card, maxLength = 100): string {
 	// 优先使用 content 作为权威文本来源
@@ -50,9 +51,10 @@ export function getCardPreview(card: Card, maxLength = 100): string {
 		}
 	}
 
-	// 优先级2: fields.front（向后兼容）
-	if (card.fields?.front) {
-		const text = stripHtml(card.fields.front as string);
+	// 优先级2: 统一字段解析（内部仍保留兼容回退）
+	const frontText = getCardFront(card);
+	if (frontText) {
+		const text = stripHtml(frontText);
 		return text.length > maxLength ? `${text.substring(0, maxLength)}...` : text;
 	}
 
