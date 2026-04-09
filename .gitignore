@@ -46,6 +46,8 @@ jspm_packages/
 
 # dotenv environment variables file
 .env
+.env.*
+!.env.example
 .env.test
 
 # parcel-bundler cache (https://parceljs.org/)
@@ -134,6 +136,13 @@ test-vault/
 # 私钥文件（任何可能的命名方式）
 *.pem
 *.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.der
+*.jks
+*.keystore
 *private-key*
 *private_key*
 *privatekey*
